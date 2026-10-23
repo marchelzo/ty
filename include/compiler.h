@@ -166,6 +166,9 @@ typedef struct module {
         struct module const *host;
         Stmt **prog;
         TokenVector tokens;
+        CTokenVector ctokens;
+        TokenVector fakes;
+        u32 csrc;
         Expr *last;
         Arena arena;
         Location error;
@@ -443,8 +446,6 @@ gettag(Ty *ty, char const *module, char const *name);
 char *
 compiler_load_prelude(Ty *ty);
 
-Location
-compiler_find_definition(Ty *ty, char const *file, int line, int col);
 
 ExprLocation *
 compiler_find_expr_x(Ty *ty, char const *code, bool func);
@@ -765,7 +766,7 @@ CompilerSuggestCompletions(
         Module *mod,
         i32 line,
         i32 col,
-        ValueVector *completions
+        Array *completions
 );
 
 void

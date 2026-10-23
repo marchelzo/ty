@@ -449,7 +449,7 @@ lir_build_entry(Ty *ty, LirCode *code, LirError *err)
                 .nfixed  = countof(params)
         };
 
-        Lir *L = lir_new(code->name, &sig, LIR_MODE_ATTACHED, err);
+        Lir *L = lir_new_in(&ty->scratch, code->name, &sig, LIR_MODE_ATTACHED, err);
 
         lir_pin_param(L, LIR_PIN_0, 0);
         lir_pin_param(L, LIR_PIN_1, 1);
@@ -467,9 +467,7 @@ lir_build_entry(Ty *ty, LirCode *code, LirError *err)
 
         branch(&t, LIR_NE, argc, code->sig.nparams, arity);
 
-        SCRATCH_SAVE();
         body(ty, &t, code);
-        SCRATCH_RESTORE();
 
         lir_emit_to(L, LIR_RET, LIR_NONE, NULL, 0);
 

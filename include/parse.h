@@ -54,6 +54,12 @@ void
 parse_init(Ty *ty);
 
 void
+parse_trim(Ty *ty);
+
+TokenVector *
+ModuleTokens(Ty *ty, Module *mod);
+
+void
 parse_reset(Ty *ty);
 
 bool

@@ -40,7 +40,26 @@ enum {
         MAX_OP_LEN = 8,
 };
 
-static Location Start;
+typedef struct source {
+        char const *base;
+        char const *end;
+        u32 *_Atomic lines;
+        u32 nlines;
+        bool flat;
+} Source;
+
+enum {
+        SOURCE_CHUNK  = 1 << 10,
+        SOURCE_CHUNKS = 1 << 12
+};
+
+static Source *SourceChunks[SOURCE_CHUNKS];
+static u32 *SourceIndex;
+static u32 SourceSlots;
+static u32 _Atomic SourceCount;
+static TySpinLock SourceLock = TY_MUTEX_INIT;
+
+static LexCursor Start;
 
 static jmp_buf jb;
 static char const *LexErrorMessage;
@@ -50,6 +69,211 @@ static LexState state;
 
 #define SRC state.loc.s
 #define END state.end
+
+inline static Source *
+SourceOf(u32 src)
+{
+        return (src == 0 || src > atomic_load_explicit(&SourceCount, memory_order_acquire))
+             ? NULL
+             : &SourceChunks[(src - 1) / SOURCE_CHUNK][(src - 1) % SOURCE_CHUNK];
+}
+
+inline static u32 *
+SourceSlot(char const *base)
+{
+        u32 h = (u32)((((uptr)base >> 3) * 11400714819323198485ULL) >> 32);
+
+        for (u32 mask = SourceSlots - 1;; h = (h + 1) & mask) {
+                u32 *slot = &SourceIndex[h & mask];
+                if (*slot == 0 || SourceOf(*slot)->base == base) {
+                        return slot;
+                }
+        }
+}
+
+static void
+SourceGrowIndex(void)
+{
+        u32  n   = SourceSlots;
+        u32 *old = SourceIndex;
+
+        SourceSlots = (n == 0) ? 256 : 2 * n;
+        SourceIndex = xtA0(u32, SourceSlots);
+
+        for (u32 i = 0; i < n; ++i) {
+                if (old[i] != 0) {
+                        *SourceSlot(SourceOf(old[i])->base) = old[i];
+                }
+        }
+
+        xmF(old);
+}
+
+u32
+SourceRegister(char const *base, bool flat)
+{
+        TySpinLockLock(&SourceLock);
+
+        u32 count = atomic_load_explicit(&SourceCount, memory_order_relaxed);
+
+        if (2 * (count + 1) > SourceSlots) {
+                SourceGrowIndex();
+        }
+
+        u32 *slot = SourceSlot(base);
+        u32  id   = *slot;
+
+        if (id == 0) {
+                if (count == SOURCE_CHUNK * SOURCE_CHUNKS) {
+                        TySpinLockUnlock(&SourceLock);
+                        return 0;
+                }
+                id = count + 1;
+                if (SourceChunks[count / SOURCE_CHUNK] == NULL) {
+                        SourceChunks[count / SOURCE_CHUNK] = xtA0(Source, SOURCE_CHUNK);
+                }
+                atomic_store_explicit(&SourceCount, id, memory_order_release);
+                *slot = id;
+        }
+
+        Source *src = SourceOf(id);
+
+        xmF(atomic_exchange(&src->lines, NULL));
+
+        src->base   = base;
+        src->end    = base + strlen(base);
+        src->nlines = 0;
+        src->flat   = flat;
+
+        TySpinLockUnlock(&SourceLock);
+
+        return id;
+}
+
+u32
+SourceFind(char const *base)
+{
+        u32 id;
+
+        TySpinLockLock(&SourceLock);
+        id = (SourceSlots == 0) ? 0 : *SourceSlot(base);
+        TySpinLockUnlock(&SourceLock);
+
+        return (id != 0) ? id : SourceRegister(base, false);
+}
+
+static u32 const *
+SourceLines(Source *src, u32 *n)
+{
+        u32 *lines = atomic_load_explicit(&src->lines, memory_order_acquire);
+
+        if (lines == NULL) {
+                TySpinLockLock(&SourceLock);
+
+                if ((lines = atomic_load_explicit(&src->lines, memory_order_relaxed)) == NULL) {
+                        u32 bom   = (src->end - src->base >= 3) && (memcmp(src->base, "\xEF\xBB\xBF", 3) == 0);
+                        u32 count = 1;
+
+                        for (char const *p = src->base; (p = memchr(p, '\n', src->end - p)) != NULL; ++p) {
+                                count += 1;
+                        }
+
+                        lines    = xmA(count * sizeof *lines);
+                        lines[0] = 3 * bom;
+                        count    = 1;
+
+                        for (char const *p = src->base; (p = memchr(p, '\n', src->end - p)) != NULL; ++p) {
+                                lines[count++] = (u32)(p + 1 - src->base);
+                        }
+
+                        src->nlines = count;
+                        atomic_store_explicit(&src->lines, lines, memory_order_release);
+                }
+
+                TySpinLockUnlock(&SourceLock);
+        }
+
+        *n = src->nlines;
+
+        return lines;
+}
+
+static u32
+LineIndex(Location loc, u32 *start)
+{
+        Source *src = SourceOf(loc.src);
+
+        if (src == NULL || src->flat) {
+                *start = loc.byte;
+                return 0;
+        }
+
+        u32        n;
+        u32 const *lines = SourceLines(src, &n);
+        u32        lo    = 0;
+        u32        hi    = n;
+
+        while (hi - lo > 1) {
+                u32 mid = lo + (hi - lo) / 2;
+                if (lines[mid] <= loc.byte) {
+                        lo = mid;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        *start = min(lines[lo], loc.byte);
+
+        return lo;
+}
+
+char const *
+LocPtr(Location loc)
+{
+        Source const *src = SourceOf(loc.src);
+        return (src == NULL) ? NULL : src->base + loc.byte;
+}
+
+u32
+LocLine(Location loc)
+{
+        u32 start;
+        return LineIndex(loc, &start);
+}
+
+u32
+LocCol(Location loc)
+{
+        u32 start;
+        LineIndex(loc, &start);
+        return loc.byte - start;
+}
+
+bool
+LocSameLine(Location a, Location b)
+{
+        if (a.src != b.src) {
+                return LocLine(a) == LocLine(b);
+        }
+
+        u32         lo = min(a.byte, b.byte);
+        u32         hi = max(a.byte, b.byte);
+        char const *p  = LocPtr(LocOf(a.src, lo));
+
+        return (p == NULL) || (memchr(p, '\n', hi - lo) == NULL);
+}
+
+inline static LexCursor
+Cursor(Location loc)
+{
+        return (LexCursor) { .s = LocPtr(loc), .byte = loc.byte };
+}
+
+inline static Location
+Mark(LexCursor c)
+{
+        return LocOf(state.src, c.byte);
+}
 
 inline static unsigned char
 C(int n)
@@ -79,8 +303,8 @@ mktoken(Ty *ty, int type)
 {
         return (Token) {
                 .type  = type,
-                .start = Start,
-                .end   = state.loc,
+                .start = Mark(Start),
+                .end   = Mark(state.loc),
                 .ctx   = state.ctx,
                 .nl    = (state.need_nl || type == TOKEN_NEWLINE)
         };
@@ -93,8 +317,8 @@ mkid(Ty *ty, char *id, char *module, bool raw)
                 .type       = TOKEN_IDENTIFIER,
                 .identifier = id,
                 .module     = module,
-                .start      = Start,
-                .end        = state.loc,
+                .start      = Mark(Start),
+                .end        = Mark(state.loc),
                 .nl         = state.need_nl,
                 .ctx        = state.ctx,
                 .raw        = raw
@@ -107,8 +331,8 @@ mkstring(Ty *ty, char const *string, usize length)
         return (Token) {
                 .type   = TOKEN_STRING,
                 .string = BYTES(string, length),
-                .start  = Start,
-                .end    = state.loc,
+                .start  = Mark(Start),
+                .end    = Mark(state.loc),
                 .nl     = state.need_nl,
                 .ctx    = state.ctx
         };
@@ -170,8 +394,8 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed, bool speculative)
         return (Token) {
                 .type  = TOKEN_REGEX,
                 .regex = r,
-                .start = Start,
-                .end   = state.loc,
+                .start = Mark(Start),
+                .end   = Mark(state.loc),
                 .ctx   = state.ctx
         };
 }
@@ -182,8 +406,8 @@ mkreal(Ty *ty, double real)
         return (Token) {
                 .type  = TOKEN_REAL,
                 .real  = real,
-                .start = Start,
-                .end   = state.loc,
+                .start = Mark(Start),
+                .end   = Mark(state.loc),
                 .nl    = state.need_nl,
                 .ctx   = state.ctx
         };
@@ -195,8 +419,8 @@ mkinteger(Ty *ty, intmax_t k)
         return (Token) {
                 .type    = TOKEN_INTEGER,
                 .integer = k,
-                .start   = Start,
-                .end     = state.loc,
+                .start   = Mark(Start),
+                .end     = Mark(state.loc),
                 .nl      = state.need_nl,
                 .ctx     = state.ctx
         };
@@ -208,8 +432,8 @@ mkkw(Ty *ty, int kw)
         return (Token) {
                 .type = TOKEN_KEYWORD,
                 .keyword = kw,
-                .start = Start,
-                .end = state.loc,
+                .start = Mark(Start),
+                .end = Mark(state.loc),
                 .nl = state.need_nl,
                 .ctx = state.ctx
         };
@@ -238,8 +462,6 @@ nextchar(Ty *ty)
                 return '\0';
 
         case '\n':
-                state.loc.line += 1;
-                state.loc.col = 0;
                 state.blank_line = true;
                 break;
 
@@ -247,7 +469,7 @@ nextchar(Ty *ty)
                 state.blank_line = false;
         case '\t':
         case ' ':
-                state.loc.col += 1;
+                break;
         }
 
         SRC += 1;
@@ -336,7 +558,6 @@ lexplainword(Ty *ty, isize n)
         w[n] = '\0';
 
         SRC              += n;
-        state.loc.col    += n;
         state.loc.byte   += n;
         state.blank_line  = false;
 
@@ -582,13 +803,13 @@ lexdocstring(Ty *ty)
         }
 
         if (!end_of_docstring(ty, '\'', ndelim)) {
-                error(ty, "unterminated docstring starting on line %d", Start.line + 1);
+                error(ty, "unterminated docstring starting on line %d", LocLine(Mark(Start)) + 1);
         }
 
         // The only characters on this line before the docstring terminator should be whitespace
         for (usize i = 0; i < vN(line); ++i) {
                 if (!xisspace(v__(line, i))) {
-                        error(ty, "illegal docstring terminator on line %d", state.loc.line + 1);
+                        error(ty, "illegal docstring terminator on line %d", LocLine(Mark(state.loc)) + 1);
                 }
         }
 
@@ -689,7 +910,7 @@ lexrawstr(Ty *ty)
                 switch (C(0)) {
                 case '\0':
                 Unterminated:
-                        error(ty, "unterminated string literal starting on line %d", Start.line + 1);
+                        error(ty, "unterminated string literal starting on line %d", LocLine(Mark(Start)) + 1);
                 case '\\':
                         nextchar(ty);
                         switch (C(0)) {
@@ -787,7 +1008,7 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                         goto Done;
                 }
 
-                if (doc && (first || state.loc.col == 0)) {
+                if (doc && (first || LocCol(Mark(state.loc)) == 0)) {
                         usize n = 0;
                         while (
                                 (n < indent)
@@ -908,7 +1129,7 @@ Unterminated:
                 ty,
                 "unterminated %s starting on line %d",
                 doc ? "docstring" : "string literal",
-                Start.line + 1
+                LocLine(Mark(Start)) + 1
         );
 }
 
@@ -1039,7 +1260,7 @@ Unterminated:
         error(
                 ty,
                 "unterminated tyx literal starting on line %d",
-                Start.line + 1
+                LocLine(Mark(Start)) + 1
         );
 }
 
@@ -1554,7 +1775,7 @@ saferegex(Ty *ty, bool defer_error)
         Token t = lexregex(ty, false, !defer_error);
         if (
                 (t.type != TOKEN_REGEX)
-             || ((t.start.line != t.end.line) && (t.regex->pattern[0] == ' '))
+             || (!LocSameLine(t.start, t.end) && (t.regex->pattern[0] == ' '))
         ) {
                 state = save;
                 if (defer_error) {
@@ -1570,7 +1791,7 @@ saferegex(Ty *ty, bool defer_error)
 static Token
 dotoken(Ty *ty, int ctx)
 {
-        Location start;
+        LexCursor start;
 
 Begin:
         start = Start = state.loc;
@@ -1596,8 +1817,8 @@ Begin:
         if (SRC >= END) {
                 return (Token) {
                         .type = TOKEN_END,
-                        .start = start,
-                        .end = state.loc,
+                        .start = Mark(start),
+                        .end = Mark(state.loc),
                         .ctx = state.ctx
                 };
         }
@@ -1747,8 +1968,8 @@ lex_token(Ty *ty, LexContext ctx)
         if (ty_setjmp(jb) != 0) {
                 return (Token) {
                         .type  = TOKEN_ERROR,
-                        .start = Start,
-                        .end   = state.loc,
+                        .start = Mark(Start),
+                        .end   = Mark(state.loc),
                         .nl    = state.need_nl,
                         .ctx   = state.ctx,
                         .error = LexErrorMessage
@@ -1761,20 +1982,47 @@ lex_token(Ty *ty, LexContext ctx)
 Token
 lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool first)
 {
-        LexState saved = state;
-        Location savedstart = Start;
-        Token t;
+        LexState  saved      = state;
+        LexCursor savedstart = Start;
+        Token     t;
 
-        state.loc = Start = start;
+        state.src = start.src;
+        state.loc = Start = Cursor(start);
         state.ctx = LEX_DOC;
 
         if (ty_setjmp(jb) == 0) {
                 t = lex_ss_string(ty, indent, first, end);
         } else {
                 t = mktoken(ty, TOKEN_ERROR);
-                t.end = state.loc;
+                t.end = Mark(state.loc);
                 t.error = LexErrorMessage;
         }
+
+        state = saved;
+        Start = savedstart;
+
+        return t;
+}
+
+Token
+lex_token_at(Ty *ty, u32 src, char const *base, char const *end, CToken const *c)
+{
+        LexState  saved      = state;
+        LexCursor savedstart = Start;
+        Token     t;
+
+        state = (LexState) {
+                .loc     = { .s = base + c->start, .byte = c->start },
+                .src     = src,
+                .ctx     = c->ctx,
+                .quotes  = c->quotes,
+                .start   = base,
+                .end     = end,
+                .in_pp   = (c->bits & CTOKEN_PP) != 0,
+                .need_nl = (c->bits & CTOKEN_NL) != 0
+        };
+
+        t = lex_token(ty, c->ctx);
 
         state = saved;
         Start = savedstart;
@@ -1787,12 +2035,11 @@ lex_init(Ty *ty, char const *file, char const *src)
 {
         lxst = &state;
         state = (LexState) {
-                .loc = (Location) {
+                .loc = (LexCursor) {
                         .s = src,
-                        .byte = 0,
-                        .line = 0,
-                        .col = 0
+                        .byte = 0
                 },
+                .src = SourceRegister(src, false),
                 .start = src,
                 .end = src + strlen(src),
                 .need_nl = false,
@@ -1838,7 +2085,8 @@ lex_restore(Ty *ty, LexState *s)
 void
 lex_rewind(Ty *ty, Location const *where)
 {
-        state.loc = *where;
+        state.src = where->src;
+        state.loc = Cursor(*where);
 }
 
 void
@@ -1859,10 +2107,17 @@ lex_state(Ty *ty)
         return &state;
 }
 
+void
+lex_seek(LexState *st, Location loc)
+{
+        st->src = loc.src;
+        st->loc = Cursor(loc);
+}
+
 Location
 lex_pos(Ty *ty)
 {
-        return state.loc;
+        return Mark(state.loc);
 }
 
 int

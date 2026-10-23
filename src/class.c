@@ -108,8 +108,8 @@ static char const *BuiltinClassNames[] = {
 static void
 init(Ty *ty, Class *c, Stmt *def)
 {
-        c->name        = def->class.name;
-        c->doc         = def->class.doc;
+        c->name        = def->class->name;
+        c->doc         = def->class->doc;
         c->def         = def;
         c->finalizer   = NONE;
         c->super       = (c->i != CLASS_OBJECT) ? C(CLASS_OBJECT) : NULL;
@@ -265,7 +265,7 @@ IsEmptyLiteral(Expr const *e)
         switch (e->type) {
         case EXPRESSION_ARRAY:
         case EXPRESSION_SET:   return vN(e->elements) == 0;
-        case EXPRESSION_DICT:  return vN(e->keys) == 0 && e->dflt == NULL;
+        case EXPRESSION_DICT:  return vN(e->keys) == 0 && DCX(e)->dflt == NULL;
         }
 
         return false;
@@ -565,7 +565,7 @@ ClaimAliases(Ty *ty, Class *c0, Class const *c, PendingAliasVec *pending)
                 return;
         }
 
-        MethodAliasVec const *as = &c->def->class.aliases;
+        MethodAliasVec const *as = &c->def->class->aliases;
 
         for (int i = 0; i < vN(*as); ++i) {
                 MethodAlias const *a = v_(*as, i);
@@ -807,24 +807,24 @@ completions(
         int n = vN(*out);
         int prefix_len = (prefix == NULL) ? 0 : strlen(prefix);
 
-        for (int i = 0; i < vN(c->def->class.methods); ++i) {
-                Expr *field = v__(c->def->class.methods, i);
-                if (s_eq_n(field->name, prefix, prefix_len)) {
+        for (int i = 0; i < vN(c->def->class->methods); ++i) {
+                Expr *field = v__(c->def->class->methods, i);
+                if (s_eq_n(field->fn->name, prefix, prefix_len)) {
                         xvP(*out, field);
                         xvP(*depths, depth);
                 }
         }
 
-        for (int i = 0; i < vN(c->def->class.getters); ++i) {
-                Expr *field = v__(c->def->class.getters, i);
-                if (s_eq_n(field->name, prefix, prefix_len)) {
+        for (int i = 0; i < vN(c->def->class->getters); ++i) {
+                Expr *field = v__(c->def->class->getters, i);
+                if (s_eq_n(field->fn->name, prefix, prefix_len)) {
                         xvP(*out, field);
                         xvP(*depths, depth);
                 }
         }
 
-        for (int i = 0; i < vN(c->def->class.fields); ++i) {
-                Expr *field = v__(c->def->class.fields, i);
+        for (int i = 0; i < vN(c->def->class->fields); ++i) {
+                Expr *field = v__(c->def->class->fields, i);
                 if (
                         (
                                 (field->type == EXPRESSION_IDENTIFIER)
@@ -938,12 +938,12 @@ FindMethodImmediate(ExprVec const *ms, char const *name)
         char const *dollar;
 
         for (int i = 0; i < vN(*ms); ++i) {
-                if (s_eq(name, v__(*ms, i)->name)) {
+                if (s_eq(name, v__(*ms, i)->fn->name)) {
                         return v__(*ms, i);
                 } else if (
-                        (v__(*ms, i)->name[0] == '_')
+                        (v__(*ms, i)->fn->name[0] == '_')
                      && ((dollar = strchr(name, '$')) != NULL)
-                     && (memcmp(name, v__(*ms, i)->name + 1, dollar - name) == 0)
+                     && (memcmp(name, v__(*ms, i)->fn->name + 1, dollar - name) == 0)
                 ) {
                         return v__(*ms, i);
                 }
@@ -956,7 +956,7 @@ Expr *
 FindGetter(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.getters, name);
+                Expr *m = FindMethodImmediate(&c->def->class->getters, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -976,7 +976,7 @@ Expr *
 FindSetter(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.setters, name);
+                Expr *m = FindMethodImmediate(&c->def->class->setters, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1005,7 +1005,7 @@ FindAliasImmediate(Class const *c, char const *name, bool s)
                 return NULL;
         }
 
-        MethodAliasVec const *as = &c->def->class.aliases;
+        MethodAliasVec const *as = &c->def->class->aliases;
 
         for (int i = 0; i < vN(*as); ++i) {
                 MethodAlias const *a = v_(*as, i);
@@ -1034,7 +1034,7 @@ FindMethodFrom(Class const *c0, Class const *c, char const *name, int depth)
         MethodAlias const *a;
 
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.methods, name);
+                Expr *m = FindMethodImmediate(&c->def->class->methods, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1070,7 +1070,7 @@ FindStaticFrom(Class const *c0, Class const *c, char const *name, int depth)
         MethodAlias const *a;
 
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.s_methods, name);
+                Expr *m = FindMethodImmediate(&c->def->class->s_methods, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1104,7 +1104,7 @@ Expr *
 FindStaticGetter(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.s_getters, name);
+                Expr *m = FindMethodImmediate(&c->def->class->s_getters, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1124,7 +1124,7 @@ Expr *
 FindStaticSetter(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.s_setters, name);
+                Expr *m = FindMethodImmediate(&c->def->class->s_setters, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1157,7 +1157,7 @@ Expr *
 FindField(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindFieldImmediate(&c->def->class.fields, name);
+                Expr *m = FindFieldImmediate(&c->def->class->fields, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1177,7 +1177,7 @@ Expr *
 FindStaticField(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindFieldImmediate(&c->def->class.s_fields, name);
+                Expr *m = FindFieldImmediate(&c->def->class->s_fields, name);
                 if (m != NULL) {
                         return m;
                 }
@@ -1209,7 +1209,7 @@ jit_methods(Ty *ty, struct itable *t)
 {
         for (u32 i = 0; i < vN(t->values); ++i) {
                 Value *v = v_(t->values, i);
-                if ((v->type == VALUE_FUNCTION) && expr_of(v)->must_jit) {
+                if ((v->type == VALUE_FUNCTION) && expr_of(v)->fn->must_jit) {
                         if (UNLIKELY(try_jit_now(ty, v) == NULL)) {
                                 zP("failed to JIT compile function %s", SHOW(v));
                         }
@@ -1286,7 +1286,7 @@ cache_offsets(
                 }
                 if (find != NULL) {
                         Expr const *meth = (*find)(c, M_NAME(id));
-                        if (meth != NULL && vN(meth->decorators) > 0) {
+                        if (meth != NULL && vN(meth->fn->decorators) > 0) {
                                 flags |= OFF_DECORATED;
                                 off = decorated_slot(c, meth);
                         }

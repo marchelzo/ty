@@ -619,8 +619,6 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
         u32      nlabels = vN(L->labels);
         bool     ok      = true;
 
-        SCRATCH_SAVE();
-
         u32  *at     = smA((n + 1) * sizeof *at);
         bool *leader = smA0(n + 1);
 
@@ -631,7 +629,7 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
                 }
         }
 
-        v00(L->insts);
+        lir_swap(L);
 
         for (u32 pc = 0; ok && pc < n; ++pc) {
                 at[pc] = vN(L->insts);
@@ -654,12 +652,8 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
         }
 
         for (u32 i = 0; i < n; ++i) {
-                inst_free(&old[i]);
+                inst_free(L, &old[i]);
         }
-
-        xmF(old);
-
-        SCRATCH_RESTORE();
 
         return ok;
 }

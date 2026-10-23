@@ -27,6 +27,7 @@ bool ProfMode;
 #include "vm.h"
 #include "value.h"
 #include "compiler.h"
+#include "parse.h"
 #include "class.h"
 #include "ty/debug.h"
 #include "gc.h"
@@ -1278,15 +1279,15 @@ SlotName(Expr const *fe, int slot)
 {
         if (
                 (fe == NULL)
-             || (fe->scope == NULL)
+             || (fe->fn->scope == NULL)
              || (slot < 0)
-             || (slot >= vN(fe->scope->owned))
-             || (v__(fe->scope->owned, slot) == NULL)
+             || (slot >= vN(fe->fn->scope->owned))
+             || (v__(fe->fn->scope->owned, slot) == NULL)
         ) {
                 return NULL;
         }
 
-        return v__(fe->scope->owned, slot)->identifier;
+        return v__(fe->fn->scope->owned, slot)->identifier;
 }
 
 static void
@@ -2266,15 +2267,15 @@ FuncOf(Expr const *fexpr, Expr const *expr)
                                 buf,
                                 sizeof buf,
                                 "(%s:%s:%u)",
-                                (fexpr->name != NULL) ? fexpr->name : "anon",
+                                (fexpr->fn->name != NULL) ? fexpr->fn->name : "anon",
                                 (mod != NULL && mod->name != NULL) ? mod->name : "?",
-                                fexpr->start.line + 1
+                                LocLine(fexpr->start) + 1
                         );
                         qn = buf;
                 }
                 f.name = strdup(qn);
-                f.line0 = fexpr->start.line;
-                f.line1 = fexpr->end.line;
+                f.line0 = LocLine(fexpr->start);
+                f.line1 = LocLine(fexpr->end);
                 if (mod != NULL && mod->name != NULL) {
                         usize ml = strlen(mod->name);
                         if (strncmp(f.name, mod->name, ml) == 0 && f.name[ml] == '.') {
@@ -2367,16 +2368,16 @@ SiteOf(u64 ip)
         Expr const *fexpr = compiler_find_func(M.ty, at);
         u32 func = FuncOf(fexpr, expr);
         Module const *mod = (expr != NULL) ? expr->mod : v_(M.funcs, func)->mod;
-        u32 line = (expr != NULL) ? expr->start.line : (fexpr != NULL) ? fexpr->start.line : 0;
+        u32 line = (expr != NULL) ? LocLine(expr->start) : (fexpr != NULL) ? LocLine(fexpr->start) : 0;
 
         if (
                 (fexpr != NULL)
              && (expr != NULL)
              && (expr->mod == fexpr->mod)
-             && (line < fexpr->start.line || line > fexpr->end.line)
+             && (line < LocLine(fexpr->start) || line > LocLine(fexpr->end))
         ) {
                 expr = fexpr;
-                line = fexpr->start.line;
+                line = LocLine(fexpr->start);
         }
 
         M.site_tab[j] = vN(M.sites);
@@ -2535,7 +2536,7 @@ AttachJit(void)
                                 f->decline = d->why;
                                 if (d->off >= 0) {
                                         Expr const *e = compiler_find_expr(M.ty, d->code + d->off);
-                                        f->decline_line = (e != NULL) ? (i32)e->start.line : -1;
+                                        f->decline_line = (e != NULL) ? (i32)LocLine(e->start) : -1;
                                 }
                         }
                 }
@@ -2550,7 +2551,7 @@ AttachJit(void)
                                 if (d->n > f->deopt_top) {
                                         Expr const *e = compiler_find_expr(M.ty, d->code + d->off);
                                         f->deopt_top = d->n;
-                                        f->deopt_line = (e != NULL) ? (i32)e->start.line : -1;
+                                        f->deopt_line = (e != NULL) ? (i32)LocLine(e->start) : -1;
                                 }
                         }
                 }
@@ -2585,7 +2586,7 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
 
         Expr const *fe = compiler_find_func(M.ty, ip - 1);
         u32 func = FuncOf(fe, e);
-        u32 li = LineOf(e->mod, e->start.line, func, e);
+        u32 li = LineOf(e->mod, LocLine(e->start), func, e);
         Line *l = v_(M.lines, li);
 
         l->slow += count;
@@ -3125,13 +3126,19 @@ Snippet(char *buf, usize n, Module const *mod, u32 line)
         buf[len] = '\0';
 }
 
-static bool
-HaveTokens(Module const *mod)
+static TokenVector const *
+HaveTokens(Ty *ty, Module const *mod)
 {
-        return (mod != NULL)
-            && (mod->source != NULL)
-            && (vN(mod->tokens) > 0)
-            && (v_(mod->tokens, 0)->start.s == mod->source + v_(mod->tokens, 0)->start.byte);
+        if (mod == NULL || mod->source == NULL) {
+                return NULL;
+        }
+
+        TokenVector const *ts = ModuleTokens(ty, (Module *)mod);
+
+        bool ok = (vN(*ts) > 0)
+               && (LocPtr(v_(*ts, 0)->start) == mod->source + v_(*ts, 0)->start.byte);
+
+        return ok ? ts : NULL;
 }
 
 static void
@@ -3160,12 +3167,14 @@ PutSource(Module const *mod, u32 line, int max)
 
         byte_vector b = {0};
 
-        if (ColorProfile && HaveTokens(mod)) {
+        TokenVector const *ts = ColorProfile ? HaveTokens(ty, mod) : NULL;
+
+        if (ts != NULL) {
                 syntax_highlight(
                         ty,
                         &b,
                         mod->source,
-                        &mod->tokens,
+                        ts,
                         s - mod->source,
                         s + len - mod->source,
                         NULL,
@@ -4120,10 +4129,10 @@ JsonFuncName(FILE *f, Expr const *fe)
 {
         char name[256];
 
-        if (fe != NULL && fe->name != NULL && fe->class != NULL) {
-                ty_snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+        if (fe != NULL && fe->fn->name != NULL && fe->fn->class != NULL) {
+                ty_snprintf(name, sizeof name, "%s.%s", fe->fn->class->name, fe->fn->name);
         } else {
-                ty_snprintf(name, sizeof name, "%s", (fe != NULL && fe->name != NULL) ? fe->name : "<anonymous>");
+                ty_snprintf(name, sizeof name, "%s", (fe != NULL && fe->fn->name != NULL) ? fe->fn->name : "<anonymous>");
         }
 
         JsonStr(f, name);
@@ -4144,7 +4153,7 @@ ExportDeopts(FILE *f)
                 JsonFuncName(f, d->expr);
                 fputs(",\"file\":", f);
                 JsonStr(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? DisplayPath(e->mod->path) : "");
-                fprintf(f, ",\"line\":%d,\"why\":", (e != NULL) ? (int)e->start.line + 1 : 0);
+                fprintf(f, ",\"line\":%d,\"why\":", (e != NULL) ? (int)LocLine(e->start) + 1 : 0);
                 JsonStr(f, DeoptWhy(d->why));
                 fputs(",\"guard\":", f);
                 JsonStr(f, GuardText(d->guard));
@@ -4172,7 +4181,7 @@ ExportDeopts(FILE *f)
                                         ? DisplayPath(se->mod->path)
                                         : ""
                                 );
-                                fprintf(f, ",%d]", (se != NULL) ? (int)se->start.line + 1 : 0);
+                                fprintf(f, ",%d]", (se != NULL) ? (int)LocLine(se->start) + 1 : 0);
                         }
                         fprintf(f, "],\"vars\":%s}", (s->vars != NULL) ? s->vars : "[]");
                 }

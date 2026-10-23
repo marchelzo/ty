@@ -747,7 +747,7 @@ static void
 SendMessage(JsonWriter *w)
 {
         char header[64];
-        int n = ty_snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", vN(w->b));
+        int n = ty_snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", (usize)vN(w->b));
 
         pthread_mutex_lock(&SendLock);
 
@@ -1011,7 +1011,7 @@ SameLine(Expr const *a, Expr const *b)
         return (a != NULL)
             && (b != NULL)
             && (a->mod == b->mod)
-            && (a->start.line == b->start.line);
+            && (LocLine(a->start) == LocLine(b->start));
 }
 
 static Value *
@@ -2390,7 +2390,7 @@ CollectLine(char const *path, int line, Expr const *only, vec(char *) *out)
 
                         if (
                                 (loc->e == NULL)
-                             || (loc->e->start.line != line)
+                             || (LocLine(loc->e->start) != line)
                              || (loc->p_start >= loc->p_end)
                              || !PathMatches(loc->e, path)
                         ) {
@@ -2517,8 +2517,8 @@ FindFunctionExpr(char const *name)
                         if (
                                 (e == NULL)
                              || !IsFunctionExpr(e)
-                             || (e->name == NULL)
-                             || (strcmp(e->name, name) != 0)
+                             || (e->fn->name == NULL)
+                             || (strcmp(e->fn->name, name) != 0)
                              || (e->mod == NULL)
                              || (e->mod->path == NULL)
                         ) {
@@ -2546,7 +2546,7 @@ ResolveFunctionCode(Breakpoint *bp)
         Expr const *fn = FindFunctionExpr(bp->name);
 
         for (int delta = 1; fn != NULL && delta <= 64; ++delta) {
-                int line = fn->start.line + (delta % 64);
+                int line = LocLine(fn->start) + (delta % 64);
                 if (CollectLine(fn->mod->path, line, fn, (void *)&bp->ips) > 0) {
                         bp->actual = line;
                         break;
@@ -2582,7 +2582,7 @@ ResolveFunction(Ty *ty, Breakpoint *bp)
         if (ip != NULL) {
                 xvP(bp->ips, ip);
                 Expr const *e = ExprAt(ty, ip);
-                bp->actual = (e != NULL) ? e->start.line : -1;
+                bp->actual = (e != NULL) ? LocLine(e->start) : -1;
         } else if (dot == NULL) {
                 ResolveFunctionCode(bp);
         }
@@ -3198,10 +3198,10 @@ ReqStackTrace(Ty *ty, Json const *req, Json const *args)
                 if (e != NULL && e->mod != NULL) {
                         jw_key(&body, "source");
                         WriteSource(&body, e->mod);
-                        jw_kint(&body, "line", OutLine(e->start.line));
-                        jw_kint(&body, "column", OutCol(e->start.col));
-                        jw_kint(&body, "endLine", OutLine(e->end.line));
-                        jw_kint(&body, "endColumn", OutCol(e->end.col));
+                        jw_kint(&body, "line", OutLine(LocLine(e->start)));
+                        jw_kint(&body, "column", OutCol(LocCol(e->start)));
+                        jw_kint(&body, "endLine", OutLine(LocLine(e->end)));
+                        jw_kint(&body, "endColumn", OutCol(LocCol(e->end)));
                 } else {
                         jw_kint(&body, "line", 0);
                         jw_kint(&body, "column", 0);
@@ -3283,7 +3283,7 @@ ReqScopes(Ty *ty, Json const *req, Json const *args)
         jw_key(&body, "scopes");
         jw_open(&body, '[');
 
-        if (fexp != NULL && fexp->scope != NULL) {
+        if (fexp != NULL && fexp->fn->scope != NULL) {
                 jw_open(&body, '{');
                 jw_kstr(&body, "name", "Locals");
                 jw_kstr(&body, "presentationHint", "locals");
@@ -3291,7 +3291,7 @@ ReqScopes(Ty *ty, Json const *req, Json const *args)
                 jw_kbool(&body, "expensive", false);
                 jw_close(&body, '}');
 
-                if (vN(fexp->scope->captured) > 0 && fr->f.fun.env != NULL) {
+                if (vN(fexp->fn->scope->captured) > 0 && fr->f.fun.env != NULL) {
                         jw_open(&body, '{');
                         jw_kstr(&body, "name", "Closure");
                         jw_kint(&body, "variablesReference", NewHandle(H_CLOSURE, id - 1, mod, NULL, false));
@@ -3372,7 +3372,7 @@ static void
 WriteLocals(Ty *ty, JsonWriter *w, FrameRef const *fr, isize frame, bool mark)
 {
         Expr const *fexp = expr_of(&fr->f.fun);
-        Scope const *scope = fexp->scope;
+        Scope const *scope = fexp->fn->scope;
         Expr const *ctx = ExprAt(ty, fr->f.ip - 1);
         Scope const *at = (ctx != NULL) ? ctx->xscope : NULL;
         isize n = min(vN(scope->owned), fr->f.nslot);
@@ -3418,7 +3418,7 @@ static void
 WriteClosure(Ty *ty, JsonWriter *w, FrameRef const *fr, isize frame, bool mark)
 {
         Expr const *fexp = expr_of(&fr->f.fun);
-        Scope const *scope = fexp->scope;
+        Scope const *scope = fexp->fn->scope;
 
         for (isize i = 0; i < vN(scope->captured); ++i) {
                 Symbol const *sym = v__(scope->captured, i);

@@ -46,12 +46,14 @@
  #define ty_realloc       mi_realloc
  #define ty_free          mi_free
  #define ty_aligned_alloc mi_aligned_alloc
+ #define ty_collect(f)    mi_collect(f)
 #else
  #define ty_malloc        malloc
  #define ty_calloc        calloc
  #define ty_realloc       realloc
  #define ty_free          free
  #define ty_aligned_alloc aligned_alloc
+ #define ty_collect(f)    ((void)(f))
 #endif
 
 #if defined(__APPLE__)
@@ -229,7 +231,7 @@ typedef vec(Module *)       ModuleVector;
 #define xmF(p)     ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
-#define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))
+#define Resize(p, n, m) ((p) = ArenaResize(ty, (p), (n), (m)))
 #define resize_scratch(p, n, m) ((p) = __builtin_memcpy(smA(n), (p), (m)))
 
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))

@@ -793,12 +793,8 @@ lir_validate(Ty *ty, Lir *L, LirError *err)
                 return false;
         }
 
-        SCRATCH_SAVE();
-
         LirCFG cfg;
         bool   ok = lir_cfg(ty, L, &cfg, err) && flow_valid(L, &cfg, err);
-
-        SCRATCH_RESTORE();
 
         return ok;
 }

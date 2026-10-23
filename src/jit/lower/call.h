@@ -90,7 +90,7 @@ call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
                 Value const *init = class_ctor(ty, value.class);
                 JitFn *code = (
                         enterable(init, argc)
-                     && (argc > 0 || !expr_of(init)->inert)
+                     && (argc > 0 || !expr_of(init)->fn->inert)
                 ) ? try_jit(ty, init) : NULL;
                 if (code != NULL) {
                         Value callee = *init;
@@ -237,7 +237,7 @@ receiver_class(BcLir *c, BcLirNode const *node)
                 return self_class(c);
         }
 
-        T2Type type = find_type_hint(&expr_of(c->function)->type_hints, node - c->nodes);
+        T2Type type = find_type_hint(&expr_of(c->function)->fn->type_hints, node - c->nodes);
 
         return (type == T2_TYPE_INVALID) ? NULL : expected_class_of(c->ctx, type);
 }
@@ -915,7 +915,7 @@ inline_ctor(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabe
         if (
                 !class->really_final
              || !roomy(init, argc)
-             || (argc == 0 && expr_of(init)->inert)
+             || (argc == 0 && expr_of(init)->fn->inert)
         ) {
                 return false;
         }

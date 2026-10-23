@@ -1,0 +1,28 @@
+import ffi as c
+
+#|if __apple__
+const NGHTTP2 = [
+    '/opt/homebrew/opt/libnghttp2/lib/libnghttp2.14.dylib',
+    '/usr/local/opt/libnghttp2/lib/libnghttp2.14.dylib',
+    '/opt/homebrew/lib/libnghttp2.14.dylib',
+    'nghttp2'
+]
+#|else
+const NGHTTP2 = ['nghttp2']
+#|]
+
+pub fn libnghttp2() -> Ptr[Any] | nil {
+    c.open(NGHTTP2, versions: [14, nil], env: 'TY_LIBNGHTTP2')
+}
+
+pub fn libkqueue() -> Ptr[Any] | nil {
+    c.open('kqueue', versions: [0, nil], env: 'TY_LIBKQUEUE')
+}
+
+pub fn nghttp2?() -> Bool {
+    libnghttp2() != nil
+}
+
+pub fn kqueue?() -> Bool {
+    __apple__ || __bsd__ || libkqueue() != nil
+}

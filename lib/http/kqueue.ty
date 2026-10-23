@@ -2,9 +2,10 @@ import ffi as c (C!)
 import os
 import errno
 import http.backend as backend
+import http.native (libkqueue as open-kqueue)
 
 #|if __linux__
-if not let $libkqueue = c.open('kqueue', versions: [0, nil], env: 'TY_LIBKQUEUE') {
+if not let $libkqueue = open-kqueue() {
     throw RuntimeError('http.kqueue: libkqueue not found (set TY_LIBKQUEUE)')
 }
 

@@ -1,0 +1,711 @@
+import os
+import errno
+import time
+import ssl
+import ffi as c (C!)
+import path (Path)
+import http.url (URL)
+import http.headers (Headers)
+import http.display as display
+
+C! fn {
+    long send(int fd, void const *buf, uint64_t n, int flags);
+    long recv(int fd, void *buf, uint64_t n, int flags);
+}
+
+let sys-send = send
+let sys-recv = recv
+
+pub const SEND_FLAGS  = __apple__ ? 0 : (__bsd__ ? 0x20000 : 0x4000)
+pub const SO_ERROR    = (__apple__ || __bsd__) ? 0x1007 : 4
+pub const IPPROTO_TCP = 6
+pub const TCP_NODELAY = 1
+pub const RECV_CHUNK  = 64 * 1024
+pub const FILE_CHUNK  = 256 * 1024
+
+/// Base class of every error raised while sending a request.
+pub class RequestError < RuntimeError {
+    request: Request | nil
+
+    init(what: String, request: Request | nil = nil) {
+        self.request = request
+        super(what)
+    }
+}
+
+/// The request could not be delivered or the response could not be read.
+pub class TransportError < RequestError {}
+
+pub class TimeoutError < TransportError {}
+pub class ConnectTimeout < TimeoutError {}
+pub class ReadTimeout < TimeoutError {}
+pub class WriteTimeout < TimeoutError {}
+pub class PoolTimeout < TimeoutError {}
+
+pub class NetworkError < TransportError {}
+pub class ConnectError < NetworkError {}
+pub class ReadError < NetworkError {}
+pub class WriteError < NetworkError {}
+
+/// The peer violated HTTP (malformed response, reset stream, ...).
+pub class ProtocolError < TransportError {}
+pub class ProxyError < TransportError {}
+pub class UnsupportedProtocol < TransportError {}
+
+pub class TooManyRedirects < RequestError {}
+pub class DecodingError < RequestError {}
+
+pub use Seconds = Int | Float | Bool | nil
+
+pub fn seconds(x: Seconds) -> Float | nil {
+    match x {
+        nil, false => nil,
+        n: Int     => float(n),
+        f: Float   => f,
+        other      => throw ValueError("http: invalid timeout: {other}")
+    }
+}
+
+/// Timeouts in seconds; `nil`/`false` disables one. `read` and `write`
+/// bound each wait for the network, not the whole transfer; `pool` bounds
+/// waiting for a free connection.
+///
+/// ```
+/// Timeout(10)                         // every phase 10s
+/// Timeout(10, connect: 2)
+/// Timeout(connect: 2, read: false)    // no read timeout
+/// ```
+pub class Timeout {
+    connect: Float | nil
+    read:    Float | nil
+    write:   Float | nil
+    pool:    Float | nil
+
+    init(
+        all: Seconds = 5.0,
+        connect: Seconds = nil,
+        read: Seconds = nil,
+        write: Seconds = nil,
+        pool: Seconds = nil
+    ) {
+        let base = seconds(all)
+        self.connect = (connect == nil) ? base : seconds(connect)
+        self.read    = (read == nil) ? base : seconds(read)
+        self.write   = (write == nil) ? base : seconds(write)
+        self.pool    = (pool == nil) ? base : seconds(pool)
+    }
+
+    static of(x: _, fallback: Timeout | nil = nil) -> Timeout {
+        match x {
+            t: Timeout       => t,
+            nil              => fallback ?? Timeout(),
+            false            => Timeout(false),
+            n: Int | Float   => Timeout(n),
+            r                => Timeout(
+                r.?all ?? (fallback ?? Timeout()).read,
+                connect: r.?connect,
+                read: r.?read,
+                write: r.?write,
+                pool: r.?pool
+            )
+        }
+    }
+
+    __str__() -> String {
+        "Timeout(connect: {connect}, read: {read}, write: {write}, pool: {pool})"
+    }
+}
+
+pub fn deadline(t: Float | nil) -> Float | nil {
+    (t == nil) ? nil : time.now() + t
+}
+
+pub fn left(d: Float | nil) -> Float | nil {
+    (d == nil) ? nil : max(0.0, d - time.now())
+}
+
+/// Waits until `fd` is ready for `events`; false when `until` passes.
+pub fn wait-fd(fd: Int, events: Int, until: Float | nil) -> Bool {
+    while true {
+        let t = left(until)
+        if t != nil && t <= 0.0 {
+            return false
+        }
+        match os.poll([(fd, events)], t) {
+            Ok([]) => {
+                if until != nil {
+                    return false
+                }
+            },
+            Ok(_) => return true,
+            Err(e) => {
+                if e != errno.EINTR {
+                    throw OSError('http: poll')
+                }
+            }
+        }
+    }
+    false
+}
+
+pub fn body-of(x: String | Blob | nil) -> Blob | nil {
+    match x {
+        nil       => nil,
+        b: Blob   => b,
+        s: String => Blob(s)
+    }
+}
+
+pub use BodySource = Path | Iterable[String | Blob]
+
+pub trait Body {
+    read() -> Blob | nil;
+    close();
+}
+
+/// An outgoing request. `content` is a Blob when the body is in memory;
+/// `stream` holds an iterable of String/Blob chunks or a `Path` otherwise.
+pub class Request {
+    method:     String
+    url:        URL
+    headers:    Headers
+    content:    Blob | nil
+    stream:     BodySource | nil
+    extensions: Dict[String, String]
+
+    init(
+        method: String,
+        url: String | URL,
+        headers: _ = nil,
+        content: String | Blob | nil = nil,
+        stream: BodySource | nil = nil,
+        extensions: Dict[String, String] = %{}
+    ) {
+        self.method     = method.upper()
+        self.url        = (url :: URL) ? url : URL(url)
+        self.headers    = (headers :: Headers) ? headers : Headers(headers)
+        self.content    = body-of(content)
+        self.stream     = stream
+        self.extensions = extensions
+    }
+
+    header(name: String) -> String | nil {
+        headers[name]
+    }
+
+    content-type -> String | nil {
+        headers['content-type']
+    }
+
+    /// Whether the body can be sent again (for redirects and retries).
+    replayable? -> Bool {
+        stream == nil || (stream :: Path)
+    }
+
+    /// The whole body (reading a streamed body consumes it).
+    read() -> Blob {
+        if let $b = content {
+            return b
+        }
+        let out = Blob()
+        match stream {
+            nil     => {},
+            p: Path => out.push(p.read-bytes()),
+            it      => {
+                for chunk in it {
+                    out.push((chunk :: Blob) ? chunk : str(chunk))
+                }
+                content = out
+                stream = nil
+            }
+        }
+        out
+    }
+
+    copy() -> Request {
+        let r = Request(method, URL(url), headers.copy(), content, stream, %{k: v for k, v in extensions})
+        r
+    }
+
+    /// Renders the request like `Response.show` does.
+    pretty(body: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
+        let col = color ?? display.color?()
+        let version = extensions['http-version'] ?? 'HTTP/1.1'
+        let hs = [('Host', url.authority), *headers.items().filter(p -> p.0.lower() != 'host')]
+        let data = match stream {
+            nil => content,
+            _   => Blob('<streamed body>')
+        }
+        display.message(display.request-line(method, url.target, version, col), hs, data, content-type, col, limit, body)
+    }
+
+    show(%kwargs) {
+        print(pretty(**kwargs))
+    }
+
+    __str__() -> String {
+        "<Request [{method} {url}]>"
+    }
+}
+
+pub fn tcp-connect(host: String, port: Int, until: Float | nil, local: String | nil) -> Int {
+    let addrs = match os.getaddrinfo(host, port, 0, os.SOCK_STREAM, 0) {
+        Ok(xs) => xs,
+        Err(e) => throw ConnectError("http: cannot resolve {host}: {os.gai_strerror(e)}")
+    }
+
+    let first = (#addrs > 0) ? addrs[0].family : os.AF_INET
+    let primary = addrs.filter(\_.family == first)
+    let secondary = addrs.filter(\_.family != first)
+    let ordered = []
+    for i in ..max(#primary, #secondary) {
+        if i < #primary {
+            ordered.push(primary[i])
+        }
+        if i < #secondary {
+            ordered.push(secondary[i])
+        }
+    }
+
+    let pending = []
+    let last = 'no addresses'
+
+    fn finish(keep: Int | nil) {
+        for (fd, _) in pending {
+            if fd != keep {
+                os.close(fd)
+            }
+        }
+    }
+
+    let k = 0
+    while k < #ordered || #pending > 0 {
+        if k < #ordered {
+            let a = ordered[k]
+            k += 1
+            let fd = os.socket(a.family, os.SOCK_STREAM, 0)
+            if fd < 0 {
+                last = 'socket() failed'
+                continue
+            }
+            os.fcntl(fd, os.F_SETFL, os.fcntl(fd, os.F_GETFL) | os.O_NONBLOCK)
+            if local != nil {
+                if let Ok([la, *]) = os.getaddrinfo(local, 0, a.family, os.SOCK_STREAM, 0) {
+                    os.bind(fd, la)
+                }
+            }
+            let rc = os.connect(fd, a)
+            if rc == 0 {
+                finish(nil)
+                return fd
+            }
+            let e = errno.get()
+            if e != errno.EINPROGRESS && e != errno.EINTR {
+                last = errno.str(e)
+                os.close(fd)
+                continue
+            }
+            pending.push((fd, a))
+        }
+
+        let stagger = (k < #ordered) ? 0.25 : nil
+        let t = left(until)
+        if t != nil && t <= 0.0 {
+            finish(nil)
+            throw ConnectTimeout("http: connection to {host}:{port} timed out")
+        }
+        let wait = t
+        if stagger != nil && (wait == nil || stagger < wait) {
+            wait = stagger
+        }
+        let polled = os.poll([(fd, os.POLLOUT) for (fd, _) in pending], wait)
+        if let Err(e) = polled {
+            if e == errno.EINTR {
+                continue
+            }
+            finish(nil)
+            throw ConnectError('http: poll failed while connecting')
+        }
+        let ready = match polled {
+            Ok(rs) => rs,
+            _      => []
+        }
+        for (fd, _) in ready {
+            let err = os.getsockopt(fd, os.SOL_SOCKET, SO_ERROR) ?? 0
+            if err == 0 {
+                finish(fd)
+                return fd
+            }
+            last = errno.str(err)
+            os.close(fd)
+            pending = pending.filter(p -> p.0 != fd)
+        }
+        if #pending == 0 && k >= #ordered {
+            break
+        }
+        if stagger == nil && #ready == 0 && until != nil && left(until) == 0.0 {
+            finish(nil)
+            throw ConnectTimeout("http: connection to {host}:{port} timed out")
+        }
+    }
+
+    throw ConnectError("http: cannot connect to {host}:{port}: {last}")
+}
+
+/// A connected socket, optionally wrapped in TLS. Reads and writes honor
+/// deadlines; the descriptor is non-blocking.
+pub class Socket {
+    fd:    Int
+    tls:   ssl.Session | nil
+    host:  String
+    port:  Int
+    lower: Socket | nil
+
+    __tls-lock: Mutex
+
+    __in:    Blob
+    __out:   Blob
+    __plain: Blob
+    __eof?:  Bool
+
+    init(fd: Int, host: String, port: Int) {
+        self.fd   = fd
+        self.host = host
+        self.port = port
+        tls       = nil
+        lower     = nil
+        __tls-lock = Mutex()
+        __in      = Blob.zeros(RECV_CHUNK)
+        __plain   = Blob.zeros(RECV_CHUNK * 4)
+        __out     = Blob()
+        __eof?    = false
+#|if __apple__
+        os.setsockopt(fd, 0xFFFF, 0x1022, 1)
+#|]
+    }
+
+    static tcp(host: String, port: Int, until: Float | nil, local: String | nil = nil) -> Socket {
+        let fd = tcp-connect(host, port, until, local)
+        os.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
+        Socket(fd, host, port)
+    }
+
+    /// A socket whose bytes travel inside `s` (TLS within a TLS tunnel).
+    static over(s: Socket) -> Socket {
+        let x = Socket(s.fd, s.host, s.port)
+        x.lower = s
+        x
+    }
+
+    static unix(path: String, until: Float | nil) -> Socket {
+        let fd = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
+        if fd < 0 {
+            throw ConnectError('http: socket() failed')
+        }
+        if os.connect(fd, {family: os.AF_UNIX, path: path}) != 0 {
+            let e = errno.str(errno.get())
+            os.close(fd)
+            throw ConnectError("http: cannot connect to {path}: {e}")
+        }
+        os.fcntl(fd, os.F_SETFL, os.fcntl(fd, os.F_GETFL) | os.O_NONBLOCK)
+        Socket(fd, path, 0)
+    }
+
+    alpn -> String | nil {
+        (tls == nil) ? nil : tls.alpn
+    }
+
+    closed? -> Bool {
+        fd < 0
+    }
+
+    start-tls(ctx: ssl.Context, server-name: String, until: Float | nil) {
+        let s = ssl.Session(ctx, server-name)
+        tls = s
+        try {
+            while true {
+                let done? = s.handshake()
+                __flush(until, ConnectTimeout)
+                if done? {
+                    return
+                }
+                let $raw = recv-raw(until, ConnectTimeout) or throw ConnectError("http: {server-name} closed the connection during the TLS handshake")
+                s.feed(raw)
+            }
+        } catch e: ssl.CertificateError {
+            throw ConnectError("http: TLS certificate verification failed for {server-name}: {e}")
+        } catch e: ssl.SSLError {
+            throw ConnectError("http: TLS handshake with {server-name} failed: {e}")
+        }
+    }
+
+    /// Ciphertext (or plaintext without TLS) straight from the socket.
+    recv-raw(until: Float | nil, timeout-class: (String) -> TimeoutError = ReadTimeout) -> Blob | nil {
+        if __eof? {
+            return nil
+        }
+        if let $l = lower {
+            let got = try {
+                l.recv(until)
+            } catch e: ReadTimeout {
+                throw timeout-class(str(e))
+            }
+            if got == nil {
+                __eof? = true
+            }
+            return got
+        }
+        while true {
+            let n = sys-recv(fd, __in, RECV_CHUNK, 0)
+            if n > 0 {
+                return __in[;n]
+            }
+            if n == 0 {
+                __eof? = true
+                return nil
+            }
+            let e = errno.get()
+            if e == errno.EAGAIN || e == errno.EWOULDBLOCK {
+                if !wait-fd(fd, os.POLLIN, until) {
+                    throw timeout-class("http: timed out reading from {host}")
+                }
+                continue
+            }
+            if e == errno.EINTR {
+                continue
+            }
+            if e == errno.ECONNRESET {
+                __eof? = true
+                throw ReadError("http: connection reset by {host}")
+            }
+            throw ReadError("http: recv from {host}: {errno.str(e)}")
+        }
+        nil
+    }
+
+    /// Feeds ciphertext to TLS and returns the plaintext it yields
+    /// (possibly empty); nil once TLS has closed.
+    decrypt(raw: Blob | nil, until: Float | nil = nil) -> Blob | nil {
+        let $s = tls or return raw
+        if raw == nil {
+            s.feed-eof()
+        } else {
+            s.feed(raw)
+        }
+        let out = __tls-read(s)
+        while out != nil && #out == #__plain {
+            match __tls-read(s) {
+                nil  => break,
+                more => out.push(more)
+            }
+        }
+        if s.pending > 0 {
+            __out.clear()
+            s.drain(__out)
+            __send-raw(__out, until, WriteTimeout)
+        }
+        if out == nil || (raw == nil && #out == 0) {
+            return nil
+        }
+        out
+    }
+
+    /// Decrypted bytes available now: empty when TLS needs more input, nil
+    /// once the peer has closed.
+    __tls-read(s: ssl.Session) -> Blob | nil {
+        let k = try {
+            s.read-into(__plain, 0, #__plain)
+        } catch e: ssl.SSLError {
+            throw ReadError("http: TLS error from {host}: {e}")
+        }
+        (k < 0) ? nil : __plain[;k]
+    }
+
+    /// The next plaintext chunk; nil at end of stream. One thread may read
+    /// while others `send`: the TLS state is only touched under a lock, and
+    /// the wait for the network happens outside it.
+    recv(until: Float | nil) -> Blob | nil {
+        let $s = tls or return recv-raw(until)
+        while true {
+            let out = do {
+                let ^_ = __tls-lock.lock()
+                let got = __tls-read(s)
+                if s.pending > 0 {
+                    __flush(until, WriteTimeout)
+                }
+                got
+            }
+            let $data = out or return nil
+            if #data > 0 {
+                return data
+            }
+            let raw = recv-raw(until)
+            let ^_ = __tls-lock.lock()
+            if raw == nil {
+                s.feed-eof()
+                let tail = (try { __tls-read(s) }) ?? nil
+                return (tail != nil && #tail > 0) ? tail : nil
+            }
+            s.feed(raw)
+        }
+        nil
+    }
+
+    __flush(until: Float | nil, timeout-class: (String) -> TimeoutError) {
+        let $s = tls or return
+        __out.clear()
+        s.drain(__out)
+        __send-raw(__out, until, timeout-class)
+        __out.clear()
+    }
+
+    __send-raw(data: String | Blob, until: Float | nil, timeout-class: (String) -> TimeoutError) {
+        if let $l = lower {
+            return l.send(data, until)
+        }
+        let size = data.size()
+        let off = 0
+        while off < size {
+            let n = sys-send(fd, data.ptr() + off, size - off, SEND_FLAGS)
+            if n >= 0 {
+                off += n
+                continue
+            }
+            let e = errno.get()
+            if e == errno.EAGAIN || e == errno.EWOULDBLOCK {
+                if !wait-fd(fd, os.POLLOUT, until) {
+                    throw timeout-class("http: timed out writing to {host}")
+                }
+                continue
+            }
+            if e == errno.EINTR {
+                continue
+            }
+            throw WriteError("http: send to {host}: {errno.str(e)}")
+        }
+    }
+
+    send(data: String | Blob, until: Float | nil) {
+        let $s = tls or return __send-raw(data, until, WriteTimeout)
+        let ^_ = __tls-lock.lock()
+        let size = data.size()
+        let off = 0
+        while off < size {
+            let n = try {
+                s.write-ptr(data.ptr() + off, size - off)
+            } catch e: ssl.SSLError {
+                throw WriteError("http: TLS error writing to {host}: {e}")
+            }
+            off += n
+            __flush(until, WriteTimeout)
+            if n == 0 && off < size {
+                let $raw = recv-raw(until) or throw WriteError("http: {host} closed the connection")
+                s.feed(raw)
+            }
+        }
+    }
+
+    /// True when an idle connection has been closed (or sent unexpected
+    /// data) by the peer.
+    stale?() -> Bool {
+        if fd < 0 || __eof? {
+            return true
+        }
+        if let $l = lower {
+            return l.stale?()
+        }
+        match os.poll([(fd, os.POLLIN)], 0) {
+            Ok([]) => false,
+            _      => true
+        }
+    }
+
+    close() {
+        if fd < 0 {
+            return
+        }
+        if let $l = lower {
+            if let $s = tls {
+                try {
+                    s.shutdown()
+                    __out.clear()
+                    s.drain(__out)
+                    l.send(__out, deadline(1.0))
+                } catch _ {
+                }
+            }
+            fd = -1
+            return l.close()
+        }
+        if let $s = tls {
+            try {
+                s.shutdown()
+                __out.clear()
+                s.drain(__out)
+                sys-send(fd, __out, #__out, SEND_FLAGS)
+            } catch _ {
+            }
+        }
+        os.close(fd)
+        fd = -1
+    }
+}
+
+
+/// A reused connection that the server had already closed; the request
+/// never reached it and is retried transparently.
+pub class StaleConnection < ReadError {}
+
+pub fn stream-chunks*(src: BodySource) {
+    match src {
+        p: Path => {
+            let fd = os.open(str(p), os.O_RDONLY)
+            if fd < 0 {
+                throw OSError("http: cannot open {p}")
+            }
+            try {
+                while true {
+                    let buf = Blob()
+                    let n = os.read(fd, buf, FILE_CHUNK)
+                    if n == nil || n <= 0 {
+                        break
+                    }
+                    yield buf
+                }
+            } finally {
+                os.close(fd)
+            }
+        },
+        it => {
+            for chunk in it {
+                if chunk.size() > 0 {
+                    yield chunk
+                }
+            }
+        }
+    }
+}
+
+pub use Exchange = (Int, String, Headers, String, Body)
+
+pub trait Connection {
+    key -> String;
+    requests -> Int;
+    http2? -> Bool;
+    protocol -> String;
+    reusable? -> Bool;
+    exchange(req: Request, t: Timeout, extra: Array[(String, String)] = []) -> Exchange;
+    close();
+}
+
+pub trait Multiplexed < Connection {
+    active -> Int;
+    usable? -> Bool;
+    idle? -> Bool;
+    reserve();
+    unreserve();
+}
+
+pub trait ConnPool {
+    release(conn: Connection, reuse?: Bool);
+}

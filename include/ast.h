@@ -317,27 +317,128 @@ typedef struct type_bound {
 
 typedef struct type_hint {
         T2Type type;
-        iptr pc;
+        i32 pc;
 } TypeHint;
 
+typedef struct fn_expr {
+        char *name;
+        char const *doc;
+        char const *proto;
+        Symbol *fn_symbol;
+        Symbol *self;
+        Scope *scope;
+        ExprVec type_params;
+        StringVector params;
+        ExprVec dflts;
+        ExprVec constraints;
+        ExprVec retained_constraints;
+        ExprVec decorators;
+        ExprVec functions;
+        union {
+                Expr *return_type;
+                Expr *parent;
+        };
+        symbol_vector param_symbols;
+        symbol_vector bound_symbols;
+        TypeBoundVector type_bounds;
+        Stmt *body;
+        Class *class;
+        Expr *overload;
+        TypeHintVector type_hints;
+        bool has_defer;
+        bool must_jit;
+        bool inert;
+        bool emit;
+        bool star;
+        bool clone;
+        unsigned char ftype;
+        unsigned char mtype;
+        int ikwargs;
+        int rest;
+        int t;
+} FnExpr;
+
+#define NewFn()       ((FnExpr *)amA0(sizeof (FnExpr)))
+#define NewClassDef() ((ClassDefinition *)amA0(sizeof (ClassDefinition)))
+
+typedef struct call_kw {
+        ExprVec kwargs;
+        ExprVec fkwconds;
+        StringVector kws;
+} CallKw;
+
+extern CallKw const NoCallKw;
+
+#define CKW(e)  ((CallKw const *)(((e)->ckw != NULL) ? (e)->ckw : &NoCallKw))
+#define CKWx(e) (((e)->ckw != NULL) ? (e)->ckw : ((e)->ckw = amA0(sizeof (CallKw))))
+#define MKW(e)  ((CallKw const *)(((e)->mkw != NULL) ? (e)->mkw : &NoCallKw))
+#define MKWx(e) (((e)->mkw != NULL) ? (e)->mkw : ((e)->mkw = amA0(sizeof (CallKw))))
+
+typedef struct {
+        ExprVec   holes;
+        i32Vector ctxs;
+} TemplateX;
+
+typedef struct {
+        vec(bool)     optional;
+        Comprehension compr;
+} ListX;
+
+typedef struct {
+        vec(bool) required;
+        ExprVec   tconds;
+} TupleX;
+
+typedef struct {
+        ExprVec    fmts;
+        ExprVec    fmtfs;
+        int_vector widths;
+} FmtX;
+
+typedef struct {
+        ExprVec       dconds;
+        Comprehension dcompr;
+        Expr         *dflt;
+} DictX;
+
+extern TemplateX const NoTemplateX;
+extern ListX     const NoListX;
+extern TupleX    const NoTupleX;
+extern FmtX      const NoFmtX;
+extern DictX     const NoDictX;
+
+#define ARMX(e, f, T) ((T const *)(((e)->f != NULL) ? (e)->f : &No##T))
+#define ARMW(e, f, T) (((e)->f != NULL) ? (e)->f : ((e)->f = amA0(sizeof (T))))
+
+#define TMX(t)  ARMX(t, tmx, TemplateX)
+#define TMXx(t) ARMW(t, tmx, TemplateX)
+#define LSX(e)  ARMX(e, lsx, ListX)
+#define LSXx(e) ARMW(e, lsx, ListX)
+#define TPX(e)  ARMX(e, tpx, TupleX)
+#define TPXx(e) ARMW(e, tpx, TupleX)
+#define FMX(e)  ARMX(e, fmx, FmtX)
+#define FMXx(e) ARMW(e, fmx, FmtX)
+#define DCX(e)  ARMX(e, dcx, DictX)
+#define DCXx(e) ARMW(e, dcx, DictX)
+
 struct expression {
-        void *arena;
         Expr *origin;
+        Module *mod;
+        Expr *xfunc;
+        Scope *xscope;
+
+        Location start;
+        Location end;
+        T2Type _type;
 
         u8 type;
         u8 dbg;
         u8 synth;
 
-        Location start;
-        Location end;
-        Module *mod;
-        Expr *xfunc;
-        Scope *xscope;
-        T2Type _type;
-
         bool annotated;
         bool has_resources;
         bool bang;
+        bool maybe;
 
         union {
                 intmax_t integer;
@@ -357,15 +458,13 @@ struct expression {
                 struct {
                         StmtVec stmts;
                         ExprVec exprs;
-                        ExprVec holes;
-                        i32Vector ctxs;
+                        TemplateX *tmx;
                 } template;
                 struct {
                         Symbol *atmp;
                         ExprVec elements;
                         ExprVec aconds;
-                        vec(bool) optional;
-                        Comprehension compr;
+                        ListX *lsx;
                 };
                 struct {
                     Expr *m;
@@ -384,8 +483,7 @@ struct expression {
                         bool only_identifiers;
                         ExprVec es;
                         ConstStringVector names;
-                        vec(bool) required;
-                        ExprVec tconds;
+                        TupleX *tpx;
                 };
                 struct {
                         Expr *cond;
@@ -402,10 +500,8 @@ struct expression {
                                 char const *re_flags;
                         };
                         vec(Bytes) strings;
-                        ExprVec fmts;
-                        ExprVec fmtfs;
-                        int_vector widths;
                         ExprVec expressions;
+                        FmtX *fmx;
                 };
                 struct {
                         int u;
@@ -451,58 +547,18 @@ struct expression {
                         ExprVec patterns;
                         ExprVec thens;
                 };
-                struct {
-                        char *name;
-                        char const *doc;
-                        char const *proto;
-                        Symbol *fn_symbol;
-                        Symbol *self;
-                        Scope *scope;
-                        ExprVec type_params;
-                        StringVector params;
-                        ExprVec dflts;
-                        ExprVec constraints;
-                        ExprVec retained_constraints;
-                        ExprVec decorators;
-                        ExprVec functions;
-                        union {
-                                Expr *return_type;
-                                Expr *parent;
-                        };
-                        symbol_vector param_symbols;
-                        symbol_vector bound_symbols;
-                        TypeBoundVector type_bounds;
-                        Stmt *body;
-                        Class *class;
-                        Expr *overload;
-                        TypeHintVector type_hints;
-                        bool has_defer;
-                        bool must_jit;
-                        bool inert;
-                        bool emit;
-                        bool star;
-                        bool clone;
-                        unsigned char ftype;
-                        unsigned char mtype;
-                        int ikwargs;
-                        int rest;
-                        int t;
-                };
+                FnExpr *fn;
                 struct {
                         Expr *function;
                         ExprVec args;
                         ExprVec fconds;
-                        ExprVec kwargs;
-                        ExprVec fkwconds;
-                        StringVector kws;
+                        CallKw *ckw;
                 };
                 struct {
                         Symbol *dtmp;
                         ExprVec keys;
                         ExprVec values;
-                        ExprVec dconds;
-                        Comprehension dcompr;
-                        Expr *dflt;
+                        DictX *dcx;
                 };
                 struct {
                         Expr *container;
@@ -522,32 +578,29 @@ struct expression {
                                         Expr *method;
                                         ExprVec method_args;
                                         ExprVec mconds;
-                                        ExprVec method_kwargs;
-                                        StringVector method_kws;
+                                        CallKw *mkw;
                                 };
                         };
-                        bool maybe;
                 };
         };
 };
 
 struct statement {
-        void *arena;
         Expr *origin;
+        Module *mod;
+        Expr *xfunc;
+        Scope *xscope;
+
+        Location start;
+        Location end;
+        T2Type _type;
 
         u8 type;
         u8 dbg;
         u8 synth;
 
-        Location start;
-        Location end;
-        Module *mod;
-        Expr *xfunc;
-        Scope *xscope;
-        T2Type _type;
-
-        i32 when;
         bool will_return;
+        i32 when;
         Namespace *ns;
 
         union {
@@ -572,8 +625,8 @@ struct statement {
                         StringVector names;
                 } use;
                 union {
-                        ClassDefinition tag;
-                        ClassDefinition class;
+                        ClassDefinition *tag;
+                        ClassDefinition *class;
                 };
                 struct {
                         Stmt *init;
@@ -629,6 +682,100 @@ struct statement {
 };
 
 inline static bool
+HasFnArm(int type)
+{
+        switch (type) {
+        case EXPRESSION_FUNCTION:
+        case EXPRESSION_IMPLICIT_FUNCTION:
+        case EXPRESSION_GENERATOR:
+        case EXPRESSION_MULTI_FUNCTION:
+        case EXPRESSION_NAMESPACE:
+        case EXPRESSION_MODULE:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+inline static bool
+HasClassArm(int type)
+{
+        switch (type) {
+        case STATEMENT_CLASS_DEFINITION:
+        case STATEMENT_TAG_DEFINITION:
+        case STATEMENT_TYPE_DEFINITION:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+#define CloneExpr(e) ((CloneExpr)(ty, (e)))
+inline static Expr *
+(CloneExpr)(Ty *ty, Expr const *e)
+{
+        Expr *c = aclone(e);
+
+        if (HasFnArm(c->type) && c->fn != NULL) {
+                c->fn = aclone(c->fn);
+        }
+
+        if (c->type == EXPRESSION_FUNCTION_CALL && c->ckw != NULL) {
+                c->ckw = aclone(c->ckw);
+        }
+
+        switch (c->type) {
+        case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
+                c->mkw = (c->mkw == NULL) ? NULL : aclone(c->mkw);
+                break;
+
+        case EXPRESSION_ARRAY:
+        case EXPRESSION_SET:
+        case EXPRESSION_ARRAY_COMPR:
+        case EXPRESSION_SET_COMPR:
+                c->lsx = (c->lsx == NULL) ? NULL : aclone(c->lsx);
+                break;
+
+        case EXPRESSION_TUPLE:
+        case EXPRESSION_LIST:
+        case EXPRESSION_TUPLE_SPEC:
+                c->tpx = (c->tpx == NULL) ? NULL : aclone(c->tpx);
+                break;
+
+        case EXPRESSION_DICT:
+        case EXPRESSION_DICT_COMPR:
+                c->dcx = (c->dcx == NULL) ? NULL : aclone(c->dcx);
+                break;
+
+        case EXPRESSION_SPECIAL_STRING:
+                c->fmx = (c->fmx == NULL) ? NULL : aclone(c->fmx);
+                break;
+
+        case EXPRESSION_TEMPLATE:
+                c->template.tmx = (c->template.tmx == NULL) ? NULL : aclone(c->template.tmx);
+                break;
+        }
+
+        return c;
+}
+
+#define CloneStmt(s) ((CloneStmt)(ty, (s)))
+inline static Stmt *
+(CloneStmt)(Ty *ty, Stmt const *s)
+{
+        Stmt *c = aclone(s);
+
+        if (HasClassArm(c->type) && c->class != NULL) {
+                c->class = aclone(c->class);
+        }
+
+        return c;
+}
+
+inline static bool
 IsStmt(Expr const *expr)
 {
         return (expr->type > STATEMENT_TYPE_START);
@@ -673,11 +820,11 @@ HasBody(Expr const *fun)
                 return HasBody(((Stmt *)fun)->value);
 
         case EXPRESSION_FUNCTION:
-                return (fun->body != NULL);
+                return (fun->fn->body != NULL);
 
         case EXPRESSION_MULTI_FUNCTION:
-                for (int i = 0; i < vN(fun->functions); ++i) {
-                        if (HasBody(v__(fun->functions, i))) {
+                for (int i = 0; i < vN(fun->fn->functions); ++i) {
+                        if (HasBody(v__(fun->fn->functions, i))) {
                                 return true;
                         }
                 }
@@ -688,7 +835,7 @@ HasBody(Expr const *fun)
 }
 
 inline static bool
-is_method(Expr const *e) { return e->class != NULL; }
+is_method(Expr const *e) { return e->fn->class != NULL; }
 
 char const *
 ExpressionTypeName(Expr const *e);

@@ -592,13 +592,13 @@ t2_universe_report(T2Universe const *universe, FILE *out)
         fprintf(
                 out,
                 "types2 universe: nodes=%zu containing-metas=%zu metas=%zu nominals=%zu applied=%zu recursive=%zu computed=%zu memo=%zu\n",
-                vN(universe->nodes),
+                (usize)vN(universe->nodes),
                 with_metas,
                 kinds[T2_TYPE_META],
-                vN(universe->nominals),
-                vN(universe->applied_nominals),
+                (usize)vN(universe->nominals),
+                (usize)vN(universe->applied_nominals),
                 universe->recursive_index.count,
-                vN(universe->computed_results),
+                (usize)vN(universe->computed_results),
                 universe->relation_memo.count
         );
         for (usize kind = 0; kind < T2_TYPE_KIND_COUNT; ++kind) {

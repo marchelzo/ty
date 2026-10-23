@@ -1,8 +1,7 @@
 #include <regex.h>
 #include <stdatomic.h>
 
-#include "ty.h"
-#include "jit/lir.h"
+#include "impl.h"
 
 typedef struct {
         bool entry;
@@ -116,8 +115,6 @@ native(Ty *ty, Lir *L, LirCode *code, bool owned, LirTarget const *target, LirEr
         LirConstraint *cs    = NULL;
         u32            ncs   = 0;
 
-        SCRATCH_SAVE();
-
         bool ok = (legal != NULL)
                && lir_optimize(ty, legal)
                && lir_legalize(ty, legal, target, &cs, &ncs, err)
@@ -130,8 +127,6 @@ native(Ty *ty, Lir *L, LirCode *code, bool owned, LirTarget const *target, LirEr
                 trace(legal, &alloc, "alloc");
                 ok = target->emit(ty, legal, &alloc, code, err);
         }
-
-        SCRATCH_RESTORE();
 
         if (legal != L) {
                 lir_free(legal);
@@ -161,7 +156,7 @@ reserve(Lir *thunk, u64 slots)
 }
 
 static bool
-attach(Ty *ty, LirCode *code, bool interpreted, LirError *err)
+thunk_attach(Ty *ty, LirCode *code, bool interpreted, LirError *err)
 {
         LirCode shadow = *code;
 
@@ -202,6 +197,19 @@ attach(Ty *ty, LirCode *code, bool interpreted, LirError *err)
         code->entry = code->entry_code->body;
 
         return true;
+}
+
+static bool
+attach(Ty *ty, LirCode *code, bool interpreted, LirError *err)
+{
+        ty = lir_scratch(ty);
+
+        ScratchSave save = ScratchMark(&ty->scratch);
+        bool        ok   = thunk_attach(ty, code, interpreted, err);
+
+        ScratchRewind(&ty->scratch, save);
+
+        return ok;
 }
 
 static LirCode *

@@ -213,7 +213,7 @@ jit_perf_map(void *code, usize size, char const *name, Expr const *expr)
         }
 
         char const *mod = (expr != NULL && expr->mod != NULL) ? expr->mod->name : "";
-        char const *cls = (expr != NULL && expr->class != NULL) ? expr->class->name : "";
+        char const *cls = (expr != NULL && expr->fn->class != NULL) ? expr->fn->class->name : "";
         char        qualified[strlen(mod) + strlen(cls) + strlen(name) + 3];
 
         ty_snprintf(
@@ -580,7 +580,7 @@ static int
 bc_line(Ty *ty, JitImageRec const *img, u32 tag, bool exact)
 {
         Expr const *e = (tag != 0) ? compiler_find_expr(ty, img->bc + tag - exact) : NULL;
-        return (e != NULL) ? (int)e->start.line + 1 : 0;
+        return (e != NULL) ? (int)LocLine(e->start) + 1 : 0;
 }
 
 static void
@@ -691,7 +691,7 @@ jit_record_json(Ty *ty, FILE *f, JitCompileRecord const *r, bool code)
         json_str(f, r->name);
         fputs(",\"file\":", f);
         json_str(f, (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "");
-        fprintf(f, ",\"line\":%d", (e != NULL) ? (int)e->start.line + 1 : 0);
+        fprintf(f, ",\"line\":%d", (e != NULL) ? (int)LocLine(e->start) + 1 : 0);
         fprintf(
                 f,
                 ",\"bc\":%d,\"native\":%zu,\"ns\":%llu,\"tier\":%d",
@@ -725,7 +725,7 @@ jit_inspect_json(Ty *ty, Value const *func, bool compact, char *why, usize n)
         if (f != NULL) {
                 jit_record_json(ty, f, &(JitCompileRecord) {
                         .name         = name_of(func),
-                        .class_name   = (expr != NULL && expr->class != NULL) ? expr->class->name : "",
+                        .class_name   = (expr != NULL && expr->fn->class != NULL) ? expr->fn->class->name : "",
                         .expr         = expr,
                         .native_size  = img->size,
                         .bc_code_size = code_size_of(func),
@@ -1166,13 +1166,13 @@ jit_stats_json(Ty *ty, FILE *f)
                         site->inl ? "true" : "false"
                 );
                 json_str(f, (e != NULL && e->mod != NULL) ? e->mod->path : "");
-                fprintf(f, ",\"line\":%d,\"col\":%d,\"func\":", (e != NULL) ? (int)e->start.line + 1 : 0, (e != NULL) ? (int)e->start.col + 1 : 0);
-                if (fe != NULL && fe->name != NULL && fe->class != NULL) {
+                fprintf(f, ",\"line\":%d,\"col\":%d,\"func\":", (e != NULL) ? (int)LocLine(e->start) + 1 : 0, (e != NULL) ? (int)LocCol(e->start) + 1 : 0);
+                if (fe != NULL && fe->fn->name != NULL && fe->fn->class != NULL) {
                         char name[256];
-                        ty_snprintf(name, sizeof name, "%s.%s", fe->class->name, fe->name);
+                        ty_snprintf(name, sizeof name, "%s.%s", fe->fn->class->name, fe->fn->name);
                         json_str(f, name);
                 } else {
-                        json_str(f, (fe != NULL && fe->name != NULL) ? fe->name : "");
+                        json_str(f, (fe != NULL && fe->fn->name != NULL) ? fe->fn->name : "");
                 }
                 fputs(",\"types\":[", f);
                 bool tfirst = true;

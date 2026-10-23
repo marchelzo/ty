@@ -521,14 +521,14 @@ static Expr const *
 declared_parameter_annotation(Expr const *function, usize index)
 {
         if (
-                (index < vN(function->constraints))
-             && (v__(function->constraints, (int)index) != NULL)
+                (index < vN(function->fn->constraints))
+             && (v__(function->fn->constraints, (int)index) != NULL)
         ) {
-                return v__(function->constraints, (int)index);
+                return v__(function->fn->constraints, (int)index);
         }
 
-        if (index < vN(function->retained_constraints)) {
-                return v__(function->retained_constraints, (int)index);
+        if (index < vN(function->fn->retained_constraints)) {
+                return v__(function->fn->retained_constraints, (int)index);
         }
 
         return NULL;
@@ -739,8 +739,8 @@ source_provenance(
                 "%s at %s:%u:%u",
                 description,
                 path,
-                site->start.line + 1,
-                site->start.col + 1
+                LocLine(site->start) + 1,
+                LocCol(site->start) + 1
         );
         if (length < 0) {
                 return description;
@@ -757,8 +757,8 @@ source_provenance(
                         "%s at %s:%u:%u",
                         description,
                         path,
-                        site->start.line + 1,
-                        site->start.col + 1
+                        LocLine(site->start) + 1,
+                        LocCol(site->start) + 1
                 );
         }
 
@@ -961,8 +961,8 @@ set_node_type(T2Checker *checker, Expr const *expr, T2Type type)
                         checker->log,
                         ",\"node\":%" PRIu64 ",\"line\":%u,\"column\":%u,\"construct\":",
                         node->id,
-                        expr->start.line + 1,
-                        expr->start.col + 1
+                        LocLine(expr->start) + 1,
+                        LocCol(expr->start) + 1
                 );
                 json_string(checker->log, construct_name(expr->type));
                 fputs(",\"type\":", checker->log);
@@ -1056,8 +1056,8 @@ emit_deferral(
                 fprintf(
                         checker->log,
                         ",\"line\":%u,\"column\":%u,\"construct\":",
-                        site->start.line + 1,
-                        site->start.col + 1
+                        LocLine(site->start) + 1,
+                        LocCol(site->start) + 1
                 );
                 json_string(checker->log, construct_name(site->type));
         }
@@ -1879,7 +1879,7 @@ ensure_nominal(
                          : fallback_name;
         usize arity = fallback_arity;
         if (class != NULL && class->def != NULL) {
-                arity = vN(class->def->class.type_params);
+                arity = vN(class->def->class->type_params);
                 if (class->def->type == STATEMENT_TAG_DEFINITION) {
                         arity = 1;
                 }
@@ -1951,10 +1951,10 @@ ensure_nominal(
         if (class != NULL && class->def != NULL) {
                 bool previous_interface_state = checker->building_interface;
                 checker->building_interface = true;
-                if (class->def->class.is_trait) {
+                if (class->def->class->is_trait) {
                         (void)t2_nominal_mark_interface(checker->universe, nominal->symbol);
                 }
-                register_nominal_hierarchy(checker, &class->def->class, nominal);
+                register_nominal_hierarchy(checker, class->def->class, nominal);
                 checker->building_interface = previous_interface_state;
         } else if (class != NULL && class->super != NULL && class->super->i >= 0) {
                 T2Nominal *super = ensure_nominal(
@@ -2396,7 +2396,7 @@ find_member_x(
                 return NULL;
         }
 
-        ClassDefinition const *definition = &class->def->class;
+        ClassDefinition const *definition = class->def->class;
         for (int i = 0; i < vN(definition->traits); ++i) {
                 Expr const *leaf = member_reference_leaf(v__(definition->traits, i));
                 if (
@@ -2940,7 +2940,7 @@ find_alias_definition_in_statement(Stmt const *statement, Symbol const *symbol)
                 return NULL;
         }
 
-        ClassDefinition const *definition = &statement->class;
+        ClassDefinition const *definition = statement->class;
         if (definition->var == symbol) {
                 return definition;
         }
@@ -3153,8 +3153,8 @@ tuple_is_record(Expr const *expression)
         return tuple_has_names(expression)
             || (
                        (expression != NULL)
-                    && (expression->start.s != NULL)
-                    && (*expression->start.s == '{')
+                    && (LocPtr(expression->start) != NULL)
+                    && (*LocPtr(expression->start) == '{')
                )
         ;
 }
@@ -3459,7 +3459,7 @@ static T2Type
 lower_array_element_type(T2Checker *checker, Expr const *array, int index)
 {
         T2Type element = lower_type(checker, v__(array->elements, index));
-        bool optional  = (index < vN(array->optional)) && v__(array->optional, index);
+        bool optional  = (index < vN(LSX(array)->optional)) && v__(LSX(array)->optional, index);
         if (!optional) {
                 return element;
         }
@@ -3477,8 +3477,8 @@ optional_pattern_element(
         T2Type      element
 )
 {
-        bool optional = (index < vN(pattern->optional))
-                     && v__(pattern->optional, index);
+        bool optional = (index < vN(LSX(pattern)->optional))
+                     && v__(LSX(pattern)->optional, index);
         if (!optional) {
                 return element;
         }
@@ -3562,8 +3562,8 @@ lower_function_type(T2Checker *checker, Expr const *expression)
                              : (parameter->type == EXPRESSION_SPREAD) ? T2_PARAMETER_POSITIONAL_REST
                              : T2_PARAMETER_POSITIONAL_ONLY;
                 }
-                bool required = (sequence && i < vN(input->required))
-                              ? v__(input->required, (int)i)
+                bool required = (sequence && i < vN(TPX(input)->required))
+                              ? v__(TPX(input)->required, (int)i)
                               : true;
                 if (
                         (kind == T2_PARAMETER_POSITIONAL_REST)
@@ -4170,8 +4170,8 @@ lower_type(T2Checker *checker, Expr const *source)
                                 fields[at] = (T2FieldSpec) {
                                         .name = name,
                                         .type = lower_type(checker, item),
-                                        .presence = (i < vN(expression->required))
-                                                 && !v__(expression->required, (int)i)
+                                        .presence = (i < vN(TPX(expression)->required))
+                                                 && !v__(TPX(expression)->required, (int)i)
                                                   ? T2_PRESENCE_OPTIONAL
                                                   : T2_PRESENCE_REQUIRED,
                                         .capability = T2_FIELD_WRITABLE
@@ -5298,13 +5298,13 @@ propagate_call_effect(
 static T2Type
 declared_function_receiver(T2Checker *checker, Expr const *function)
 {
-        if (function == NULL || function->class == NULL) {
+        if (function == NULL || function->fn->class == NULL) {
                 return T2_TYPE_INVALID;
         }
 
-        ClassDefinition const *definition = (function->class->def == NULL)
+        ClassDefinition const *definition = (function->fn->class->def == NULL)
                                           ? NULL
-                                          : &function->class->def->class;
+                                          : function->fn->class->def->class;
 
         usize arity = (definition != NULL) * vN(definition->type_params);
         T2Type *arguments = xtA(T2Type, arity);
@@ -5320,7 +5320,7 @@ declared_function_receiver(T2Checker *checker, Expr const *function)
 
         T2Type receiver = class_receiver_type(
                 checker,
-                function->class->i,
+                function->fn->class->i,
                 arguments,
                 arity,
                 function
@@ -5384,11 +5384,11 @@ annotation_is_type_variable(Expr const *annotation)
 static bool
 lower_declared_bounds(T2Checker *checker, Expr const *function, T2Predicate **out, usize *count)
 {
-        usize n = (usize)vN(function->type_bounds);
+        usize n = (usize)vN(function->fn->type_bounds);
         T2Predicate *predicates = xtA0(*predicates, n);
 
         for (usize i = 0; i < n; ++i) {
-                TypeBound const *bound = v_(function->type_bounds, (int)i);
+                TypeBound const *bound = v_(function->fn->type_bounds, (int)i);
                 if (bound->var == NULL || bound->bound == NULL) {
                         ty_free(predicates);
                         return false;
@@ -5659,7 +5659,7 @@ interface_default_type(T2Checker *checker, Expr const *function, usize index)
                 }
         }
 
-        T2Type constant = constant_default_type(checker, v__(function->dflts, (int)index));
+        T2Type constant = constant_default_type(checker, v__(function->fn->dflts, (int)index));
 
         return (constant != T2_TYPE_INVALID)
              ? constant
@@ -5676,8 +5676,8 @@ append_default_predicates(
         usize                 *predicate_count
 )
 {
-        for (usize i = 0; i < count && i < vN(function->dflts); ++i) {
-                Expr const *value = v__(function->dflts, (int)i);
+        for (usize i = 0; i < count && i < vN(function->fn->dflts); ++i) {
+                Expr const *value = v__(function->fn->dflts, (int)i);
                 if (
                         (value == NULL)
                      || !defers_default(
@@ -5715,7 +5715,7 @@ interface_function_scheme_x(
         bool                bounds
 )
 {
-        usize method_arity     = vN(function->type_params);
+        usize method_arity     = vN(function->fn->type_params);
         usize quantifier_count = class_arity + method_arity;
         T2Quantifier *quantifiers = xtA(*quantifiers, quantifier_count);
 
@@ -5728,7 +5728,7 @@ interface_function_scheme_x(
         }
 
         for (usize i = 0; i < method_arity; ++i) {
-                if (v__(function->type_params, (int)i)->symbol == NULL) {
+                if (v__(function->fn->type_params, (int)i)->symbol == NULL) {
                         ty_free(quantifiers);
                         return NULL;
                 }
@@ -5736,7 +5736,7 @@ interface_function_scheme_x(
 
         usize type_mark = push_type_variables(checker);
         for (usize i = 0; i < method_arity; ++i) {
-                Expr const *parameter = v__(function->type_params, (int)i);
+                Expr const *parameter = v__(function->fn->type_params, (int)i);
                 T2VariableKind kind = (parameter->symbol != NULL && SymbolIsParamPack(parameter->symbol))
                                     ? T2_VARIABLE_PACK
                                     : T2_VARIABLE_QUANTIFIED;
@@ -5749,7 +5749,7 @@ interface_function_scheme_x(
                 );
         }
 
-        usize parameter_count = vN(function->params);
+        usize parameter_count = vN(function->fn->params);
         T2ParameterSpec *parameters = xtA0(*parameters, parameter_count);
 
         for (usize i = 0; i < parameter_count; ++i) {
@@ -5757,7 +5757,7 @@ interface_function_scheme_x(
                 T2Type annotation_type = T2_TYPE_INVALID;
                 if (
                         (i == 0)
-                     && (function->mtype == MT_2OP)
+                     && (function->fn->mtype == MT_2OP)
                      && (annotation != NULL)
                      && (annotation->type == EXPRESSION_TYPE)
                      && (annotation->constraint == NULL)
@@ -5765,15 +5765,15 @@ interface_function_scheme_x(
                         annotation_type = declared_function_receiver(checker, function);
                 }
                 T2ParameterKind kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD;
-                if ((int)i == function->rest) {
+                if ((int)i == function->fn->rest) {
                         kind = T2_PARAMETER_POSITIONAL_REST;
                 }
-                if ((int)i == function->ikwargs) {
+                if ((int)i == function->fn->ikwargs) {
                         kind = T2_PARAMETER_KEYWORD_REST;
                 }
                 if (
-                        (function->rest >= 0)
-                     && ((int)i > function->rest)
+                        (function->fn->rest >= 0)
+                     && ((int)i > function->fn->rest)
                      && (kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD)
                 ) {
                         kind = T2_PARAMETER_KEYWORD_ONLY;
@@ -5786,18 +5786,18 @@ interface_function_scheme_x(
                                       : (annotation_type != T2_TYPE_INVALID)
                                       ? annotation_type
                                       : lower_type(checker, annotation);
-                if ((int)i == function->ikwargs) {
+                if ((int)i == function->fn->ikwargs) {
                         parameter_type = keyword_rest_pack(checker, parameter_type);
                 }
                 parameters[i] = (T2ParameterSpec) {
-                        .name = v__(function->params, (int)i),
+                        .name = v__(function->fn->params, (int)i),
                         .type = parameter_type,
                         .kind = kind,
                         .required = (kind != T2_PARAMETER_POSITIONAL_REST)
                                  && (kind != T2_PARAMETER_KEYWORD_REST)
                                  && (
-                                            (i >= vN(function->dflts))
-                                         || (v__(function->dflts, (int)i) == NULL)
+                                            (i >= vN(function->fn->dflts))
+                                         || (v__(function->fn->dflts, (int)i) == NULL)
                                     )
                                  && !type_admits_nil(checker, parameter_type)
                 };
@@ -5811,10 +5811,10 @@ interface_function_scheme_x(
                 }
         }
 
-        bool generator = (function->type == EXPRESSION_GENERATOR) || function->star;
-        T2Type result = (function->return_type == NULL)
+        bool generator = (function->type == EXPRESSION_GENERATOR) || function->fn->star;
+        T2Type result = (function->fn->return_type == NULL)
                       ? t2_primitive(checker->universe, T2_TYPE_DYNAMIC)
-                      : lower_type(checker, function->return_type);
+                      : lower_type(checker, function->fn->return_type);
         T2Type yields = t2_primitive(
                 checker->universe,
                 generator ? T2_TYPE_DYNAMIC : T2_TYPE_NEVER
@@ -6086,12 +6086,12 @@ interface_callable_scheme(
                 );
         }
 
-        usize entry_count = vN(function->functions);
+        usize entry_count = vN(function->fn->functions);
         T2Scheme **schemes = xtA0(*schemes, entry_count + 1);
         usize scheme_count = 0;
 
         for (usize i = 0; i < entry_count; ++i) {
-                Expr const *candidate = v__(function->functions, (int)i);
+                Expr const *candidate = v__(function->fn->functions, (int)i);
                 if (candidate != NULL && IsStmt(candidate)) {
                         candidate = ((Stmt const *)candidate)->value;
                 }
@@ -6154,7 +6154,7 @@ interface_methods(
                 (void)add_member(
                         checker,
                         class_id,
-                        (function->name == NULL) ? "<member>" : function->name,
+                        (function->fn->name == NULL) ? "<member>" : function->fn->name,
                         kind,
                         is_static,
                         !HasBody(function),
@@ -6174,8 +6174,8 @@ register_operator_expression(T2Checker *checker, Expr const *function)
         }
 
         if (function->type == EXPRESSION_MULTI_FUNCTION) {
-                for (int i = 0; i < vN(function->functions); ++i) {
-                        Expr const *candidate = v__(function->functions, i);
+                for (int i = 0; i < vN(function->fn->functions); ++i) {
+                        Expr const *candidate = v__(function->fn->functions, i);
                         if (candidate != NULL && IsStmt(candidate)) {
                                 candidate = ((Stmt const *)candidate)->value;
                         }
@@ -6196,7 +6196,7 @@ register_operator_expression(T2Checker *checker, Expr const *function)
 
         (void)add_operator_scheme(
                 checker,
-                function->name,
+                function->fn->name,
                 function,
                 scheme
         );
@@ -6213,8 +6213,8 @@ operator_expression_contains(Expr const *function, Expr const *candidate)
                 return false;
         }
 
-        for (int i = 0; i < vN(function->functions); ++i) {
-                Expr const *arm = v__(function->functions, i);
+        for (int i = 0; i < vN(function->fn->functions); ++i) {
+                Expr const *arm = v__(function->fn->functions, i);
                 if (arm != NULL && IsStmt(arm)) {
                         arm = ((Stmt const *)arm)->value;
                 }
@@ -6263,7 +6263,7 @@ replace_operator_expression_scheme(
 
         (void)add_operator_scheme(
                 checker,
-                function->name,
+                function->fn->name,
                 function,
                 copy
         );
@@ -6345,7 +6345,7 @@ ensure_class_interface(T2Checker *checker, int class_id)
                 return false;
         }
 
-        ClassDefinition const *definition = &class->def->class;
+        ClassDefinition const *definition = class->def->class;
         register_nominal_hierarchy(checker, definition, nominal);
         nominal = find_class_nominal(checker, class_id);
         if (nominal == NULL) {
@@ -6446,10 +6446,10 @@ bare_tag_nominal(T2Checker *checker, T2Nominal const *nominal)
         }
 
         return (class->def->type == STATEMENT_TAG_DEFINITION)
-            && (vN(class->def->tag.methods) == 0)
-            && (vN(class->def->tag.s_methods) == 0)
-            && (vN(class->def->tag.getters) == 0)
-            && (vN(class->def->tag.s_getters) == 0);
+            && (vN(class->def->tag->methods) == 0)
+            && (vN(class->def->tag->s_methods) == 0)
+            && (vN(class->def->tag->getters) == 0)
+            && (vN(class->def->tag->s_getters) == 0);
 }
 
 static T2Nominal *
@@ -7604,9 +7604,9 @@ keyword_argument_expression(Expr const *site, usize index)
         }
 
         ExprVec const *arguments = (site->type == EXPRESSION_FUNCTION_CALL)
-                                 ? &site->kwargs
+                                 ? &CKW(site)->kwargs
                                  : (site->type == EXPRESSION_METHOD_CALL)
-                                 ? &site->method_kwargs
+                                 ? &MKW(site)->kwargs
                                  : NULL;
         if (arguments == NULL || index >= vN(*arguments)) {
                 return NULL;
@@ -9448,18 +9448,18 @@ infer_call_types(
                 if (super_call && vN(checker->functions) != 0) {
                         Expr const *function = v__(checker->functions,
                                                    vN(checker->functions) - 1).function;
-                        if (function != NULL && function->name != NULL) {
-                                super_method = function->name;
+                        if (function != NULL && function->fn->name != NULL) {
+                                super_method = function->fn->name;
                         }
-                        if (function != NULL && function->overload != NULL) {
-                                super_method = function->overload->name;
+                        if (function != NULL && function->fn->overload != NULL) {
+                                super_method = function->fn->overload->fn->name;
                         }
-                        if (function != NULL && function->mtype == MT_GET) {
+                        if (function != NULL && function->fn->mtype == MT_GET) {
                                 super_kind = T2_MEMBER_GETTER;
-                        } else if (function != NULL && function->mtype == MT_SET) {
+                        } else if (function != NULL && function->fn->mtype == MT_SET) {
                                 super_kind = T2_MEMBER_SETTER;
                         }
-                        Class *owner = (function == NULL) ? NULL : function->class;
+                        Class *owner = (function == NULL) ? NULL : function->fn->class;
                         if (owner != NULL && owner->super != NULL) {
                                 callable_class = owner->super->i;
                                 T2Nominal *super_nominal = ensure_nominal(
@@ -9938,14 +9938,14 @@ import_operator_table(
                 Expr const *function = op_definition(entry->id, i);
                 if (
                         (function == NULL)
-                     || (function->mtype != MT_2OP)
-                     || (function->class == NULL)
+                     || (function->fn->mtype != MT_2OP)
+                     || (function->fn->class == NULL)
                      || (find_operator_declaration(checker, function) != NULL)
                 ) {
                         continue;
                 }
                 bool annotated = true;
-                for (int j = 1; j < vN(function->params); ++j) {
+                for (int j = 1; j < vN(function->fn->params); ++j) {
                         annotated &= declared_parameter_annotation(function, j) != NULL;
                 }
                 if (
@@ -9954,7 +9954,7 @@ import_operator_table(
                              checker,
                              arguments,
                              argument_count,
-                             function->class->i
+                             function->fn->class->i
                         )
                 ) {
                         continue;
@@ -10060,12 +10060,12 @@ fully_annotated(Expr const *function)
         if (
                 (function == NULL)
              || (function->type != EXPRESSION_FUNCTION)
-             || (function->return_type == NULL)
+             || (function->fn->return_type == NULL)
         ) {
                 return false;
         }
 
-        for (int i = 0; i < vN(function->params); ++i) {
+        for (int i = 0; i < vN(function->fn->params); ++i) {
                 if (declared_parameter_annotation(function, i) == NULL) {
                         return false;
                 }
@@ -10376,7 +10376,7 @@ conform_member_scheme(
         usize               class_arity
 )
 {
-        T2Scheme *declared = (vN(function->type_params) == 0)
+        T2Scheme *declared = (vN(function->fn->type_params) == 0)
                            ? NULL
                            : interface_function_scheme_x(
                                    checker,
@@ -10473,11 +10473,11 @@ conform_to_signature(T2Checker *checker, Stmt const *statement, T2Binding *bindi
 static bool
 unannotated_implementation(Expr const *function)
 {
-        if (function == NULL || !HasBody(function) || function->return_type != NULL) {
+        if (function == NULL || !HasBody(function) || function->fn->return_type != NULL) {
                 return false;
         }
 
-        for (int i = 0; i < vN(function->params); ++i) {
+        for (int i = 0; i < vN(function->fn->params); ++i) {
                 if (declared_parameter_annotation(function, i) != NULL) {
                         return false;
                 }
@@ -14068,7 +14068,7 @@ contextual_fresh_literal_x(
 
         if (
                 (expression->type == EXPRESSION_DICT)
-             && (expression->dflt == NULL)
+             && (DCX(expression)->dflt == NULL)
              && (keyword_dict_pack(checker, expected) != T2_TYPE_INVALID)
         ) {
                 return keyword_dict_literal(checker, expression, expected);
@@ -14295,10 +14295,10 @@ contextual_fresh_literal_x(
                                 return false;
                         }
                 }
-                if (expression->dflt != NULL) {
+                if (DCX(expression)->dflt != NULL) {
                         T2Type default_value = infer_dictionary_default(
                                 checker,
-                                expression->dflt,
+                                DCX(expression)->dflt,
                                 &wanted_key,
                                 false
                         );
@@ -14307,7 +14307,7 @@ contextual_fresh_literal_x(
                              || (t2_type_kind(checker->universe, default_value) == T2_TYPE_ERROR)
                              || !write_slot(
                                         checker,
-                                        expression->dflt,
+                                        DCX(expression)->dflt,
                                         default_value,
                                         wanted_value,
                                         false,
@@ -14458,15 +14458,15 @@ implicit_member_receiver(T2Checker *checker, Symbol const *member)
         } else {
                 for (usize i = vN(checker->functions); i != 0; --i) {
                         Expr const *function = v__(checker->functions, i - 1).function;
-                        if (function == NULL || function->class == NULL) {
+                        if (function == NULL || function->fn->class == NULL) {
                                 continue;
                         }
-                        Symbol const *receiver_symbol = function->self;
+                        Symbol const *receiver_symbol = function->fn->self;
                         if (
-                                (function->mtype == MT_2OP)
-                             && (vN(function->param_symbols) != 0)
+                                (function->fn->mtype == MT_2OP)
+                             && (vN(function->fn->param_symbols) != 0)
                         ) {
-                                receiver_symbol = v__(function->param_symbols, 0);
+                                receiver_symbol = v__(function->fn->param_symbols, 0);
                         }
                         T2Binding *binding = find_binding(
                                 checker,
@@ -16487,13 +16487,13 @@ forget_captured_evolving_refinements(T2Checker *checker)
                 }
                 Expr const *function = v_L(checker->functions).function;
                 if (
-                        (function->name == NULL)
+                        (function->fn->name == NULL)
                      && !write->repeated
                      && !write->quoted
                      && (write->target->xfunc != function)
                      && active_function(checker, write->target->xfunc)
                      && (symbol->scope != NULL)
-                     && (symbol->scope->function == write->target->xfunc->scope)
+                     && (symbol->scope->function == write->target->xfunc->fn->scope)
                      && (write->target->mod == function->mod)
                      && (write->target->end.byte < function->start.byte)
                 ) {
@@ -17511,14 +17511,14 @@ infer_record_literal(T2Checker *checker, Expr const *expression)
         usize count = vN(expression->es);
         for (usize i = 0; i < count; ++i) {
                 Expr const *item = v__(expression->es, (int)i);
-                Expr const *condition = (i < vN(expression->tconds))
-                                      ? v__(expression->tconds, (int)i)
+                Expr const *condition = (i < vN(TPX(expression)->tconds))
+                                      ? v__(TPX(expression)->tconds, (int)i)
                                       : NULL;
                 if (condition != NULL) {
                         (void)infer_expression(checker, condition);
                 }
-                bool optional = (i < vN(expression->required))
-                             && !v__(expression->required, (int)i);
+                bool optional = (i < vN(TPX(expression)->required))
+                             && !v__(TPX(expression)->required, (int)i);
                 bool spread     = (item != NULL) && (item->type == EXPRESSION_SPREAD);
                 T2Type previous = result;
                 if (spread) {
@@ -17621,17 +17621,17 @@ infer_mixed_tuple(T2Checker *checker, Expr const *expression)
                         fields[field_count++] = (T2FieldSpec) {
                                 .name = name,
                                 .type = relax_literal(checker, items[i]),
-                                .presence = (i < vN(expression->required))
-                                         && !v__(expression->required, (int)i)
+                                .presence = (i < vN(TPX(expression)->required))
+                                         && !v__(TPX(expression)->required, (int)i)
                                           ? T2_PRESENCE_OPTIONAL
                                           : T2_PRESENCE_REQUIRED,
                                 .capability = T2_FIELD_WRITABLE
                         };
                 }
-                if (i < vN(expression->tconds)) {
+                if (i < vN(TPX(expression)->tconds)) {
                         (void)infer_expression(
                                 checker,
-                                v__(expression->tconds, (int)i)
+                                v__(TPX(expression)->tconds, (int)i)
                         );
                 }
         }
@@ -17845,9 +17845,9 @@ statement_defines_symbol(
                 return is_named_binding_target(statement->target)
                     && same_symbol(statement->target->symbol, symbol, home);
         case STATEMENT_CLASS_DEFINITION:
-                return same_symbol(statement->class.var, symbol, home);
+                return same_symbol(statement->class->var, symbol, home);
         case STATEMENT_TAG_DEFINITION:
-                return same_symbol(statement->tag.var, symbol, home);
+                return same_symbol(statement->tag->var, symbol, home);
         default:
                 return false;
         }
@@ -17858,9 +17858,9 @@ statement_target_symbol(Stmt const *statement)
 {
         switch (statement->type) {
         case STATEMENT_CLASS_DEFINITION:
-                return statement->class.var;
+                return statement->class->var;
         case STATEMENT_TAG_DEFINITION:
-                return statement->tag.var;
+                return statement->tag->var;
         default:
                 return (statement->target == NULL) ? NULL : statement->target->symbol;
         }
@@ -18153,9 +18153,9 @@ statement_defines_operator(Stmt const *statement, char const *name)
         return LIKELY(target             != NULL)
             && LIKELY(target->identifier != NULL)
             && LIKELY(func               != NULL)
-            && LIKELY(func->name         != NULL)
+            && LIKELY(func->fn->name         != NULL)
             && s_eq(target->identifier, name)
-            && s_eq(func->name,         name);
+            && s_eq(func->fn->name,         name);
 }
 
 static bool
@@ -18323,12 +18323,12 @@ is_declaration(Expr const *declaration)
         case EXPRESSION_FUNCTION:
                 return !HasBody(declaration);
         case EXPRESSION_MULTI_FUNCTION:
-                for (int i = 0; i < vN(declaration->functions); ++i) {
-                        if (!is_declaration(v__(declaration->functions, i))) {
+                for (int i = 0; i < vN(declaration->fn->functions); ++i) {
+                        if (!is_declaration(v__(declaration->fn->functions, i))) {
                                 return false;
                         }
                 }
-                return vN(declaration->functions) > 0;
+                return vN(declaration->fn->functions) > 0;
         default:
                 return false;
         }
@@ -18579,7 +18579,7 @@ template_value_type(T2TemplateScan *scan, Expr const *value)
         case EXPRESSION_TEMPLATE_VHOLE:
         {
                 Expr const *quoted = v_L(scan->templates);
-                return infer_expression(checker, v__(quoted->template.holes, value->hole.i));
+                return infer_expression(checker, v__(TMX(&quoted->template)->holes, value->hole.i));
         }
         default:
                 return t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
@@ -18751,8 +18751,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                         v__(expression->expressions, i)
                                 )
                         );
-                        Expr const *format = (i < vN(expression->fmts))
-                                           ? *v_(expression->fmts, i)
+                        Expr const *format = (i < vN(FMX(expression)->fmts))
+                                           ? *v_(FMX(expression)->fmts, i)
                                            : NULL;
                         if (format != NULL) {
                                 (void)constrain_type(
@@ -18764,8 +18764,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                         "an interpolation format must be a String"
                                 );
                         }
-                        Expr const *formatter = (i < vN(expression->fmtfs))
-                                              ? *v_(expression->fmtfs, i)
+                        Expr const *formatter = (i < vN(FMX(expression)->fmtfs))
+                                              ? *v_(FMX(expression)->fmtfs, i)
                                               : NULL;
                         if (formatter != NULL) {
                                 (void)infer_expression(checker, formatter);
@@ -19018,8 +19018,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                 int class_id       = sequence_literal_class(expression);
                 usize binding_mark = vN(checker->bindings);
                 T2Type *saved      = snapshot_refinements(checker, binding_mark);
-                for (int i = 0; i < vN(expression->compr); ++i) {
-                        ComprPart const *part = v_(expression->compr, i);
+                for (int i = 0; i < vN(LSX(expression)->compr); ++i) {
+                        ComprPart const *part = v_(LSX(expression)->compr, i);
                         T2Type collection     = infer_expression(checker, part->iter);
                         (void)assign_iteration_target(
                                 checker,
@@ -19140,10 +19140,10 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 )
                         );
                 }
-                if (expression->dflt != NULL) {
+                if (DCX(expression)->dflt != NULL) {
                         T2Type fallback = infer_dictionary_default(
                                 checker,
-                                expression->dflt,
+                                DCX(expression)->dflt,
                                 &key,
                                 true
                         );
@@ -19193,8 +19193,8 @@ infer_expression(T2Checker *checker, Expr const *source)
         {
                 usize binding_mark = vN(checker->bindings);
                 T2Type *saved      = snapshot_refinements(checker, binding_mark);
-                for (int i = 0; i < vN(expression->dcompr); ++i) {
-                        ComprPart const *part = v_(expression->dcompr, i);
+                for (int i = 0; i < vN(DCX(expression)->dcompr); ++i) {
+                        ComprPart const *part = v_(DCX(expression)->dcompr, i);
                         T2Type collection     = infer_expression(checker, part->iter);
                         (void)assign_iteration_target(
                                 checker,
@@ -19241,8 +19241,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 "empty dictionary comprehension value"
                         );
                 }
-                if (expression->dflt != NULL) {
-                        T2Type fallback = infer_expression(checker, expression->dflt);
+                if (DCX(expression)->dflt != NULL) {
+                        T2Type fallback = infer_expression(checker, DCX(expression)->dflt);
                         T2Type produced = T2_TYPE_INVALID;
                         T2TypeKind fallback_kind = t2_type_kind(
                                 checker->universe,
@@ -19262,7 +19262,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                         NULL,
                                         NULL,
                                         0,
-                                        expression->dflt,
+                                        DCX(expression)->dflt,
                                         false
                                 );
                                 if (
@@ -19512,7 +19512,7 @@ infer_expression(T2Checker *checker, Expr const *source)
         case EXPRESSION_FUNCTION_CALL:
         {
                 usize positional_count = vN(expression->args);
-                usize keyword_count    = vN(expression->kwargs);
+                usize keyword_count    = vN(CKW(expression)->kwargs);
                 if (
                         (keyword_count == 0)
                      && tag_symbol_expression(expression->function)
@@ -19529,10 +19529,10 @@ infer_expression(T2Checker *checker, Expr const *source)
                 for (usize i = 0; i < keyword_count; ++i) {
                         keyword_arguments[i] = infer_keyword_argument(
                                 checker,
-                                v__(expression->kwargs, (int)i),
+                                v__(CKW(expression)->kwargs, (int)i),
                                 hint_callee,
-                                (i < vN(expression->kws))
-                                        ? v__(expression->kws, (int)i)
+                                (i < vN(CKW(expression)->kws))
+                                        ? v__(CKW(expression)->kws, (int)i)
                                         : NULL,
                                 arguments,
                                 positional_count
@@ -19553,7 +19553,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                         default_dynamic_callback_arguments(
                                 checker,
-                                &expression->kwargs,
+                                &CKW(expression)->kwargs,
                                 keyword_arguments,
                                 keyword_count
                         );
@@ -19576,7 +19576,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 vv(expanded_arguments),
                                 vN(expanded_arguments),
                                 keyword_arguments,
-                                (char const *const *)vv(expression->kws),
+                                (char const *const *)vv(CKW(expression)->kws),
                                 keyword_count,
                                 expression,
                                 true
@@ -19967,7 +19967,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         }
                 }
                 usize count   = vN(expression->method_args) + first;
-                usize kwcount = vN(expression->method_kwargs);
+                usize kwcount = vN(MKW(expression)->kwargs);
                 T2Type *arguments = xtA(*arguments, count);
                 T2Type *kwargs = xtA(*kwargs, kwcount);
                 T2SolverMark argument_scope = t2_solver_mark(checker->solver);
@@ -19978,10 +19978,10 @@ infer_expression(T2Checker *checker, Expr const *source)
                 for (usize i = 0; i < kwcount; ++i) {
                         kwargs[i] = infer_keyword_argument(
                                 checker,
-                                v__(expression->method_kwargs, (int)i),
+                                v__(MKW(expression)->kwargs, (int)i),
                                 method,
-                                (i < vN(expression->method_kws))
-                                        ? v__(expression->method_kws, (int)i)
+                                (i < vN(MKW(expression)->kws))
+                                        ? v__(MKW(expression)->kws, (int)i)
                                         : NULL,
                                 arguments,
                                 count
@@ -20003,7 +20003,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                         );
                         default_dynamic_callback_arguments(
                                 checker,
-                                &expression->method_kwargs,
+                                &MKW(expression)->kwargs,
                                 kwargs,
                                 kwcount
                         );
@@ -20031,7 +20031,7 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 vv(expanded_arguments),
                                 vN(expanded_arguments),
                                 kwargs,
-                                (char const *const *)vv(expression->method_kws),
+                                (char const *const *)vv(MKW(expression)->kws),
                                 kwcount,
                                 expression,
                                 true
@@ -20077,8 +20077,8 @@ infer_expression(T2Checker *checker, Expr const *source)
                                 (void)infer_expression(checker, v__(expression->mconds, i));
                         }
                 }
-                for (int i = 0; i < vN(expression->method_kwargs); ++i) {
-                        (void)infer_expression(checker, v__(expression->method_kwargs, i));
+                for (int i = 0; i < vN(MKW(expression)->kwargs); ++i) {
+                        (void)infer_expression(checker, v__(MKW(expression)->kwargs, i));
                 }
                 if (t2_type_kind(checker->universe, object) == T2_TYPE_ERROR) {
                         result = object;
@@ -20495,11 +20495,11 @@ infer_expression(T2Checker *checker, Expr const *source)
                 result = t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
                 break;
         case EXPRESSION_TEMPLATE:
-                for (int i = 0; i < vN(expression->template.holes); ++i) {
-                        Expr const *hole = v__(expression->template.holes, i);
+                for (int i = 0; i < vN(TMX(&expression->template)->holes); ++i) {
+                        Expr const *hole = v__(TMX(&expression->template)->holes, i);
                         if (
-                                (i < vN(expression->template.ctxs))
-                             && (v__(expression->template.ctxs, i) == CTX_TYPE)
+                                (i < vN(TMX(&expression->template)->ctxs))
+                             && (v__(TMX(&expression->template)->ctxs, i) == CTX_TYPE)
                         ) {
                                 (void)lower_type(checker, hole);
                         } else {
@@ -21126,8 +21126,8 @@ settle_forward_function(T2Checker *checker, T2Binding *binding, Expr const *site
                 return;
         }
 
-        if (symbol->expr->fn_symbol != symbol) {
-                binding->alias = symbol->expr->fn_symbol;
+        if (symbol->expr->fn->fn_symbol != symbol) {
+                binding->alias = symbol->expr->fn->fn_symbol;
         }
 
         T2Type type = infer_function_expression(checker, symbol->expr);
@@ -22303,8 +22303,8 @@ record_pattern_items(
                 if (name == NULL || s_eq(name, "*")) {
                         return false;
                 }
-                bool optional = (i < vN(pattern->required))
-                             && !v__(pattern->required, (int)i);
+                bool optional = (i < vN(TPX(pattern)->required))
+                             && !v__(TPX(pattern)->required, (int)i);
                 bool field_reachable = false;
                 T2Type field = record_pattern_field_type(
                         checker,
@@ -23478,8 +23478,8 @@ record_pattern_coverage_x(
                         return never;
                 }
 
-                bool optional = (i < vN(pattern->required))
-                             && !v__(pattern->required, i);
+                bool optional = (i < vN(TPX(pattern)->required))
+                             && !v__(TPX(pattern)->required, i);
                 T2Presence presence = T2_PRESENCE_UNKNOWN;
                 T2Type field = t2_record_field_type(
                         checker->universe,
@@ -24063,8 +24063,8 @@ pattern_is_catch_all(Expr const *pattern)
 static void
 apply_function_bounds(T2Checker *checker, Expr const *function)
 {
-        for (int i = 0; i < vN(function->type_bounds); ++i) {
-                TypeBound const *bound = v_(function->type_bounds, i);
+        for (int i = 0; i < vN(function->fn->type_bounds); ++i) {
+                TypeBound const *bound = v_(function->fn->type_bounds, i);
                 if (bound->var == NULL || bound->bound == NULL) {
                         continue;
                 }
@@ -24184,9 +24184,9 @@ static T2Type
 tag_method_self_type(T2Checker *checker, Expr const *function, T2Type receiver)
 {
         if (
-                (function->class == NULL)
-             || (function->class->def == NULL)
-             || (function->class->def->type != STATEMENT_TAG_DEFINITION)
+                (function->fn->class == NULL)
+             || (function->fn->class->def == NULL)
+             || (function->fn->class->def->type != STATEMENT_TAG_DEFINITION)
              || (receiver == T2_TYPE_INVALID)
              || (t2_type_kind(checker->universe, receiver) != T2_TYPE_NOMINAL)
              || (t2_type_arity(checker->universe, receiver) != 1)
@@ -24206,11 +24206,11 @@ infer_single_function(T2Checker *checker, Expr const *function)
         usize keyword_mark    = vN(checker->keyword_packs);
         checker->level = outer_level + 1;
         usize type_mark           = push_type_variables(checker);
-        usize type_argument_count = vN(function->type_params);
+        usize type_argument_count = vN(function->fn->type_params);
         T2Type *type_arguments = xtA(*type_arguments, type_argument_count);
 
         for (usize i = 0; i < type_argument_count; ++i) {
-                Expr const *parameter = v__(function->type_params, i);
+                Expr const *parameter = v__(function->fn->type_params, i);
                 T2VariableKind kind = (parameter->symbol != NULL)
                                    && (parameter->symbol->flags & SYM_PARAM_PACK)
                                     ? T2_VARIABLE_PACK
@@ -24250,7 +24250,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         ty_free(type_arguments);
         type_arguments = NULL;
 
-        usize parameter_count = vN(function->params);
+        usize parameter_count = vN(function->fn->params);
         T2ParameterSpec *parameters = xtA0(*parameters, parameter_count);
 
         T2Type rest_pack = T2_TYPE_INVALID;
@@ -24280,14 +24280,14 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         (annotation == NULL)
                      && has_hint
                      && (hinted.kind == T2_PARAMETER_PACK)
-                     && ((int)i == function->rest)
+                     && ((int)i == function->fn->rest)
                 ) {
                         parameter_type = hinted.type;
                         rest_pack      = hinted.type;
                 } else if (
                         (annotation == NULL)
                      && (rest_pack != T2_TYPE_INVALID)
-                     && ((int)i == function->ikwargs)
+                     && ((int)i == function->fn->ikwargs)
                 ) {
                         parameter_type = t2_pack_fold_union(checker->universe, rest_pack);
                 } else if (annotation == NULL) {
@@ -24295,7 +24295,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                                 checker->solver,
                                 T2_VARIABLE_FLEXIBLE,
                                 checker->level,
-                                v__(function->params, (int)i)
+                                v__(function->fn->params, (int)i)
                         );
                         if (has_hint && hinted.kind != T2_PARAMETER_PACK) {
                                 (void)t2_solver_constrain_subtype(
@@ -24311,25 +24311,25 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         }
                 } else {
                         parameter_type = (i == 0)
-                                      && (function->mtype == MT_2OP)
+                                      && (function->fn->mtype == MT_2OP)
                                       && (annotation->type == EXPRESSION_TYPE)
                                       && (annotation->constraint == NULL)
                                        ? declared_function_receiver(checker, function)
                                        : lower_type(checker, annotation);
-                        if ((int)i == function->ikwargs) {
+                        if ((int)i == function->fn->ikwargs) {
                                 parameter_type = keyword_rest_pack(checker, parameter_type);
                         }
                 }
                 T2ParameterKind kind = T2_PARAMETER_POSITIONAL_OR_KEYWORD;
-                if ((int)i == function->rest) {
+                if ((int)i == function->fn->rest) {
                         kind = T2_PARAMETER_POSITIONAL_REST;
                 }
-                if ((int)i == function->ikwargs) {
+                if ((int)i == function->fn->ikwargs) {
                         kind = T2_PARAMETER_KEYWORD_REST;
                 }
                 if (
-                        (function->rest >= 0)
-                     && ((int)i > function->rest)
+                        (function->fn->rest >= 0)
+                     && ((int)i > function->fn->rest)
                      && (kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD)
                 ) {
                         kind = T2_PARAMETER_KEYWORD_ONLY;
@@ -24344,33 +24344,33 @@ infer_single_function(T2Checker *checker, Expr const *function)
                              && (kind != T2_PARAMETER_KEYWORD_REST)
                              && (kind != T2_PARAMETER_PACK)
                              && (
-                                        (i >= vN(function->dflts))
-                                     || (v__(function->dflts, (int)i) == NULL)
+                                        (i >= vN(function->fn->dflts))
+                                     || (v__(function->fn->dflts, (int)i) == NULL)
                                 )
                              && !type_admits_nil(checker, parameter_type);
-                if (has_declared_parameter && (int)i != function->ikwargs) {
+                if (has_declared_parameter && (int)i != function->fn->ikwargs) {
                         kind     = declared_parameter.kind;
                         required = declared_parameter.required;
                 }
                 if (
-                        ((int)i == function->ikwargs)
+                        ((int)i == function->fn->ikwargs)
                      && (annotation != NULL)
                      && is_pack_type(checker, parameter_type)
                 ) {
                         xvP(checker->keyword_packs, parameter_type);
                 }
                 parameters[i] = (T2ParameterSpec) {
-                        .name     = v__(function->params, (int)i),
+                        .name     = v__(function->fn->params, (int)i),
                         .type     = parameter_type,
                         .kind     = kind,
                         .required = required
                 };
                 anonymize_parameter(&parameters[i]);
 
-                if (i < vN(function->param_symbols)) {
+                if (i < vN(function->fn->param_symbols)) {
                         T2Binding *binding = ensure_binding(
                                 checker,
-                                v__(function->param_symbols, (int)i)
+                                v__(function->fn->param_symbols, (int)i)
                         );
                         if (binding != NULL) {
                                 T2Type local_type = parameter_type;
@@ -24433,9 +24433,9 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 }
         }
 
-        bool generator = (function->type == EXPRESSION_GENERATOR) || function->star;
+        bool generator = (function->type == EXPRESSION_GENERATOR) || function->fn->star;
         T2Type yields = !generator ? t2_primitive(checker->universe, T2_TYPE_NEVER)
-                      : (function->return_type != NULL) ? T2_TYPE_INVALID
+                      : (function->fn->return_type != NULL) ? T2_TYPE_INVALID
                       : t2_solver_new_meta(
                               checker->solver,
                               T2_VARIABLE_FLEXIBLE,
@@ -24444,7 +24444,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         )
         ;
         T2Type sends = !generator ? t2_primitive(checker->universe, T2_TYPE_NIL)
-                     : (function->return_type != NULL) ? T2_TYPE_INVALID
+                     : (function->fn->return_type != NULL) ? T2_TYPE_INVALID
                      : t2_solver_new_meta(
                              checker->solver,
                              T2_VARIABLE_FLEXIBLE,
@@ -24453,12 +24453,12 @@ infer_single_function(T2Checker *checker, Expr const *function)
                        )
         ;
         T2Type result;
-        if (generator && function->return_type != NULL) {
-                result = lower_type(checker, function->return_type);
+        if (generator && function->fn->return_type != NULL) {
+                result = lower_type(checker, function->fn->return_type);
                 if (!callable_channels_from_result(checker, result, &yields, &sends)) {
                         add_diagnostic(
                                 checker,
-                                function->return_type,
+                                function->fn->return_type,
                                 T2_DIAGNOSTIC_ERROR,
                                 "generator-result",
                                 result,
@@ -24485,17 +24485,17 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 yields = t2_callable_yield(checker->universe, declared_callable);
                 sends  = t2_callable_send(checker->universe, declared_callable);
         } else {
-                result = (function->return_type == NULL)
+                result = (function->fn->return_type == NULL)
                        ? t2_solver_new_meta(
                                checker->solver,
                                T2_VARIABLE_FLEXIBLE,
                                checker->level,
                                "function result"
                          )
-                       : lower_type(checker, function->return_type);
+                       : lower_type(checker, function->fn->return_type);
         }
 
-        if (!generator && function->return_type != NULL) {
+        if (!generator && function->fn->return_type != NULL) {
                 (void)callable_channels_from_result(
                         checker,
                         result,
@@ -24526,19 +24526,19 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 goto Failure;
         }
 
-        T2Binding *self_binding = ensure_binding(checker, function->self);
-        if (self_binding != NULL && function->class != NULL) {
+        T2Binding *self_binding = ensure_binding(checker, function->fn->self);
+        if (self_binding != NULL && function->fn->class != NULL) {
                 T2Type receiver = T2_TYPE_INVALID;
                 if (
                         (checker->member_receiver != T2_TYPE_INVALID)
-                     && (checker->member_class_id == function->class->i)
+                     && (checker->member_class_id == function->fn->class->i)
                 ) {
                         receiver = checker->member_receiver;
                 } else {
                         T2Nominal *nominal = ensure_nominal(
                                 checker,
-                                function->class->i,
-                                function->class->name,
+                                function->fn->class->i,
+                                function->fn->class->name,
                                 0
                         );
                         T2Type *arguments = (nominal == NULL) || (nominal->arity == 0)
@@ -24551,11 +24551,11 @@ infer_single_function(T2Checker *checker, Expr const *function)
                         for (usize i = 0; nominal != NULL && i < nominal->arity; ++i) {
                                 T2Type argument = T2_TYPE_INVALID;
                                 if (
-                                        (function->class->def != NULL)
-                                     && (i < vN(function->class->def->class.type_params))
+                                        (function->fn->class->def != NULL)
+                                     && (i < vN(function->fn->class->def->class->type_params))
                                 ) {
                                         Expr const *parameter = v__(
-                                                function->class->def->class.type_params,
+                                                function->fn->class->def->class->type_params,
                                                 (int)i
                                         );
                                         argument = find_type_variable(
@@ -24587,14 +24587,14 @@ infer_single_function(T2Checker *checker, Expr const *function)
 
                 T2Type self_type = receiver;
                 if (
-                        (function->fn_symbol != NULL)
-                     && SymbolIsStatic(function->fn_symbol)
+                        (function->fn->fn_symbol != NULL)
+                     && SymbolIsStatic(function->fn->fn_symbol)
                      && (receiver != T2_TYPE_INVALID)
                 ) {
                         T2Type constructor = T2_TYPE_INVALID;
                         T2Member const *initializer = find_direct_member(
                                 checker,
-                                function->class->i,
+                                function->fn->class->i,
                                 "init",
                                 T2_MEMBER_METHOD,
                                 false
@@ -24641,7 +24641,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 self_binding->initialized = true;
         }
 
-        Symbol const *recursive_symbol = function->fn_symbol;
+        Symbol const *recursive_symbol = function->fn->fn_symbol;
         T2Binding *recursive = ensure_binding(checker, recursive_symbol);
         if (recursive != NULL) {
                 recursive->type        = callable;
@@ -24651,17 +24651,17 @@ infer_single_function(T2Checker *checker, Expr const *function)
         apply_function_bounds(checker, function);
 
         for (usize i = 0; i < parameter_count; ++i) {
-                if (i >= vN(function->dflts)) {
+                if (i >= vN(function->fn->dflts)) {
                         break;
                 }
-                Expr const *value = v__(function->dflts, (int)i);
+                Expr const *value = v__(function->fn->dflts, (int)i);
                 if (value == NULL) {
                         continue;
                 }
                 if (
-                        (function->mtype == MT_DFL)
+                        (function->fn->mtype == MT_DFL)
                      && (value->type == EXPRESSION_NIL)
-                     && (value->start.s == NULL)
+                     && (LocPtr(value->start) == NULL)
                 ) {
                         continue;
                 }
@@ -24702,10 +24702,10 @@ infer_single_function(T2Checker *checker, Expr const *function)
                                         "default-argument",
                                         "the default value does not match the inferred parameter type"
                                 );
-                        } else if (i < vN(function->param_symbols)) {
+                        } else if (i < vN(function->fn->param_symbols)) {
                                 T2Binding *binding = find_binding(
                                         checker,
-                                        v__(function->param_symbols, (int)i)
+                                        v__(function->fn->param_symbols, (int)i)
                                 );
                                 if (binding != NULL) {
                                         binding->type = t2_join(
@@ -24732,7 +24732,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                                 .generator = generator,
                                 .effectful = false,
                                 .inferred_result = !generator
-                                                && (function->return_type == NULL)
+                                                && (function->fn->return_type == NULL)
                                                 && (declared_callable == T2_TYPE_INVALID),
                                 .assigned_start = vN(checker->writes)
                         }
@@ -24747,12 +24747,12 @@ infer_single_function(T2Checker *checker, Expr const *function)
         T2Type outer_hint_type      = checker->hint_type;
         bool declared_result = !generator
                             && (
-                                       (function->return_type != NULL)
+                                       (function->fn->return_type != NULL)
                                     || (declared_callable != T2_TYPE_INVALID)
                                )
         ;
         if (declared_result) {
-                checker->hint_site = tail_hint_site(function->body);
+                checker->hint_site = tail_hint_site(function->fn->body);
                 checker->hint_type = result;
         }
 
@@ -24763,13 +24763,13 @@ infer_single_function(T2Checker *checker, Expr const *function)
         );
 
         forget_captured_evolving_refinements(checker);
-        T2Flow body = (function->body == NULL)
+        T2Flow body = (function->fn->body == NULL)
                     ? (T2Flow) {
                             .outcomes = 0,
                             .value    = t2_primitive(checker->universe, T2_TYPE_NEVER),
                             .returns  = t2_primitive(checker->universe, T2_TYPE_NEVER)
                     }
-                    : infer_statement(checker, function->body);
+                    : infer_statement(checker, function->fn->body);
         for (usize i = 0; i < outer_binding_count; ++i) {
                 v__(checker->bindings, i).refinement = outer_refinements[i];
         }
@@ -24781,7 +24781,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
         vN(checker->writes) = frame.assigned_start;
         if (
                 !frame.generator
-             && (function->body != NULL)
+             && (function->fn->body != NULL)
              && (body.outcomes & T2_FLOW_FALLS_THROUGH)
         ) {
                 if (
@@ -24865,10 +24865,10 @@ infer_function_expression(T2Checker *checker, Expr const *function)
                 return result;
         }
 
-        usize count = vN(function->functions);
+        usize count = vN(function->fn->functions);
         vec(T2Type) candidates = {0};
         for (usize i = 0; i < count; ++i) {
-                Expr const *entry     = v__(function->functions, (int)i);
+                Expr const *entry     = v__(function->fn->functions, (int)i);
                 Expr const *candidate = entry;
                 if (entry != NULL && IsStmt(entry)) {
                         Stmt const *definition = (Stmt const *)entry;
@@ -24894,7 +24894,7 @@ infer_function_expression(T2Checker *checker, Expr const *function)
                 vN(candidates)
         );
         xvF(candidates);
-        T2Binding *binding = ensure_binding(checker, function->fn_symbol);
+        T2Binding *binding = ensure_binding(checker, function->fn->fn_symbol);
         if (binding != NULL) {
                 binding->type        = result;
                 binding->initialized = true;
@@ -25076,12 +25076,12 @@ generalize_member_overload(
         u32                 class_level
 )
 {
-        usize count = vN(function->functions);
+        usize count = vN(function->fn->functions);
         T2Scheme **schemes = xtA0(*schemes, count + 1);
         usize scheme_count = 0;
 
         for (usize i = 0; i < count; ++i) {
-                Expr const *candidate = v__(function->functions, (int)i);
+                Expr const *candidate = v__(function->fn->functions, (int)i);
                 if (candidate != NULL && IsStmt(candidate)) {
                         candidate = ((Stmt const *)candidate)->value;
                 }
@@ -25181,7 +25181,7 @@ infer_member_functions(
                                         checker,
                                         function,
                                         function,
-                                        function->name,
+                                        function->fn->name,
                                         t2_scheme_prune(scheme),
                                         class_quantifiers,
                                         class_arity
@@ -25194,12 +25194,12 @@ infer_member_functions(
                         fprintf(checker->log, ",\"class_id\":%d,\"member\":", class_id);
                         json_string(
                                 checker->log,
-                                (function->name == NULL) ? "<member>" : function->name
+                                (function->fn->name == NULL) ? "<member>" : function->fn->name
                         );
                         fprintf(
                                 checker->log,
                                 ",\"line\":%u,\"pending_before\":%zu" ",\"pending_inferred\":%zu,\"pending_after\":%zu" ",\"quantifiers\":%zu,\"predicates\":%zu",
-                                function->start.line + 1,
+                                LocLine(function->start) + 1,
                                 pending_before,
                                 pending_inferred,
                                 t2_solver_pending_obligations(checker->solver),
@@ -25238,7 +25238,7 @@ infer_member_functions(
                 (void)add_member(
                         checker,
                         class_id,
-                        (function->name == NULL) ? "<member>" : function->name,
+                        (function->fn->name == NULL) ? "<member>" : function->fn->name,
                         kind,
                         is_static,
                         !HasBody(function),
@@ -25456,7 +25456,7 @@ validate_class_contracts(
         T2Type      receiver
 )
 {
-        ClassDefinition const *definition = &statement->class;
+        ClassDefinition const *definition = statement->class;
 
         if (definition->super != NULL) {
                 T2Type supertype = lower_type(checker, definition->super);
@@ -25614,7 +25614,7 @@ validate_pending_class_contracts(T2Checker *checker)
                 if (statement == NULL) {
                         continue;
                 }
-                ClassDefinition const *definition = &statement->class;
+                ClassDefinition const *definition = statement->class;
                 usize mark = push_type_variables(checker);
                 usize arity = (
                                       t2_type_kind(checker->universe, contract.receiver)
@@ -26064,7 +26064,7 @@ assume_parameter_bound(
 static T2Type
 infer_class_definition(T2Checker *checker, Stmt const *statement)
 {
-        ClassDefinition const *definition = &statement->class;
+        ClassDefinition const *definition = statement->class;
         bool is_tag = (statement->type == STATEMENT_TAG_DEFINITION);
         int tag_id  = is_tag ? definition->symbol : -1;
         Class *runtime_class = is_tag && (checker->ty != NULL)
@@ -26448,7 +26448,7 @@ scan_assignment_expression(Expr *expression, Scope *scope, void *user)
                 T2Checker *checker = ((T2WriteScan *)user)->checker;
                 for (usize i = 0; expression->symbol != NULL && i < vN(checker->functions); ++i) {
                         T2FunctionFrame *frame = v_(checker->functions, i);
-                        frame->reentrant |= expression->symbol == frame->function->fn_symbol
+                        frame->reentrant |= expression->symbol == frame->function->fn->fn_symbol
                                          || expression->symbol->expr == frame->function;
                 }
                 break;
@@ -26498,7 +26498,7 @@ scan_assignment_statement_end(Stmt *statement, Scope *scope, void *user)
 static void
 scan_function_assignments(T2Checker *checker, Expr const *function)
 {
-        if (function == NULL || function->body == NULL || checker->ty == NULL) {
+        if (function == NULL || function->fn->body == NULL || checker->ty == NULL) {
                 return;
         }
 
@@ -26509,7 +26509,7 @@ scan_function_assignments(T2Checker *checker, Expr const *function)
         context.s_pre  = scan_assignment_statement;
         context.s_post = scan_assignment_statement_end;
         context.user   = &scan;
-        (void)visit_statement(checker->ty, (Stmt *)function->body, NULL, &context);
+        (void)visit_statement(checker->ty, (Stmt *)function->fn->body, NULL, &context);
 }
 
 static Expr *
@@ -26900,7 +26900,7 @@ overload_candidate_scheme(
                         checker,
                         candidate,
                         candidate,
-                        candidate->name,
+                        candidate->fn->name,
                         t2_scheme_prune(scheme)
                 );
         }
@@ -26928,7 +26928,7 @@ multi_function_scheme(
         T2Type       *value
 )
 {
-        usize count = vN(function->functions);
+        usize count = vN(function->fn->functions);
         T2Scheme **schemes = xtA0(*schemes, count + 1);
         T2Type *types = xtA0(*types, count + 1);
         usize n = 0;
@@ -26936,7 +26936,7 @@ multi_function_scheme(
         *value = T2_TYPE_INVALID;
 
         for (usize i = 0; i < count; ++i) {
-                Expr const *entry = v__(function->functions, (int)i);
+                Expr const *entry = v__(function->fn->functions, (int)i);
                 if (entry == NULL) {
                         continue;
                 }
@@ -27353,7 +27353,7 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
                                         fprintf(
                                                 checker->log,
                                                 ",\"line\":%u,\"pending_before\":%zu" ",\"pending_inferred\":%zu" ",\"pending_after\":%zu" ",\"quantifiers\":%zu,\"predicates\":%zu",
-                                                statement->start.line + 1,
+                                                LocLine(statement->start) + 1,
                                                 pending_before,
                                                 pending_inferred,
                                                 t2_solver_pending_obligations(
@@ -27862,10 +27862,10 @@ infer_statement_once(T2Checker *checker, Stmt const *statement)
 
         case STATEMENT_TYPE_DEFINITION:
         {
-                register_type_alias(checker, &statement->class);
+                register_type_alias(checker, statement->class);
                 T2Alias *alias = find_alias(
                         checker,
-                        statement->class.var
+                        statement->class->var
                 );
                 result.value = resolve_alias(
                         checker,
@@ -28141,36 +28141,36 @@ register_declaration(T2Checker *checker, Stmt const *statement)
                 }
                 break;
         case STATEMENT_TYPE_DEFINITION:
-                register_type_alias(checker, &statement->class);
+                register_type_alias(checker, statement->class);
                 break;
         case STATEMENT_CLASS_DEFINITION:
         {
-                int class_id = statement->class.symbol;
-                if (class_id < 0 && statement->class.var != NULL) {
-                        class_id = statement->class.var->class;
+                int class_id = statement->class->symbol;
+                if (class_id < 0 && statement->class->var != NULL) {
+                        class_id = statement->class->var->class;
                 }
                 T2Nominal *nominal = ensure_nominal(
                         checker,
                         class_id,
-                        statement->class.name,
-                        vN(statement->class.type_params)
+                        statement->class->name,
+                        vN(statement->class->type_params)
                 );
-                register_nominal_hierarchy(checker, &statement->class, nominal);
+                register_nominal_hierarchy(checker, statement->class, nominal);
                 if (!checker->restored) {
                         declare_class_interface(checker, statement, class_id);
                 }
-                register_forward_binding(checker, statement->class.var, false);
+                register_forward_binding(checker, statement->class->var, false);
                 break;
         }
         case STATEMENT_TAG_DEFINITION:
         {
                 T2Nominal *nominal = ensure_tag_nominal(
                         checker,
-                        statement->tag.symbol,
-                        statement->tag.name
+                        statement->tag->symbol,
+                        statement->tag->name
                 );
-                register_nominal_hierarchy(checker, &statement->tag, nominal);
-                register_forward_binding(checker, statement->tag.var, false);
+                register_nominal_hierarchy(checker, statement->tag, nominal);
+                register_forward_binding(checker, statement->tag->var, false);
                 break;
         }
         case STATEMENT_FUNCTION_DEFINITION:
@@ -29741,10 +29741,10 @@ rich_context_available(T2Diagnostic const *diagnostic)
             && (syntax->mod != NULL)
             && (syntax->mod->source != NULL)
             && (syntax->mod->source[0] != '\0')
-            && (syntax->start.s != NULL)
-            && (syntax->end.s != NULL)
-            && (syntax->start.s >= syntax->mod->source)
-            && (syntax->end.s >= syntax->start.s);
+            && (LocPtr(syntax->start) != NULL)
+            && (LocPtr(syntax->end) != NULL)
+            && (LocPtr(syntax->start) >= syntax->mod->source)
+            && (LocPtr(syntax->end) >= LocPtr(syntax->start));
 }
 
 static void
@@ -29761,7 +29761,7 @@ print_source_excerpt(
 
         Location location = diagnostic->location;
         char const *line  = checker->source;
-        for (u32 n = 0; n < location.line && line != NULL; ++n) {
+        for (u32 n = 0; n < LocLine(location) && line != NULL; ++n) {
                 line = strchr(line, '\n');
                 if (line != NULL) {
                         ++line;
@@ -29780,24 +29780,24 @@ print_source_excerpt(
         paint(out, "0");
 
         paint(out, "2");
-        dump(out, "%*u | ", digits, location.line + 1);
+        dump(out, "%*u | ", digits, LocLine(location) + 1);
         paint(out, "0");
         xvPn(*out, line, length);
         xvP(*out, '\n');
 
         begin_gutter_line(out, digits, "|");
-        for (u32 i = 0; i < location.col && i < length; ++i) {
+        for (u32 i = 0; i < LocCol(location) && i < length; ++i) {
                 xvP(*out, (line[i] == '\t') ? '\t' : ' ');
         }
 
-        usize available = (location.col < length) ? length - location.col : 1;
+        usize available = (LocCol(location) < length) ? length - LocCol(location) : 1;
         usize span      = 1;
         if (
-                (diagnostic->end.line == location.line)
-             && (diagnostic->end.col > location.col)
+                (LocLine(diagnostic->end) == LocLine(location))
+             && (LocCol(diagnostic->end) > LocCol(location))
         ) {
-                span = diagnostic->end.col - location.col;
-        } else if (diagnostic->end.line > location.line) {
+                span = LocCol(diagnostic->end) - LocCol(location);
+        } else if (LocLine(diagnostic->end) > LocLine(location)) {
                 span = available;
         }
 
@@ -29823,12 +29823,12 @@ compare_diagnostics(void const *left, void const *right)
 {
         T2Diagnostic const *a = *(T2Diagnostic const *const *)left;
         T2Diagnostic const *b = *(T2Diagnostic const *const *)right;
-        if (a->location.line != b->location.line) {
-                return (a->location.line < b->location.line) ? -1 : 1;
+        if (LocLine(a->location) != LocLine(b->location)) {
+                return (LocLine(a->location) < LocLine(b->location)) ? -1 : 1;
         }
 
-        if (a->location.col != b->location.col) {
-                return (a->location.col < b->location.col) ? -1 : 1;
+        if (LocCol(a->location) != LocCol(b->location)) {
+                return (LocCol(a->location) < LocCol(b->location)) ? -1 : 1;
         }
 
         return strcmp(a->code, b->code);
@@ -29837,8 +29837,8 @@ compare_diagnostics(void const *left, void const *right)
 static bool
 same_diagnostic(T2Diagnostic const *a, T2Diagnostic const *b)
 {
-        return (a->location.line == b->location.line)
-            && (a->location.col == b->location.col)
+        return (LocLine(a->location) == LocLine(b->location))
+            && (LocCol(a->location) == LocCol(b->location))
             && (a->severity == b->severity)
             && s_eq(a->code, b->code)
             && s_eq(a->message, b->message);
@@ -30249,7 +30249,7 @@ print_diagnostic(
                                 number,
                                 sizeof number,
                                 "%u",
-                                diagnostic->location.line + 1
+                                LocLine(diagnostic->location) + 1
                           )
         ;
         T2Names *names = t2_names_new();
@@ -30278,8 +30278,8 @@ print_diagnostic(
                 dump(
                         out,
                         ":%u:%u\n",
-                        diagnostic->location.line + 1,
-                        diagnostic->location.col + 1
+                        LocLine(diagnostic->location) + 1,
+                        LocCol(diagnostic->location) + 1
                 );
                 print_source_excerpt(out, checker, diagnostic, digits);
         }
@@ -31832,11 +31832,11 @@ restore_cache(T2Checker *checker)
                         "types2 cache restore %s nodes=%zu/%zu bindings=%zu/%zu aliases=%zu interfaces=%zu\n",
                         checker->unit,
                         restored_nodes,
-                        vN(cache->nodes),
+                        (usize)vN(cache->nodes),
                         restored_bindings,
-                        vN(cache->bindings),
-                        vN(cache->aliases),
-                        vN(cache->interfaces)
+                        (usize)vN(cache->bindings),
+                        (usize)vN(cache->aliases),
+                        (usize)vN(cache->interfaces)
                 );
         }
 
@@ -32238,7 +32238,7 @@ declare_class_interface(T2Checker *checker, Stmt const *statement, int class_id)
         (void)ensure_class_interface(checker, class_id);
         install_declared_class_constructor(
                 checker,
-                &statement->class,
+                statement->class,
                 find_class_nominal(checker, class_id)
         );
 }
@@ -32259,9 +32259,9 @@ declare_class_interfaces(T2Checker *checker, Stmt const *statement)
                 break;
         case STATEMENT_CLASS_DEFINITION:
         {
-                int class_id = statement->class.symbol;
-                if (class_id < 0 && statement->class.var != NULL) {
-                        class_id = statement->class.var->class;
+                int class_id = statement->class->symbol;
+                if (class_id < 0 && statement->class->var != NULL) {
+                        class_id = statement->class->var->class;
                 }
                 declare_class_interface(checker, statement, class_id);
                 break;
@@ -32723,8 +32723,8 @@ t2_checker_observe(
                 fprintf(
                         checker->log,
                         ",\"line\":%u,\"column\":%u" ",\"new_nodes\":%zu,\"nodes\":%zu" ",\"pending_obligations\":%zu",
-                        stmt->start.line + 1,
-                        stmt->start.col + 1,
+                        LocLine(stmt->start) + 1,
+                        LocCol(stmt->start) + 1,
                         checker->node_count - before,
                         checker->node_count,
                         t2_solver_pending_obligations(checker->solver)
@@ -33327,12 +33327,12 @@ diagnostic_value(T2Checker *checker, T2Diagnostic const *diagnostic, char const 
                         "file",   (mod == NULL || mod->path == NULL) ? NIL : xSz(mod->path),
                         "module", (mod == NULL || mod->name == NULL) ? NIL : vSsz(mod->name),
                         "start",  vTn(
-                                "line", INTEGER(diagnostic->location.line + 1),
-                                "col",  INTEGER(diagnostic->location.col + 1)
+                                "line", INTEGER(LocLine(diagnostic->location) + 1),
+                                "col",  INTEGER(LocCol(diagnostic->location) + 1)
                         ),
                         "end",    vTn(
-                                "line", INTEGER(diagnostic->end.line + 1),
-                                "col",  INTEGER(diagnostic->end.col + 1)
+                                "line", INTEGER(LocLine(diagnostic->end) + 1),
+                                "col",  INTEGER(LocCol(diagnostic->end) + 1)
                         )
                 )
         );
@@ -33517,8 +33517,8 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                                 checker->log,
                                 ",\"node\":%" PRIu64 ",\"line\":%u,\"column\":%u",
                                 diagnostic->node,
-                                diagnostic->location.line + 1,
-                                diagnostic->location.col + 1
+                                LocLine(diagnostic->location) + 1,
+                                LocCol(diagnostic->location) + 1
                         );
                         fputs(",\"severity\":", checker->log);
                         json_string(
@@ -33661,7 +33661,7 @@ t2_checker_finish(Ty *ty, T2Checker *checker)
                         t2_solver_meta_count(checker->solver),
                         t2_solver_edge_count(checker->solver),
                         t2_solver_work_steps(checker->solver),
-                        vN(checker->class_contracts),
+                        (usize)vN(checker->class_contracts),
                         checker->checkpoints[T2_CHECKPOINT_DECLARATION],
                         checker->checkpoints[T2_CHECKPOINT_CLASS_OPERATOR_DECLARATION],
                         checker->checkpoints[T2_CHECKPOINT_STATEMENT],
@@ -33938,7 +33938,7 @@ t2_class_template(Ty *ty, Class *class)
 
         usize arity = (class->def == NULL)
                     ? 0
-                    : vN(class->def->class.type_params);
+                    : vN(class->def->class->type_params);
         if (arity == 0) {
                 return t2_object_type(ty, class);
         }
@@ -34562,7 +34562,7 @@ t2_resolve_in_class(Ty *ty, Class *class, Expr *type_expression)
 
         ClassDefinition const *definition = (class == NULL || class->def == NULL)
                                           ? NULL
-                                          : &class->def->class;
+                                          : class->def->class;
         usize arity = (definition == NULL)
                     ? 0
                     : vN(definition->type_params);
@@ -36229,7 +36229,7 @@ find_member_declaration(ExprVec const *members, char const *name)
                 switch (member->type) {
                 case EXPRESSION_FUNCTION:
                 case EXPRESSION_MULTI_FUNCTION:
-                        member_name = member->name;
+                        member_name = member->fn->name;
                         break;
                 case EXPRESSION_IDENTIFIER:
                         member_name = member->identifier;
@@ -36255,7 +36255,7 @@ declared_member(Class const *class, char const *name, bool is_static)
                 return NULL;
         }
 
-        ClassDefinition const *definition = &class->def->class;
+        ClassDefinition const *definition = class->def->class;
 
         MethodAlias const *alias = FindAliasImmediate(class, name, is_static);
         if (alias != NULL) {
@@ -36353,7 +36353,7 @@ t2_find_member(Ty *ty, T2Type type, char const *name)
 static void
 push_completion(
         Ty          *ty,
-        ValueVector *out,
+        Array       *out,
         char const  *name,
         char const  *doc,
         T2Type       type,
@@ -36385,7 +36385,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
 {
         T2Universe *universe = t2_global_universe();
         type = t2_type_scheme_body(universe, type);
-        ValueVector *completions = out;
+        Array *completions = out;
         usize prefix_length = (prefix == NULL) ? 0 : strlen(prefix);
         if (type == T2_TYPE_INVALID) {
                 return;
@@ -36437,10 +36437,10 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                         push_completion(
                                 ty,
                                 completions,
-                                member->name,
-                                member->doc,
+                                member->fn->name,
+                                member->fn->doc,
                                 t2_member_type(ty, type, member->_type),
-                                (member->mtype == MT_GET) ? 10 : 2,
+                                (member->fn->mtype == MT_GET) ? 10 : 2,
                                 depth
                         );
                         break;
@@ -36449,7 +36449,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                                 ty,
                                 completions,
                                 member->identifier,
-                                member->doc,
+                                NULL,
                                 t2_member_type(ty, type, member->_type),
                                 5,
                                 depth
@@ -36460,7 +36460,7 @@ t2_completions(Ty *ty, T2Type type, char const *prefix, void *out)
                                 ty,
                                 completions,
                                 member->target->identifier,
-                                member->doc,
+                                NULL,
                                 t2_member_type(ty, type, member->target->_type),
                                 5,
                                 depth

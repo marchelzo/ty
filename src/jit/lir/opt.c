@@ -472,9 +472,7 @@ fold_inst(Lir const *L, u32 const *defs, LirInst *in, bool *drop)
 static void
 rebuild(Lir *L, bool const *drop, u32 n, u32 *at)
 {
-        LirInst *old = vv(L->insts);
-
-        v00(L->insts);
+        LirInst *old = lir_swap(L);
 
         for (u32 pc = 0; pc < n; ++pc) {
                 at[pc] = vN(L->insts);
@@ -488,8 +486,6 @@ rebuild(Lir *L, bool const *drop, u32 n, u32 *at)
         for (u32 i = 0; i < vN(L->labels); ++i) {
                 v_(L->labels, i)->pos = at[v__(L->labels, i).pos];
         }
-
-        xmF(old);
 }
 
 static bool
@@ -519,7 +515,6 @@ idle(Lir const *L, LirInst const *in, u32 const *reads)
 static void
 sweep(Ty *ty, Lir *L, bool *drop, u32 n)
 {
-        SCRATCH_SAVE();
 
         u32  *reads = stA0(u32, vN(L->regs));
         bool  again = true;
@@ -547,7 +542,6 @@ sweep(Ty *ty, Lir *L, bool *drop, u32 n)
                 }
         }
 
-        SCRATCH_RESTORE();
 }
 
 static void
@@ -556,8 +550,6 @@ fold(Ty *ty, Lir *L)
         if (getenv("TY_LIR_NO_FOLD") != NULL) {
                 return;
         }
-
-        SCRATCH_SAVE();
 
         u32   n    = vN(L->insts);
         u32  *defs = stA(u32, vN(L->regs));
@@ -604,7 +596,6 @@ fold(Ty *ty, Lir *L)
                 rebuild(L, drop, n, at);
         }
 
-        SCRATCH_RESTORE();
 }
 
 typedef struct {
@@ -678,8 +669,6 @@ number(Ty *ty, Lir *L)
                 return;
         }
 
-        SCRATCH_SAVE();
-
         enum { WINDOW = 64 };
 
         u32    n     = vN(L->insts);
@@ -749,7 +738,6 @@ number(Ty *ty, Lir *L)
                 }
         }
 
-        SCRATCH_RESTORE();
 }
 
 static bool
@@ -854,8 +842,6 @@ prune(Ty *ty, Lir *L)
                 return;
         }
 
-        SCRATCH_SAVE();
-
         u32   n      = vN(L->insts);
         bool *drop   = stA0(bool, n);
         bool *wanted = stA(bool, n + 1);
@@ -870,7 +856,6 @@ prune(Ty *ty, Lir *L)
                 rebuild(L, drop, n, at);
         }
 
-        SCRATCH_RESTORE();
 }
 
 static u32
@@ -908,8 +893,6 @@ sink(Ty *ty, Lir *L)
         if (n == 0 || getenv("TY_LIR_NO_SINK") != NULL) {
                 return;
         }
-
-        SCRATCH_SAVE();
 
         bool     *hot   = stA0(bool, n + 1);
         bool     *cold  = stA0(bool, n + 1);
@@ -958,9 +941,7 @@ sink(Ty *ty, Lir *L)
                 goto Done;
         }
 
-        LirInst *old = vv(L->insts);
-
-        v00(L->insts);
+        LirInst *old = lir_swap(L);
 
         for (u32 pass = 0; pass < 2; ++pass) {
                 for (u32 pc = 0; pc < n; ++pc) {
@@ -970,7 +951,7 @@ sink(Ty *ty, Lir *L)
                         at[pc] = vN(L->insts);
                         lir_emit_owned(L, &old[pc]);
                         if (moved[pc] && exit[pc] != LIR_NONE) {
-                                xvP(L->insts, ((LirInst) {
+                                lvP(L->insts, ((LirInst) {
                                         .op     = LIR_JMP,
                                         .dst    = LIR_NONE,
                                         .args   = { lir_l(exit[pc]) },
@@ -990,10 +971,7 @@ sink(Ty *ty, Lir *L)
                 }
         }
 
-        xmF(old);
-
 Done:
-        SCRATCH_RESTORE();
 }
 
 typedef struct {
@@ -1141,7 +1119,6 @@ diamond(Lir *L, Shape const *sh, u32 pc, bool *drop, u32 *skip)
 static bool
 diamonds_once(Ty *ty, Lir *L)
 {
-        SCRATCH_SAVE();
 
         u32   n     = vN(L->insts);
         u32   nregs = vN(L->regs);
@@ -1199,8 +1176,6 @@ diamonds_once(Ty *ty, Lir *L)
                 rebuild(L, drop, n, at);
         }
 
-        SCRATCH_RESTORE();
-
         return any;
 }
 
@@ -1243,8 +1218,6 @@ lir_optimize(Ty *ty, Lir *L)
 
         ty = lir_scratch(ty);
 
-        SCRATCH_SAVE();
-
         u32  *defs = stA(u32, vN(L->regs));
         u64  *divisors = stA(u64, n);
         bool *reduce = stA0(bool, n);
@@ -1270,9 +1243,7 @@ lir_optimize(Ty *ty, Lir *L)
         }
 
         if (found) {
-                LirInst *old = vv(L->insts);
-
-                v00(L->insts);
+                LirInst *old = lir_swap(L);
 
                 for (u32 pc = 0; pc < n; ++pc) {
                         at[pc] = vN(L->insts);
@@ -1288,11 +1259,7 @@ lir_optimize(Ty *ty, Lir *L)
                 for (u32 i = 0; i < vN(L->labels); ++i) {
                         v_(L->labels, i)->pos = at[v__(L->labels, i).pos];
                 }
-
-                xmF(old);
         }
-
-        SCRATCH_RESTORE();
 
         return L->error.kind == LE_NONE;
 }

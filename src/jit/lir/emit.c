@@ -487,15 +487,11 @@ shuffle(Emit *e, LirMove const *moves, u32 n)
         LirMove          *ordered;
         u32               count;
 
-        SCRATCH_SAVE();
-
         bool ok = lir_parallel_moves(ty, moves, n, gpr, &ordered, &count, e->err);
 
         for (u32 i = 0; ok && i < count; ++i) {
                 move(e, &ordered[i]);
         }
-
-        SCRATCH_RESTORE();
 
         return ok;
 }
@@ -2052,15 +2048,11 @@ emit(Ty *ty, Lir const *L, LirAlloc const *alloc, LirCode *code, LirError *err)
         };
         usize size;
 
-        SCRATCH_SAVE();
-
         bool ok = prepare(e) && build(e, &size) && publish(e, size);
 
         if (e->dasm != NULL) {
                 dasm_free(Dst);
         }
-
-        SCRATCH_RESTORE();
 
         if (!ok && err != NULL && err->kind == LE_NONE) {
                 lir_fail(err, LE_TARGET, LIR_NOWHERE, "could not emit native function");

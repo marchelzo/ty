@@ -526,8 +526,6 @@ graph(Scan *s)
                 }
         }
 
-        SCRATCH_SAVE();
-
         u8  *state = new0(u8, nb + 1);
         u32 *stack = new(u32, nb + 1);
         u32 *edge  = new(u32, nb + 1);
@@ -625,8 +623,6 @@ graph(Scan *s)
                         }
                 }
         }
-
-        SCRATCH_RESTORE();
 
         bool *hot = new0(bool, nb + 1);
 
@@ -3461,8 +3457,6 @@ lir_parallel_moves(
         LirMove *done  = new(LirMove, 2 * count + 1);
         u32      ndone = 0;
 
-        SCRATCH_SAVE();
-
         LirMove *pending = new(LirMove, count + 1);
         LirMove *late    = new(LirMove, count + 1);
         u32      nlate   = 0;
@@ -3543,7 +3537,6 @@ lir_parallel_moves(
         ok    = true;
 
 End:
-        SCRATCH_RESTORE();
         return ok;
 }
 
@@ -4047,8 +4040,6 @@ lir_check_alloc(
 
         bool ok = true;
 
-        SCRATCH_SAVE();
-
         u32   n      = vN(L->insts);
         u32   nb     = cfg->nblocks;
         u32  *work   = new(u32, nb + 1);
@@ -4093,8 +4084,6 @@ lir_check_alloc(
                 queued[b] = false;
                 ok = walk(&k, b, work, &nwork, queued);
         }
-
-        SCRATCH_RESTORE();
 
         return ok;
 }

@@ -23,6 +23,7 @@
 #include "vm.h"
 #include "ast.h"
 #include "compiler.h"
+#include "parse.h"
 #include "functions.h"
 #include "types2.h"
 #include "highlight.h"
@@ -679,10 +680,10 @@ uninit(Ty *ty, Symbol const *s)
                 s->mod->path,
                 TERM(0),
                 TERM(33),
-                s->loc.line + 1,
+                LocLine(s->loc) + 1,
                 TERM(0),
                 TERM(33),
-                s->loc.col + 1,
+                LocCol(s->loc) + 1,
                 TERM(0),
                 (why != NULL) ? " at compile time: " : "",
                 (why != NULL) ? why : ""
@@ -829,7 +830,7 @@ show_impl(
                                         "%s<ns %s'%s'%s>%s",
                                         TERM(93),
                                         TERM(95),
-                                        v.namespace->name,
+                                        v.namespace->fn->name,
                                         TERM(93),
                                         TERM(0)
                                 );
@@ -837,7 +838,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<ns '%s'>",
-                                        v.namespace->name
+                                        v.namespace->fn->name
                                 );
                         }
                         break;
@@ -2392,9 +2393,10 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        Expr const *src = source_lookup(ty, v->src);
-        if (src != NULL && src->arena != NULL) {
-                MARK(src->arena);
+        Expr const *src   = source_lookup(ty, v->src);
+        void       *arena = (src == NULL) ? NULL : ArenaOf(src);
+        if (arena != NULL) {
+                MARK(arena);
                 if (src->mod != NULL) {
                         MarkArena(ty, &src->mod->arena);
                 }
@@ -2833,7 +2835,7 @@ PrettySource(Ty *ty, Value const *v)
                         ty,
                         &buf,
                         mod->source,
-                        &mod->tokens,
+                        ModuleTokens(ty, (Module *)mod),
                         start,
                         end,
                         NULL,

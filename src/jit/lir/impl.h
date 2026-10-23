@@ -4,8 +4,10 @@
 #include "ty.h"
 #include "jit/lir.h"
 
-#define dupn(p, n) lir_copy((p), (n), sizeof *(p))
-#define vdup(v)    ((v).items = dupn((v).items, vN(v)), (v).capacity = vN(v))
+#define dupn(p, n)       lir_copy(L, (p), (n), sizeof *(p))
+#define lir_rsz(p, n, m) ((p) = lir_grow(L, (p), (n), (m)))
+#define lvP(v, x)        vec_push_((v), (x), lir_rsz)
+#define lvR(v, n)        vec_reserve_((v), (n), lir_rsz)
 
 #define stA(T, n)  ((T *)smA((usize)(n) * sizeof (T)))
 #define stA0(T, n) ((T *)smA0((usize)(n) * sizeof (T)))
@@ -39,7 +41,19 @@ Ty *
 lir_scratch(Ty *ty);
 
 void *
-lir_copy(void const *src, usize n, usize size);
+lir_alloc(Lir const *L, usize n);
+
+void *
+lir_grow(Lir const *L, void *p, usize n, usize m);
+
+void
+lir_release(Lir const *L, void *p, usize n);
+
+void *
+lir_copy(Lir const *L, void const *src, usize n, usize size);
+
+LirInst *
+lir_swap(Lir *L);
 
 bool
 lir_check_inst(Lir const *L, u32 pc, LirError *err);
@@ -164,9 +178,9 @@ relay(Lir const *L, LirError *err)
 }
 
 inline static void
-inst_free(LirInst *in)
+inst_free(Lir const *L, LirInst *in)
 {
-#define FREE(p, n) xmF((void *)in->p);
+#define FREE(p, n) lir_release(L, (void *)in->p, in->n * sizeof *in->p);
         INST_PAYLOAD(FREE)
 #undef FREE
 }

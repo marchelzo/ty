@@ -53,6 +53,12 @@ inline static Arena
 void *
 GetArenaAlloc(Ty *ty);
 
+void *
+ArenaOf(void const *p);
+
+void
+ArenaForget(void const *base);
+
 void
 TyImmortalizeArena(Ty *ty);
 

@@ -17,6 +17,7 @@
 #include "panic.h"
 #include "polyfill_stdatomic.h"
 #include "ty/thread.h"
+#include "vmem.h"
 #include "vec.h"
 #include "log.h"
 #include "xd.h"
@@ -25,6 +26,9 @@
 
 #define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
+#define TY_TMP_SLOT      (1ULL << 26)
+#define TY_SLAB_SIZE     (1ULL << 30)
+#define TY_SCRATCH_KEEP  (1ULL << 20)
 #define TY_GLOB_CACHE_N  32
 
 #if defined(TY_RELEASE)
@@ -34,20 +38,21 @@
 #endif
 
 typedef vec(struct alloc *) AllocList;
-typedef vec(char *)         IPVector;
+typedef wvec(char *)        IPVector;
 typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
-typedef vec(Frame)          FrameStack;
+typedef wvec(Frame)         FrameStack;
 typedef vec(Value)          GCRootSet;
 typedef vec(Value *)        GCWorkStack;
 typedef vec(Scope *)        ScopeVector;
-typedef vec(usize)          SPStack;
+typedef wvec(usize)         SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct token)   TokenVector;
+typedef vec(struct ctoken)  CTokenVector;
 typedef vec(struct try *)   TryStack;
 typedef vec(Value)          ValueVector;
-typedef ValueVector         ValueStack;
+typedef wvec(Value)         ValueStack;
 typedef vec(Class *)        ClassVector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
@@ -70,12 +75,33 @@ typedef struct {
 } InternSet;
 
 typedef struct location {
-        u32 line;
-        u32 col;
+        u32 src;
         u32 byte;
-        u32 tok;
-        char const *s;
 } Location;
+
+u32
+SourceRegister(char const *base, bool flat);
+
+u32
+SourceFind(char const *base);
+
+char const *
+LocPtr(Location loc);
+
+u32
+LocLine(Location loc);
+
+u32
+LocCol(Location loc);
+
+bool
+LocSameLine(Location a, Location b);
+
+inline static Location
+LocOf(u32 src, u32 byte)
+{
+        return (Location) { .src = src, .byte = byte };
+}
 
 typedef struct {
         u64 key;
@@ -462,7 +488,7 @@ struct frame {
 };
 
 typedef struct cothread_state {
-        ValueVector stack;
+        ValueStack stack;
         FrameStack frames;
         IPVector calls;
         SPStack sps;
@@ -627,6 +653,15 @@ typedef struct {
         void *beg;
 } ScratchSave;
 
+typedef struct scratch {
+        int i;
+        vec(Arena) arenas;
+        char *lo;
+        char *next;
+        char *end;
+        char *dirty;
+} Scratch;
+
 enum { TRY_NONE, TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
 enum { TY_SAVE_INTERNAL, TY_SAVE_USER };
 
@@ -707,7 +742,7 @@ typedef struct thread_group ThreadGroup;
 typedef struct ty {
         char *ip;
 
-        ValueVector stack;
+        ValueStack stack;
 
         co_state *st;
         cothread_t co_top;
@@ -761,10 +796,8 @@ typedef struct ty {
 
         struct { void *p; usize n; } tmp[TY_TMP_BUF_COUNT];
 
-        struct {
-                int i;
-                vec(Arena) arenas;
-        } scratch;
+        char *slab;
+        Scratch scratch;
 
         vec(void *) visiting;
 
@@ -1409,6 +1442,9 @@ enum {
 void *
 Allocate(Ty *ty, usize n);
 
+void *
+ArenaResize(Ty *ty, void *p, usize n, usize m);
+
 inline static void *
 Allocate0(Ty *ty, usize n)
 {
@@ -1428,12 +1464,36 @@ jb_hash(jmp_buf const *jb)
         return hash;
 }
 
-inline static void
-ExpandScratch(Ty *ty)
-{
-#define S(x)  (ty->scratch . x)
+#define S(x)  (s->x)
 #define SS(i) (&S(arenas.items)[i])
 #define SSS   SS(S(i) - 1)
+inline static void
+ScratchAttach(Scratch *s, char *lo, char *end)
+{
+        S(lo)    = lo;
+        S(next)  = lo;
+        S(end)   = end;
+        S(dirty) = lo;
+}
+
+inline static bool
+ScratchOwns(Scratch const *s, void const *p)
+{
+        return ((char const *)p >= S(lo))
+            && ((char const *)p <  S(end));
+}
+
+inline static void
+ScratchNote(Scratch *s)
+{
+        if (SSS->beg > S(dirty) && SSS->beg <= S(end)) {
+                S(dirty) = SSS->beg;
+        }
+}
+
+inline static void
+ScratchExpand(Scratch *s)
+{
         if (S(i) == S(arenas.count)) {
                 ptrdiff_t cap;
 
@@ -1443,7 +1503,12 @@ ExpandScratch(Ty *ty)
                         cap = 2 * (vvL(S(arenas))->end - vvL(S(arenas))->base);
                 }
 
-                char *_new = mrealloc(NULL, cap);
+                bool  fits = (S(next) != NULL) && (S(end) - S(next) >= cap);
+                char *_new = fits ? S(next) : mrealloc(NULL, cap);
+
+                if (fits) {
+                        S(next) += cap;
+                }
 
                 xvP(
                         S(arenas),
@@ -1459,20 +1524,118 @@ ExpandScratch(Ty *ty)
 }
 
 inline static void *
-AllocateScratch(Ty *ty, usize n)
+ScratchAlloc(Scratch *s, usize n)
 {
         for (;;) {
                 ptrdiff_t avail = SSS->end - SSS->beg;
                 ptrdiff_t padding = -(iptr)SSS->beg & ((alignof (void *)) - 1);
 
                 if (n > avail - padding) {
-                        ExpandScratch(ty);
+                        ScratchExpand(s);
                 } else {
                         char *new = SSS->beg + padding;
                         SSS->beg += padding + n;
                         return new;
                 }
         }
+}
+
+inline static bool
+ScratchTop(Scratch const *s, void const *p, usize n)
+{
+        return (S(i) != 0)
+            && (p != NULL)
+            && ((char const *)p + n == SSS->beg)
+            && ((char const *)p >= SSS->base);
+}
+
+inline static void *
+ScratchResize(Scratch *s, void *p, usize n, usize m)
+{
+        if (ScratchTop(s, p, m) && (SSS->end - (char *)p) >= (ptrdiff_t)n) {
+                ScratchNote(s);
+                SSS->beg = (char *)p + n;
+                return p;
+        }
+
+        void *new = ScratchAlloc(s, n);
+
+        return (m == 0) ? new : memcpy(new, p, (m < n) ? m : n);
+}
+
+inline static void
+ScratchRelease(Scratch *s, void *p, usize n)
+{
+        if (ScratchTop(s, p, n)) {
+                ScratchNote(s);
+                SSS->beg = p;
+        }
+}
+
+inline static ScratchSave
+ScratchMark(Scratch *s)
+{
+        return (ScratchSave) {
+                .i = S(i),
+                .beg = SSS->beg
+        };
+}
+
+inline static void
+ScratchRewind(Scratch *s, ScratchSave save)
+{
+        while (S(i) > save.i) {
+                ScratchNote(s);
+                SSS->beg = SSS->base;
+                S(i) -= 1;
+        }
+
+        ScratchNote(s);
+        SSS->beg = save.beg;
+}
+
+inline static void
+ScratchTrim(Scratch *s, usize keep)
+{
+        usize pg = VPage();
+
+        if (S(i) == 0 || !ScratchOwns(s, SSS->beg)) {
+                return;
+        }
+
+        char *from = (char *)(((uptr)SSS->beg + keep + pg - 1) & ~(uptr)(pg - 1));
+
+        if (S(dirty) > from) {
+                VDrop(from, S(dirty) - from);
+                S(dirty) = from;
+        }
+}
+
+inline static void
+ScratchFree(Scratch *s)
+{
+        for (int i = 0; i < vN(S(arenas)); ++i) {
+                if (!ScratchOwns(s, SS(i)->base)) {
+                        xmF(SS(i)->base);
+                }
+        }
+
+        xvF(S(arenas));
+#undef S
+#undef SS
+#undef SSS
+}
+
+inline static void
+ExpandScratch(Ty *ty)
+{
+        ScratchExpand(&ty->scratch);
+}
+
+inline static void *
+AllocateScratch(Ty *ty, usize n)
+{
+        return ScratchAlloc(&ty->scratch, n);
 }
 
 inline static void *
@@ -1484,36 +1647,25 @@ AllocateScratch0(Ty *ty, usize n)
 inline static ScratchSave
 SaveScratch(Ty *ty)
 {
-        return (ScratchSave) {
-                .i = S(i),
-                .beg = SSS->beg
-        };
+        return ScratchMark(&ty->scratch);
 }
 
 inline static void
 RestoreScratch(Ty *ty, ScratchSave save)
 {
-        while (S(i) > save.i) {
-                SSS->beg = SSS->base;
-                S(i) -= 1;
-        }
-
-        SSS->beg = save.beg;
+        ScratchRewind(&ty->scratch, save);
 }
 
 inline static void
 ResetScratch(Ty *ty)
 {
-        RestoreScratch(
-                ty,
+        ScratchRewind(
+                &ty->scratch,
                 ((ScratchSave) {
                         .i = 1,
-                        .beg = SS(0)->base
+                        .beg = ty->scratch.arenas.items[0].base
                 })
         );
-#undef S
-#undef SS
-#undef SSS
 }
 
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
@@ -1532,13 +1684,22 @@ ResetScratch(Ty *ty)
 )
 
 inline static void *
+TyTmpSlot(Ty const *ty, u32 i)
+{
+        return (ty->slab == NULL) ? NULL : ty->slab + i * TY_TMP_SLOT;
+}
+
+inline static void *
 TyEnsureTmpBuffer(Ty *ty, u32 i, usize n)
 {
-        void **p = &ty->tmp[i].p;
-        usize *cap = &ty->tmp[i].n;
+        void **p    = &ty->tmp[i].p;
+        usize *cap  = &ty->tmp[i].n;
+        void  *slot = TyTmpSlot(ty, i);
 
         if (*cap < n) {
-                *p = mrealloc(*p, n);
+                *p = (slot != NULL && n <= TY_TMP_SLOT) ? slot
+                   : (slot != NULL && *p == slot)       ? memcpy(mrealloc(NULL, n), slot, *cap)
+                   :                                      mrealloc(*p, n);
                 *cap = n;
         }
 

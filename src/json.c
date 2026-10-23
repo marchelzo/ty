@@ -1270,7 +1270,7 @@ static T2Type
 object_field_type(Ty *ty, T2Type receiver, Class *c, int id)
 {
         for (; c != NULL && c->def != NULL; c = c->super) {
-                ClassDefinition const *def = &c->def->class;
+                ClassDefinition const *def = c->def->class;
                 for (u32 i = 0; i < vN(def->fields); ++i) {
                         Expr const *field = v__(def->fields, i);
                         if (field->type == EXPRESSION_EQ) {

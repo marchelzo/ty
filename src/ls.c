@@ -151,8 +151,8 @@ classify_identifier(Token const *t, char const *source)
         if (is_type_name(t->identifier))
                 return SEM_TYPE;
 
-        if (t->end.s != NULL && source != NULL) {
-                char const *p = t->end.s;
+        if (LocPtr(t->end) != NULL && source != NULL) {
+                char const *p = LocPtr(t->end);
                 while (*p == ' ' || *p == '\t') {
                         ++p;
                 }
@@ -165,7 +165,7 @@ classify_identifier(Token const *t, char const *source)
 }
 
 static void
-EncodeTokens(Ty *ty, ValueVector *out, TokenVector const *tokens, char const *source)
+EncodeTokens(Ty *ty, Array *out, TokenVector const *tokens, char const *source)
 {
         i32 prev_line = 0;
         i32 prev_col  = 0;
@@ -186,8 +186,8 @@ EncodeTokens(Ty *ty, ValueVector *out, TokenVector const *tokens, char const *so
                 if (sem < 0)
                         continue;
 
-                i32 tline = (i32)t->start.line;
-                i32 tcol  = (i32)t->start.col;
+                i32 tline = (i32)LocLine(t->start);
+                i32 tcol  = (i32)LocCol(t->start);
                 i32 len   = (i32)(t->end.byte - t->start.byte);
 
                 if (len <= 0)
@@ -899,7 +899,7 @@ SendMeta(Ty *ty, Module const *mod)
 static void
 Serve(Ty *ty, Value req)
 {
-        static ValueVector items;
+        static Array items;
 
         Value *what_field = ReqField(&req, "what", VALUE_INTEGER);
         Value *file_field = ReqField(&req, "file", VALUE_STRING);
@@ -993,8 +993,8 @@ Serve(Ty *ty, Value req)
 
                 result = vTn(
                         "name",    xSz(sym->identifier),
-                        "line",    INTEGER(sym->loc.line),
-                        "col",     INTEGER(sym->loc.col),
+                        "line",    INTEGER(LocLine(sym->loc)),
+                        "col",     INTEGER(LocCol(sym->loc)),
                         "file",    xSz(sym->mod ? sym->mod->path : "<unknown>"),
                         "type",    ShowType(ty, HoverType(sym)),
                         "doc",     (sym->doc == NULL) ? NIL : xSz(sym->doc),
@@ -1025,9 +1025,9 @@ Serve(Ty *ty, Value req)
                 }
 
                 result = vTn(
-                        "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
+                        "source",      xSs(LocPtr(QueryExpr->start), LocPtr(QueryExpr->end) - LocPtr(QueryExpr->start)),
                         "type",        xSz(t2_show(ty, QueryExpr->_type)),
-                        "completions", ARRAY((Array *)&items)
+                        "completions", ARRAY(&items)
                 );
                 break;
 
@@ -1039,7 +1039,7 @@ Serve(Ty *ty, Value req)
                 v0(items);
                 EncodeTokens(ty, &items, &mod->tokens, mod->source);
 
-                result = ARRAY((Array *)&items);
+                result = ARRAY(&items);
                 break;
         }
 

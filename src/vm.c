@@ -78,6 +78,7 @@
 #include "cffi.h"
 #include "class.h"
 #include "compiler.h"
+#include "parse.h"
 #include "diag.h"
 #include "dict.h"
 #include "dirs.h"
@@ -299,10 +300,22 @@ vm_run_thread(void *p);
 inline static void
 DoUnaryOp(Ty *ty, int op, bool exec);
 
+static VPool Slabs = VPOOL(TY_SLAB_SIZE, 1ULL << 36, false);
+
 static void
 InitializeTy(Ty *ty, ThreadGroup *group)
 {
         m0(*ty);
+
+        ty->slab = VPoolTake(&Slabs);
+
+        if (ty->slab != NULL) {
+                ScratchAttach(
+                        &ty->scratch,
+                        ty->slab + TY_TMP_BUF_COUNT * TY_TMP_SLOT,
+                        ty->slab + TY_SLAB_SIZE
+                );
+        }
 
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
@@ -572,7 +585,7 @@ ProbeFunction(Ty *ty, Value const *f, bool entry)
         Expr const *e = from_eval(f) ? NULL : expr_of(f);
         char const *file = (e != NULL && e->mod != NULL && e->mod->path != NULL) ? e->mod->path : "";
         char const *name = name_of(f);
-        int line = (e != NULL) ? (int)e->start.line + 1 : 0;
+        int line = (e != NULL) ? (int)LocLine(e->start) + 1 : 0;
         int depth = vN(FRAMES);
 
         if (entry) {
@@ -606,6 +619,8 @@ WaitGC(Ty *ty)
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
         GCSweepTy(ty);
+        ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
+        ty_collect(false);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_DONE | GC_PHASE_NONE);
@@ -749,6 +764,8 @@ DoGC(Ty *ty)
 
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweepTy(ty);
+        ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
+        ty_collect(false);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
         TySpinLockLock(&ty->group->DLock);
@@ -1312,8 +1329,8 @@ xprint_stack(Ty *ty, int n)
                 int off = i_abs - vvL(FRAMES)->fp;
 
                 Expr const *func = compiler_find_func(ty, IP);
-                char const *name = (func != NULL && vN(func->scope->owned) > off)
-                                 ? v_(func->scope->owned, off)[0]->identifier
+                char const *name = (func != NULL && vN(func->fn->scope->owned) > off)
+                                 ? v_(func->fn->scope->owned, off)[0]->identifier
                                  : NULL;
 
                 if (off == 0) {
@@ -1321,7 +1338,7 @@ xprint_stack(Ty *ty, int n)
                                 stderr,
                                 "%s%8.8s%s --> %s%8.8s%s = %s\n",
                                 TERM(95;1),
-                                (func == NULL ? "???" : func->name),
+                                (func == NULL ? "???" : func->fn->name),
                                 TERM(0;92),
                                 TERM(33),
                                 name,
@@ -1448,6 +1465,8 @@ GetSelf(Ty *ty)
 static void
 HandlePendingSignals(Ty *ty)
 {
+        bool interrupted = false;
+
         GC_STOP();
 
 #ifdef TY_HAVE_SAMPLER
@@ -1468,10 +1487,16 @@ HandlePendingSignals(Ty *ty)
                 if (!IsZero(fn)) {
                         push(INTEGER(sig));
                         vm_call(ty, &fn, 1);
+                } else if (sig == SIGINT && InteractiveSession) {
+                        interrupted = true;
                 }
         }
 
         GC_RESUME();
+
+        if (interrupted) {
+                zP("Interrupted");
+        }
 }
 
 inline static bool
@@ -2502,17 +2527,31 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
         vm_exec(ty, code_of(f));
 }
 
+#ifndef _WIN32
+static VPool CoStacks = VPOOL(CO_STACK_SIZE, 1ULL << 32, true);
+
+static void *
+CoStackTake(void)
+{
+        void *base = VPoolTake(&CoStacks);
+
+        if (base == NULL) {
+                panic("out of memory: couldn't map a %zu-byte coroutine stack", (usize)CO_STACK_SIZE);
+        }
+
+        return base;
+}
+
+#define CoStackPut(p)  VPoolPut(&CoStacks, (p))
+#else
+#define CoStackTake()  xmA(CO_STACK_SIZE)
+#define CoStackPut(p)  xmF(p)
+#endif
+
 inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
-        void *base;
-        if (vN(CO_THREADS) == 0) {
-                //CO_LOG("GetFreeCoThread(): new");
-                base = xmA(CO_STACK_SIZE);
-        } else {
-                //CO_LOG("GetFreeCoThread(): recycled");
-                base = vXx(CO_THREADS);
-        }
+        void *base = (vN(CO_THREADS) == 0) ? CoStackTake() : vXx(CO_THREADS);
         return co_derive(base, CO_STACK_SIZE, do_co);
 }
 
@@ -2835,7 +2874,7 @@ CleanupThread(void *ctx)
         }
 
         for (int i = 0; i < vN(CO_THREADS); ++i) {
-                xmF(v__(CO_THREADS, i));
+                CoStackPut(v__(CO_THREADS, i));
         }
 
         for (int i = 0; i < vN(ty->co_states); ++i) {
@@ -2843,11 +2882,15 @@ CleanupThread(void *ctx)
         }
 
         for (int i = 0; i < TY_TMP_BUF_COUNT; ++i) {
-                xmF(ty->tmp[i].p);
+                if (ty->tmp[i].p != TyTmpSlot(ty, i)) {
+                        xmF(ty->tmp[i].p);
+                }
         }
 
-        for (int i = 0; i < vN(ty->scratch.arenas); ++i) {
-                xmF(v_(ty->scratch.arenas, i)->base);
+        ScratchFree(&ty->scratch);
+
+        if (ty->slab != NULL) {
+                VPoolPut(&Slabs, ty->slab);
         }
 
         ty->st->stack = STACK;
@@ -2865,7 +2908,6 @@ CleanupThread(void *ctx)
         xvF(ty->err);
         xvF(ty->marking);
         xvF(ty->visiting);
-        xvF(ty->scratch.arenas);
         FreeArena(&ty->arena);
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
@@ -3341,7 +3383,7 @@ DoThrow(Ty *ty)
                         throw,
                         (ty->exc.type == VALUE_OBJECT) ? class_name(ty, ty->exc.class) : "(value)",
                         (where != NULL && where->mod != NULL) ? where->mod->path : "",
-                        (where != NULL) ? (int)where->start.line + 1 : 0
+                        (where != NULL) ? (int)LocLine(where->start) + 1 : 0
                 );
         }
 #endif
@@ -3824,7 +3866,7 @@ InertInit(Value const *init, int argc, Value const *kwargs)
         return (argc == 0)
             && ((kwargs == NULL) || IsNil(*kwargs))
             && (init->type == VALUE_FUNCTION)
-            && expr_of(init)->inert;
+            && expr_of(init)->fn->inert;
 }
 
 static Value
@@ -7575,7 +7617,7 @@ DoFunction(Ty *ty, char const *ip, Value *locals, Value **env)
         }
 
         if (UNLIKELY(
-                expr_of(&v)->must_jit
+                expr_of(&v)->fn->must_jit
              && ((uptr)jit_of(&v) == JIT_UNSEEN)
              && !NoJIT
              && !DebugJitOff
@@ -7707,7 +7749,7 @@ ResolveTrace(Ty *ty, ThrowCtx const *ctx)
                 }
 
                 ValueVector localv = v__(ctx->locals, i);
-                Scope *scope = func->scope;
+                Scope *scope = func->fn->scope;
                 Dict *locals = dict_new(ty);
 
                 for (int i = 0; i < vN(scope->owned); ++i) {
@@ -9990,11 +10032,11 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                         if (
                                 DetailedExceptions
                              && ((func = compiler_find_func(ty, ip - 1)) != NULL)
-                             && (func->scope != NULL)
-                             && (vN(func->scope->owned) > 0)
+                             && (func->fn->scope != NULL)
+                             && (vN(func->fn->scope->owned) > 0)
                         ) {
                                 ValueVector localv = v__(ctx->locals, i);
-                                Scope *scope = func->scope;
+                                Scope *scope = func->fn->scope;
 
                                 int max_width = 0;
                                 for (int i = 0; i < vN(scope->owned); ++i) {
@@ -10806,6 +10848,10 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         TY_CATCH_END();
         GC_RESUME();
         TY_FINISH_LOADING();
+
+        DoGC(ty);
+        parse_trim(ty);
+        ty_collect(true);
 
         ty->code = mod->code;
 

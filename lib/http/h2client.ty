@@ -1,7 +1,7 @@
 /**
  * HTTP/2 client connections for `http.client`, multiplexing concurrent
- * requests (from any number of threads) over one socket. Loaded on demand
- * so the client works without libnghttp2.
+ * requests (from any number of threads) over one socket. Imported only
+ * when libnghttp2 is installed.
  *
  * One thread at a time reads from the socket while holding the right to
  * drive the nghttp2 session; others wait on a condition variable and take
@@ -15,10 +15,10 @@ import log
 import http.nghttp2 (..)
 import http.headers (Headers)
 import http.status (status-name)
-import http.client as client (
+import http.transport (
     Body,
+    ConnPool,
     Exchange,
-    HTTPTransport,
     Multiplexed,
     Request,
     Socket,
@@ -27,7 +27,8 @@ import http.client as client (
     ReadTimeout,
     WriteTimeout,
     ProtocolError,
-    StaleConnection
+    StaleConnection,
+    stream-chunks
 )
 
 const STREAM_WINDOW     = 4 * 1024 * 1024
@@ -128,7 +129,7 @@ class H2Body : Body {
 
 pub class H2Conn : Multiplexed {
     sock:        Socket
-    transport:   HTTPTransport
+    pool:        ConnPool
     idle-since:  Float
     max-streams: Int
 
@@ -147,9 +148,9 @@ pub class H2Conn : Multiplexed {
     __out:      Ptr
     __pend:     Blob
 
-    init(sock: Socket, key: String, transport: HTTPTransport, t: Timeout) {
+    init(sock: Socket, key: String, pool: ConnPool, t: Timeout) {
         self.sock      = sock
-        self.transport = transport
+        self.pool      = pool
         __key          = key
         __requests     = 0
         __active       = 0
@@ -447,7 +448,7 @@ pub class H2Conn : Multiplexed {
             __flush(deadline(t.write))
 
             if streamed != nil {
-                for chunk in client.stream-chunks(streamed) {
+                for chunk in stream-chunks(streamed) {
                     st.out.push(chunk)
                     __resume(st)
                     __flush(deadline(t.write))
@@ -541,7 +542,7 @@ pub class H2Conn : Multiplexed {
             let ^_ = __lock.lock()
             __abandon(st)
         }
-        transport.pool.release(self, true)
+        pool.release(self, true)
     }
 
     cb-begin(frame: Ptr) -> Int {
@@ -669,6 +670,6 @@ pub class H2Conn : Multiplexed {
     }
 }
 
-pub fn connect(sock: Socket, key: String, transport: HTTPTransport, t: Timeout) -> H2Conn {
-    H2Conn(sock, key, transport, t)
+pub fn connect(sock: Socket, key: String, pool: ConnPool, t: Timeout) -> H2Conn {
+    H2Conn(sock, key, pool, t)
 }

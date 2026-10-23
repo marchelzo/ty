@@ -737,7 +737,7 @@ rebuild(Hoist *h, u32 hb)
                 }
         }
 
-        xvP(L->labels, ((LirLabelInfo) { .pos = LIR_NONE }));
+        lvP(L->labels, ((LirLabelInfo) { .pos = LIR_NONE }));
         pre = nlabels;
 
         LirInst *moved = new(LirInst, h->norder + 1);
@@ -746,13 +746,13 @@ rebuild(Hoist *h, u32 hb)
                 moved[o] = old[h->order[o]];
         }
 
-        v00(L->insts);
+        lir_swap(L);
 
         for (u32 pc = 0; pc < n; ++pc) {
                 if (pc == first) {
                         v_(L->labels, pre)->pos = vN(L->insts);
                         for (u32 o = 0; o < h->norder; ++o) {
-                                xvP(L->insts, moved[o]);
+                                lvP(L->insts, moved[o]);
                         }
                 }
 
@@ -762,12 +762,12 @@ rebuild(Hoist *h, u32 hb)
                         continue;
                 }
 
-                xvP(L->insts, old[pc]);
+                lvP(L->insts, old[pc]);
 
                 if (nfresh != 0 && h->body[g->block_at[pc]] && refreshes_after(&old[pc])) {
                         for (u32 o = 0; o < h->norder; ++o) {
                                 if (h->fresh[h->order[o]]) {
-                                        xvP(L->insts, moved[o]);
+                                        lvP(L->insts, moved[o]);
                                 }
                         }
                 }
@@ -781,8 +781,6 @@ rebuild(Hoist *h, u32 hb)
                         l->pos = pos[l->pos];
                 }
         }
-
-        xmF(old);
 }
 
 static bool
@@ -888,8 +886,6 @@ lir_hoist(Ty *ty, Lir *L, LirError *err)
 
         ty = lir_scratch(ty);
 
-        SCRATCH_SAVE();
-
         Hoist    h      = { .ty = ty, .L = L };
         LirLabel done[MAX_LOOPS];
         u32      ndone  = 0;
@@ -936,8 +932,6 @@ lir_hoist(Ty *ty, Lir *L, LirError *err)
                         }
                 }
         }
-
-        SCRATCH_RESTORE();
 
         if (ok && ndone != 0 && getenv("TY_JIT_VALIDATE") != NULL) {
                 bool trusted = L->trusted;

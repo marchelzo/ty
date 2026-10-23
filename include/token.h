@@ -180,6 +180,21 @@ typedef struct token {
         };
 } Token;
 
+typedef struct ctoken {
+        i32 type;
+        u8  ctx;
+        i8  tag;
+        u8  bits;
+        u8  quotes;
+        u32 start;
+        u32 end;
+} CToken;
+
+enum {
+        CTOKEN_PP = 1 << 0,
+        CTOKEN_NL = 1 << 1
+};
+
 char const *
 token_show(Ty *ty, Token const *t);
 
@@ -197,6 +212,50 @@ keyword_get_number(char const *s);
 
 int
 optoken_get_type(char const *s, usize n);
+
+inline static CToken *
+CTokenAt(CTokenVector const *ts, Location loc)
+{
+        isize lo = 0;
+        isize hi = vN(*ts) - 1;
+
+        while (lo <= hi) {
+                isize   mid = lo + (hi - lo) / 2;
+                CToken *t   = v_(*ts, mid);
+
+                if (t->start < loc.byte) {
+                        lo = mid + 1;
+                } else if (t->start > loc.byte) {
+                        hi = mid - 1;
+                } else {
+                        return t;
+                }
+        }
+
+        return NULL;
+}
+
+inline static Token *
+TokenAt(TokenVector const *ts, Location loc)
+{
+        isize lo = 0;
+        isize hi = vN(*ts) - 1;
+
+        while (lo <= hi) {
+                isize  mid = lo + (hi - lo) / 2;
+                Token *t   = v_(*ts, mid);
+
+                if (t->start.byte < loc.byte) {
+                        lo = mid + 1;
+                } else if (t->start.byte > loc.byte) {
+                        hi = mid - 1;
+                } else {
+                        return (t->start.src == loc.src) ? t : NULL;
+                }
+        }
+
+        return NULL;
+}
 
 #endif
 

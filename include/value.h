@@ -1711,8 +1711,8 @@ FunDef(Ty *ty, Value const *f)
         defs = ARRAY(vA());
         gP(&defs);
 
-        for (int i = 0; i < vN(fun->functions); ++i) {
-                Expr *arm = v__(fun->functions, i);
+        for (int i = 0; i < vN(fun->fn->functions); ++i) {
+                Expr *arm = v__(fun->fn->functions, i);
                 if (IsStmt(arm)) {
                         arm = ((Stmt *)arm)->value;
                 }

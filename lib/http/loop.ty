@@ -3,7 +3,7 @@ import errno
 import time
 import log
 import ssl
-import ty.mod as tymod
+import http.native as native
 import http.metrics (Metrics)
 import http.backend (Backend)
 import http.wire (Request)
@@ -25,6 +25,12 @@ import http.core (
 #|if __linux__
 import http.uring as uring
 #|]
+
+#|if native.kqueue?()
+import http.kqueue (Backend as KqueueBackend)
+#|]
+
+pub const HAVE_KQUEUE = __defined__(KqueueBackend)
 
 const OP_ACCEPT = 1
 const OP_RECV   = 2
@@ -53,8 +59,6 @@ pub fn default-backend() -> String {
 #|]
 }
 
-pub use BackendFactory = (Int) -> Backend;
-
 pub trait Proto {
     on-data();
     on-eof();
@@ -72,7 +76,6 @@ pub trait Host {
     tls -> ssl.Context | nil;
     h2? -> Bool;
     streams? -> Bool;
-    backend-factory -> BackendFactory | nil;
     overload-response -> String | nil;
     connection-opened(loop: Loop) -> Bool;
     connection-closed();
@@ -84,11 +87,7 @@ pub trait Host {
     serve(x: LoopExchange, req: Request);
 }
 
-pub fn make-backend(name: String, entries: Int, factory: BackendFactory | nil) -> Backend {
-    if let $f = factory {
-        return f(entries)
-    }
-
+pub fn make-backend(name: String, entries: Int) -> Backend {
     let name = (name == 'auto') ? default-backend() : name
     match name {
         'io_uring' => do {
@@ -98,7 +97,13 @@ pub fn make-backend(name: String, entries: Int, factory: BackendFactory | nil) -
             throw RuntimeError('http: io_uring is only available on Linux')
 #|]
         },
-        'kqueue' => (tymod.lookup(tymod.load('http/kqueue'), 'Backend'))(entries),
+        'kqueue' => do {
+#|if __defined__(KqueueBackend)
+            KqueueBackend(entries)
+#|else
+            throw RuntimeError('http: kqueue backend unavailable: libkqueue is not installed')
+#|]
+        },
         other    => throw ValueError("http: unknown backend: {other}")
     }
 }
@@ -606,7 +611,7 @@ pub class Loop : EventLoop {
     init(server: Host, config: Config, index: Int, listen: Int) {
         self.server  = server
         self.index   = index
-        backend      = make-backend(config.backend, config.ring-entries, server.backend-factory)
+        backend      = make-backend(config.backend, config.ring-entries)
         now          = time.now()
         dirty        = []
         request-seq  = 0

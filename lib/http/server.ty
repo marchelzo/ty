@@ -19,11 +19,12 @@ import http.loop (
     Host,
     Proto,
     LoopExchange,
-    BackendFactory,
     default-backend,
-    make-backend
+    make-backend,
+    HAVE_KQUEUE
 )
 import http.h1 (H1)
+import http.native as native
 import http.deflate as deflate
 import os hiding (sleep, spawn)
 import thread
@@ -31,6 +32,10 @@ import json
 import log
 import ssl
 import time
+
+#|if native.nghttp2?()
+import http.h2 (session as h2-session)
+#|]
 
 const NO_PARAMS: Dict[String, String] = %{}
 
@@ -66,7 +71,7 @@ let uring-probe: Ok[nil] | Err[String] | nil = nil
 fn probe-uring() -> Ok[nil] | Err[String] {
     let ^_ = probe-lock.lock()
     uring-probe ?? (uring-probe = try {
-        let b = make-backend('io_uring', 8, nil)
+        let b = make-backend('io_uring', 8)
         b.close()
         Ok(nil)
     } catch e {
@@ -219,7 +224,6 @@ pub class Server : Host {
     __stopping:   Atomic
     __streams:    Atomic
     __h2:         H2Session | nil
-    __backend:    BackendFactory | nil
     __not-found:  RequestHandler | nil
     __on-error:   ErrorHandler | nil
     __metrics:    Metrics
@@ -246,7 +250,6 @@ pub class Server : Host {
         __not-found  = nil
         __on-error   = nil
         __h2         = nil
-        __backend    = nil
         __metrics    = Metrics()
         __rid        = ssl.random-bytes(4).hex()
         __log-mtx    = Mutex()
@@ -256,29 +259,25 @@ pub class Server : Host {
         }
 
         if self.config.h2 {
-            match core.optional-module('http/h2', 'session') {
-                Ok(f)  => __h2 = f,
-                Err(e) => log::warn!("HTTP/2 disabled", reason: e)
-            }
+#|if __defined__(h2-session)
+            __h2 = h2-session
+#|else
+            log::warn!("HTTP/2 disabled", reason: 'libnghttp2 is not installed')
+#|]
         }
 
         if self.config.backend == 'auto' && default-backend() == 'io_uring' {
             if let Err(why) = probe-uring() {
-                match core.optional-module('http/kqueue', 'Backend') {
-                    Ok(_) => {
-                        log::warn!("io_uring unavailable; using kqueue via libkqueue", reason: why)
-                        self.config.backend = 'kqueue'
-                    },
-                    Err(_) => throw RuntimeError("http: io_uring is unavailable ({why}) and libkqueue is not installed")
+                if !HAVE_KQUEUE {
+                    throw RuntimeError("http: io_uring is unavailable ({why}) and libkqueue is not installed")
                 }
+                log::warn!("io_uring unavailable; using kqueue via libkqueue", reason: why)
+                self.config.backend = 'kqueue'
             }
         }
 
-        if backend == 'kqueue' {
-            match core.optional-module('http/kqueue', 'Backend') {
-                Ok(f)  => __backend = f,
-                Err(e) => throw RuntimeError("http: kqueue backend unavailable: {e}")
-            }
+        if backend == 'kqueue' && !HAVE_KQUEUE {
+            throw RuntimeError('http: kqueue backend unavailable: libkqueue is not installed')
         }
 
         __tls = match tls {
@@ -361,10 +360,6 @@ pub class Server : Host {
         let (host, port) = address
         let h = (host == '0.0.0.0' || host == '::') ? '127.0.0.1' : host
         "{(tls != nil) ? 'https' : 'http'}://{h.contains?(':') ? "[{h}]" : h}:{port}"
-    }
-
-    backend-factory -> BackendFactory | nil {
-        __backend
     }
 
     h2? -> Bool {

@@ -324,7 +324,7 @@ itable_get_completions(Ty *ty, struct itable const *t, char const *prefix, char 
 }
 
 int
-itable_completions(Ty *ty, struct itable const *t, char const *prefix, ValueVector *out)
+itable_completions(Ty *ty, struct itable const *t, char const *prefix, Array *out)
 {
         int n = 0;
         int prefix_len = (prefix == NULL) ? 0 : strlen(prefix);

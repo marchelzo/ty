@@ -778,8 +778,8 @@ identifier_color(Token const *t, char const *source)
                 return SC_TYPE;
         }
 
-        if (t->end.s != NULL && source != NULL) {
-                char const *p = t->end.s;
+        if (LocPtr(t->end) != NULL && source != NULL) {
+                char const *p = LocPtr(t->end);
                 while (*p == ' ' || *p == '\t') {
                         ++p;
                 }

@@ -2,8 +2,9 @@
 #define VEC_H_INCLUDED
 
 #include <stddef.h>
+#include <stdint.h>
 
-typedef size_t vec_z;
+typedef int32_t vec_z;
 
 inline static vec_z
 fit2(vec_z cap, vec_z min)
@@ -21,6 +22,12 @@ fit2(vec_z cap, vec_z min)
         vec_z capacity
 
 #define vec(T) struct { intrusive_vec(T); }
+
+#define wvec(T) struct {   \
+        T *items;          \
+        size_t count;      \
+        size_t capacity;   \
+}
 
 #define vec_init(v, ...) (                      \
         ((v).items    = NULL),                  \

@@ -639,7 +639,7 @@ get_regs(Reader *r, Lir *L)
                 return;
         }
 
-        xvR(L->regs, n);
+        lvR(L->regs, n);
         vN(L->regs) = n;
 
         for (u32 i = 0; i < n && r->ok; ++i) {
@@ -680,7 +680,7 @@ get_labels(Reader *r, Lir *L)
 {
         u32 n = get_count(r);
 
-        xvR(L->labels, n);
+        lvR(L->labels, n);
         vN(L->labels) = n;
 
         for (u32 i = 0; i < n; ++i) {
@@ -714,12 +714,12 @@ get_insts(Reader *r, Lir *L, u32 version, LirBinding const *holes, u32 nholes)
 {
         u32 n = get_count(r);
 
-        xvR(L->insts, n);
+        lvR(L->insts, n);
 
         for (u32 i = 0; i < n && r->ok; ++i) {
                 LirInst in = { .dst = LIR_NONE };
                 get_inst(r, &in, version, holes, nholes);
-                xvP(L->insts, in);
+                lvP(L->insts, in);
         }
 }
 
@@ -924,11 +924,7 @@ lir_deserialize(
 
         ty = lir_scratch(ty);
 
-        SCRATCH_SAVE();
-
         Lir *L = decode(ty, &r, holes, nholes, err);
-
-        SCRATCH_RESTORE();
 
         return L;
 }

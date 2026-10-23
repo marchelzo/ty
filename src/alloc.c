@@ -21,6 +21,86 @@ ExpandArena(Ty *ty)
         }
 }
 
+static struct {
+        char const *lo;
+        char const *hi;
+}                *GcArenas;
+static usize      NGcArenas;
+static usize      CGcArenas;
+static TySpinLock GcArenaLock = TY_MUTEX_INIT;
+
+static usize
+ArenaFind(void const *p)
+{
+        usize lo = 0;
+        usize hi = NGcArenas;
+
+        while (lo < hi) {
+                usize mid = lo + (hi - lo) / 2;
+                if (GcArenas[mid].lo <= (char const *)p) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        return lo;
+}
+
+static void
+ArenaNote(char const *lo, char const *hi)
+{
+        TySpinLockLock(&GcArenaLock);
+
+        if (NGcArenas == CGcArenas) {
+                CGcArenas = (CGcArenas == 0) ? 64 : 2 * CGcArenas;
+                GcArenas  = mrealloc(GcArenas, CGcArenas * sizeof *GcArenas);
+        }
+
+        usize i = ArenaFind(lo);
+
+        memmove(GcArenas + i + 1, GcArenas + i, (NGcArenas - i) * sizeof *GcArenas);
+
+        GcArenas[i].lo = lo;
+        GcArenas[i].hi = hi;
+        NGcArenas += 1;
+
+        TySpinLockUnlock(&GcArenaLock);
+}
+
+void
+ArenaForget(void const *base)
+{
+        TySpinLockLock(&GcArenaLock);
+
+        usize i = ArenaFind(base);
+
+        if (i > 0 && GcArenas[i - 1].lo == base) {
+                memmove(GcArenas + i - 1, GcArenas + i, (NGcArenas - i) * sizeof *GcArenas);
+                NGcArenas -= 1;
+        }
+
+        TySpinLockUnlock(&GcArenaLock);
+}
+
+void *
+ArenaOf(void const *p)
+{
+        void *base = NULL;
+
+        TySpinLockLock(&GcArenaLock);
+
+        usize i = ArenaFind(p);
+
+        if (i > 0 && (char const *)p < GcArenas[i - 1].hi) {
+                base = (void *)GcArenas[i - 1].lo;
+        }
+
+        TySpinLockUnlock(&GcArenaLock);
+
+        return base;
+}
+
 Arena
 NewArenaGC(Ty *ty, usize cap)
 {
@@ -30,6 +110,8 @@ NewArenaGC(Ty *ty, usize cap)
         A.beg = A.base + RESERVED;
         A.end = A.base + RESERVED + cap;
         A.gc = true;
+
+        ArenaNote(A.base, A.end);
 
         memset(A.base, 0, RESERVED);
 
@@ -108,6 +190,19 @@ Allocate(Ty *ty, usize n)
 
                 return o;
         }
+}
+
+void *
+ArenaResize(Ty *ty, void *p, usize n, usize m)
+{
+        char *q = p;
+
+        if (q != NULL && q + m == A.beg && n <= (usize)(A.end - q)) {
+                A.beg = q + n;
+                return q;
+        }
+
+        return memcpy(Allocate(ty, n), p, m);
 }
 
 void *

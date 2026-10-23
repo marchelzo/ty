@@ -1383,7 +1383,7 @@ flow_special(BcLir *c, BcQueue *q, i32 at, i32 *sp, i32 *taken)
 
         case INSTR_RENDER_TEMPLATE: {
                 Expr const *expr  = peek(void const *, ip + 1);
-                i32         count = vN(expr->template.holes);
+                i32         count = vN(TMX(&expr->template)->holes);
                 if (*sp < count) {
                         return FLOW_FAIL;
                 }
@@ -3139,7 +3139,7 @@ static void
 prof_site(BcLir *c, BcLirNode const *node, char const *ip, i32 off)
 {
         Expr const *at = compiler_find_expr(c->ctx, ip);
-        i32 line = (at != NULL) ? (i32)at->start.line : -1;
+        i32 line = (at != NULL) ? (i32)LocLine(at->start) : -1;
 
         if (node->label != LIR_NONE || line != c->prof_line || c->prof_expr == NULL) {
                 effect(c, LIR_SITE, (LirOpnd[]) { lir_i(off + 1) }, 1);
@@ -3436,8 +3436,8 @@ static void
 log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
 {
         Expr const *expr    = !from_eval(f) ? expr_of(f) : NULL;
-        char const *cls     = (expr != NULL && expr->class != NULL)
-                            ? expr->class->name
+        char const *cls     = (expr != NULL && expr->fn->class != NULL)
+                            ? expr->fn->class->name
                             : "";
         u64         elapsed = TyMonotonicTime() - begin;
 
@@ -3467,7 +3467,7 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNot
                         jit__compile,
                         name_of(f),
                         (e != NULL && e->mod != NULL) ? e->mod->path : "",
-                        (e != NULL) ? (int)e->start.line + 1 : 0,
+                        (e != NULL) ? (int)LocLine(e->start) + 1 : 0,
                         (unsigned long)code->size,
                         (unsigned long)(TyMonotonicTime() - begin),
                         c->compact ? 1 : 2
@@ -3499,7 +3499,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         bool     method  = (f->info[FUN_INFO_CLASS] != -1);
         LirError err;
         BcLir    c       = {
-                .L          = lir_new(name_of(f), &sig, LIR_MODE_ATTACHED, &err),
+                .L          = lir_new_in(&ty->scratch, name_of(f), &sig, LIR_MODE_ATTACHED, &err),
                 .ctx        = ty,
                 .function   = f,
                 .ok         = true,
@@ -3515,7 +3515,6 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         }
 
         if (!admit(&c, f, why, nwhy)) {
-                lir_free(c.L);
                 return NULL;
         }
 
@@ -3541,8 +3540,6 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         if (code != NULL && notes != NULL) {
                 *notes = describe(&c, code);
         }
-
-        lir_free(c.L);
 
         if (code == NULL) {
                 xmF(osr);
@@ -3645,6 +3642,8 @@ jit_lower(Ty *ty, Value const *f)
         SCRATCH_SAVE();
         JitFn *fn = compile(ty, f, begin);
         SCRATCH_RESTORE();
+
+        ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
 
         PROF_LEAVE();
 

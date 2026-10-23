@@ -103,8 +103,8 @@ typedef enum lir_call_flags {
 } LirCallFlags;
 
 typedef struct lir_sig {
-        LirType        ret;
         LirType const *params;
+        LirType        ret;
         u32            nparams;
         u32            nfixed;
         bool           variadic;
@@ -321,12 +321,12 @@ typedef struct lir_raw_binding {
 
 typedef struct lir_raw {
         u32 const           *arm64;
-        u32                  narm64;
         u8 const            *x64;
-        u32                  nx64;
         LirRawBinding const *in;
-        u32                  nin;
         LirRawBinding const *out;
+        u32                  narm64;
+        u32                  nx64;
+        u32                  nin;
         u32                  nout;
         u64                  gpr_clobber;
         u64                  fpr_clobber;
@@ -336,18 +336,20 @@ typedef struct lir_inst {
         LirOp     op;
         LirReg    dst;
         LirOpnd   args[LIR_MAX_OPERANDS];
-        u8        nargs;
         u32       flags;
         u32       tag;
         u32       origin;
         LirSpan   span;
+        u8        nargs;
+        u32       ncall_args;
+        u32       ntargets;
         LirSig    sig;
         LirOpnd  *call_args;
-        u32       ncall_args;
         LirLabel *targets;
-        u32       ntargets;
         LirRaw    raw;
 } LirInst;
+
+typedef vec(LirInst) LirInstVec;
 
 typedef struct lir_reg_info {
         LirClass cls;
@@ -414,9 +416,11 @@ struct lir {
         LirMode           resolved_mode;
         LirReg           *params;
         LirReg            pins[LIR_MAX_PINS];
+        struct scratch   *mem;
         vec(LirRegInfo)   regs;
         vec(LirLabelInfo) labels;
-        vec(LirInst)      insts;
+        LirInstVec        insts;
+        LirInstVec        spare;
         vec(Value)        roots;
         u32               nvslots;
         u32               pc_param;
@@ -704,6 +708,9 @@ lir_type_size(LirType type);
 
 Lir *
 lir_new(char const *name, LirSig const *sig, LirMode mode, LirError *err);
+
+Lir *
+lir_new_in(struct scratch *mem, char const *name, LirSig const *sig, LirMode mode, LirError *err);
 
 Lir *
 lir_clone(Lir *L, LirError *err);

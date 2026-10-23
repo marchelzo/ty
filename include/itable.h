@@ -58,7 +58,7 @@ int
 itable_get_completions(Ty *ty, struct itable const *t, char const *prefix, char **out, int max);
 
 int
-itable_completions(Ty *ty, struct itable const *t, char const *prefix, ValueVector *out);
+itable_completions(Ty *ty, struct itable const *t, char const *prefix, Array *out);
 
 void
 itable_release(Ty *ty, struct itable *t);

@@ -911,6 +911,8 @@ pub class TermIO {
     __mouse: Bool
     __paste: Bool
 
+    isig: Bool
+
     __enter: String
     __exit:  String
     __pointer: String
@@ -966,6 +968,7 @@ pub class TermIO {
         }
 
         __mouse = mouse
+        isig    = true
         __kitty = match kitty {
             true  => 1 | 2 | 4 | 8 | 16,
             false => 0,
@@ -1094,6 +1097,7 @@ pub class TermIO {
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
+        copy.lflag &= isig ? ~0 : ~ISIG
         copy.iflag |= IGNBRK
         copy.iflag &= ~ICRNL
         copy.iflag &= ~IXON

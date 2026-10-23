@@ -4,19 +4,9 @@
  * list packing, and a callback table that forwards to a handler object.
  */
 import ffi as c (C!)
+import http.native (libnghttp2 as open-nghttp2)
 
-#|if __apple__
-const LIBRARIES = [
-    '/opt/homebrew/opt/libnghttp2/lib/libnghttp2.14.dylib',
-    '/usr/local/opt/libnghttp2/lib/libnghttp2.14.dylib',
-    '/opt/homebrew/lib/libnghttp2.14.dylib',
-    'nghttp2'
-]
-#|else
-const LIBRARIES = ['nghttp2']
-#|]
-
-if not let $libnghttp2 = c.open(LIBRARIES, versions: [14, nil], env: 'TY_LIBNGHTTP2') {
+if not let $libnghttp2 = open-nghttp2() {
     throw RuntimeError('http: failed to load libnghttp2')
 }
 

@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,7 +51,21 @@ static char buffer[8192];
 
 static char const *print_function = "print";
 static bool help_imported = false;
+static bool date_imported = false;
 static bool jit_imported = false;
+
+#define HELP_IMPORT "import help (help, grep)\nimport help.which (which)\n"
+
+static struct {
+        char const *name;
+        bool       *done;
+        char const *code;
+} LazyImports[] = {
+        { "help",  &help_imported, HELP_IMPORT     },
+        { "grep",  &help_imported, HELP_IMPORT     },
+        { "which", &help_imported, HELP_IMPORT     },
+        { "date",  &date_imported, "import date\n" },
+};
 
 static char const *SourceFile;
 
@@ -237,7 +252,41 @@ static bool
 import_help(Ty *ty)
 {
         return help_imported
-            || (help_imported = repl_import(ty, "import help (help, grep)\nimport help.which (which)\n"));
+            || (help_imported = repl_import(ty, HELP_IMPORT));
+}
+
+inline static bool
+isidchar(char c)
+{
+        return isalnum((unsigned char)c)
+            || (c == '_')
+            || (c == '-')
+            || (c == '?')
+            || (c == '!');
+}
+
+static bool
+mentions(char const *line, char const *name)
+{
+        usize n = strlen(name);
+
+        for (char const *s = strstr(line, name); s != NULL; s = strstr(s + 1, name)) {
+                if ((s == line || !isidchar(s[-1])) && !isidchar(s[n])) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+repl_lazy(Ty *ty, char const *line)
+{
+        for (int i = 0; i < countof(LazyImports); ++i) {
+                if (!*LazyImports[i].done && mentions(line, LazyImports[i].name)) {
+                        *LazyImports[i].done = repl_import(ty, LazyImports[i].code);
+                }
+        }
 }
 
 static void
@@ -376,6 +425,8 @@ execln(Ty *ty, char *line)
                 }
         }
 
+        repl_lazy(ty, line);
+
         dump(&buffer, "%s(do (%s));", print_function, line);
         if (repl_exec(ty, v_(buffer, 1))) {
                 goto End;
@@ -409,7 +460,12 @@ readln(Ty *ty)
 
         if (!InteractiveSession) {
                 return fgets(buffer, sizeof buffer, stdin);
-        } else if (
+        }
+
+        ScratchTrim(&ty->scratch, 1 << 16);
+        ty_collect(true);
+
+        if (
                 !basic
              && (_readln = vm_global(ty, NAMES._readln))
              && CALLABLE(*_readln)
@@ -461,21 +517,10 @@ pollute_with_bloat(void)
                 "import path (Path)           \n"
                 "import readln                \n"
                 "import sh (sh)               \n"
-                "import date                  \n"
                 "import chalk (chalk as C)    \n"
         ));
 
         print_function = "pp";
-}
-
-
-static jmp_buf InterruptJB;
-
-static void
-sigint(int signal)
-{
-        fputs("Interrupted.\n", stderr);
-        longjmp(InterruptJB, 1);
 }
 
 
@@ -485,11 +530,14 @@ repl(Ty *ty)
         InteractiveSession = true;
         v_(Globals, NAMES.interactive)->boolean = true;
 
-        signal(SIGINT, sigint);
+#ifndef _WIN32
+        struct sigaction act = { .sa_flags = SA_SIGINFO, .sa_sigaction = vm_do_signal };
+        sigemptyset(&act.sa_mask);
+        sigaction(SIGINT, &act, NULL);
+#endif
 
         if (!basic) {
                 pollute_with_bloat();
-                repl_setup(ty, import_help(ty));
                 repl_setup(ty, repl_import(ty, "import ty.repl\n"));
 #if defined(TY_HAVE_VERSION_INFO) && defined(TY_HAVE_GIT_STATUS)
                 printf(
@@ -504,14 +552,11 @@ repl(Ty *ty)
         }
 
         for (;;) {
-                (void)setjmp(InterruptJB);
-                for (;;) {
-                        char *line = readln(ty);
-                        if (line == NULL) {
-                                exit(EXIT_SUCCESS);
-                        }
-                        execln(ty, line);
+                char *line = readln(ty);
+                if (line == NULL) {
+                        exit(EXIT_SUCCESS);
                 }
+                execln(ty, line);
         }
 }
 
@@ -1233,8 +1278,17 @@ main(int argc, char **argv)
         prof_setup();
 #endif
 
+        bool interactive = (nopt >= argc)
+                        && !RunningTests
+                        && (ToolMode == NULL)
+                        && stdin_is_tty();
+
         ProduceAnnotation = (getenv("TY_ANNOTATE") != NULL)
                          || ((nopt >= argc) && stdin_is_tty());
+
+        if (interactive) {
+                VNoHugePages();
+        }
 
         if (RunningTests) {
                 ClassifyTestArgs(argc, argv);

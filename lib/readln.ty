@@ -313,7 +313,7 @@ pub class InteractiveLineReader {
     __pty: os.PTY | nil
     __borrowed-tio?: Bool
     __history-file: Path | nil
-    __history: Array[HistoryEntry]
+    __history: Array[HistoryEntry | String]
     __prompt: Prompt
     __complete: CompletionFunction | nil
     __render: RenderFunction
@@ -351,7 +351,7 @@ pub class InteractiveLineReader {
         __history-file = (history-file != nil) ?: Path(history-file)
 
         if history-file != nil and let $raw = slurp("{history-file}") {
-            __history = raw.lines().map(json::parse@(HistoryEntry, _))
+            __history = raw.lines()
         } else {
             __history = []
         }
@@ -365,6 +365,13 @@ pub class InteractiveLineReader {
             col: Int
         ) -> (Array[String], Int, Int) {
             (lines.map(\_.str() ?? ''), line, col)
+        }
+    }
+
+    __entry(i: Int) -> HistoryEntry {
+        match __history[i] {
+            raw: String => json::parse(HistoryEntry, raw),
+            entry       => entry
         }
     }
 
@@ -470,8 +477,11 @@ pub class InteractiveLineReader {
             write(__tio.fd, out.str!())
         }
 
+        let isig = __tio.isig
+        __tio.isig = false
         __tio.start()
         defer __tio.stop()
+        defer __tio.isig = isig
 
         __tio.report-status(status, kind=status-kind)
         defer __tio.report-status(term.status.WORKING)
@@ -493,7 +503,7 @@ pub class InteractiveLineReader {
             if #__history < i {
                 return false
             }
-            let text = text-of(__history[-i].lines)
+            let text = text-of(__entry(-i).lines)
             return (
                 (h-prefix == nil || text.starts?(h-prefix))
              && (h-suffix == nil || text.ends?(h-suffix))
@@ -567,7 +577,7 @@ pub class InteractiveLineReader {
                 '<Enter>', '\n' => {
                     let text = get-text()
 
-                    if text != '' && (__history == [] || text-of(__history[-1].lines) != text) {
+                    if text != '' && (__history == [] || text-of(__entry(-1).lines) != text) {
                         __add-history(lines, nr, i)
                     }
 
@@ -861,8 +871,8 @@ pub class InteractiveLineReader {
                         ctty=__pty if __pty != nil
                     )
 
-                    for {lines, *} in __history {
-                        let item = Blob(lines.map(&join).unlines())
+                    for k in ..#__history {
+                        let item = Blob(__entry(k).lines.map(&join).unlines())
                         item.push(0)
                         write(fzf.stdin, item)
                     }
@@ -928,7 +938,7 @@ pub class InteractiveLineReader {
                     i    = 0
                     hi   = 0
                 } else {
-                    let entry = __history[-hi]
+                    let entry = __entry(-hi)
                     lines = entry.lines.map(\_.clone())
                     nr    = entry.i
                     i     = entry.j

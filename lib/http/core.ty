@@ -3,7 +3,6 @@ import json
 import log
 import http.status (status-name)
 import time
-import ty.mod as tymod
 import http.codec (Encoder)
 import http.wire (Request, BodySource)
 
@@ -169,46 +168,6 @@ pub class Config {
         self.request-id-header           = request-id-header
         self.trust-request-id            = trust-request-id
     }
-}
-
-pub use Loaded = Ok[_] | Err[String];
-
-let optional-lock = Mutex()
-let optional: Dict[String, Loaded] = %{}
-let loader: SharedQueue[(String, String, SharedQueue[Loaded])] | nil = nil
-
-fn load-forever(q: SharedQueue[(String, String, SharedQueue[Loaded])]) {
-    while true {
-        let (name, member, reply) = q.take()
-        let found = try {
-            Ok(tymod.lookup(tymod.load(name), member))
-        } catch e {
-            Err(str(e))
-        }
-        reply.put(found)
-    }
-}
-
-/// Loads `member` of the module `name` at runtime (once per process), for
-/// features whose native libraries may be missing. Returns Ok(value) or
-/// Err(reason). Modules are compiled on one long-lived loader thread: code
-/// compiled on a thread that later exits would be freed with it.
-pub fn optional-module(name: String, member: String) -> Loaded {
-    let ^_ = optional-lock.lock()
-    if let $found = optional[name] {
-        return found
-    }
-    let q = loader ?? do {
-        let fresh = SharedQueue()
-        Thread(load-forever, fresh).detach()
-        loader = fresh
-        fresh
-    }
-    let reply = SharedQueue()
-    q.put((name, member, reply))
-    let found = reply.take()
-    optional[name] = found
-    found
 }
 
 pub tag Suspend;

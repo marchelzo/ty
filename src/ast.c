@@ -1,6 +1,13 @@
 #include <ctype.h>
 
 #include "ast.h"
+
+CallKw    const NoCallKw;
+TemplateX const NoTemplateX;
+ListX     const NoListX;
+TupleX    const NoTupleX;
+FmtX      const NoFmtX;
+DictX     const NoDictX;
 #include "scope.h"
 #include "compiler.h"
 
@@ -176,31 +183,31 @@ visit_params(Ty *ty, ExprVec *params, Scope *scope, VisitorCtx *ctxt)
 static void
 visit_function(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 {
-        for (usize i = 0; i < vN(e->decorators); ++i) {
-                V(v__(e->decorators, i));
+        for (usize i = 0; i < vN(e->fn->decorators); ++i) {
+                V(v__(e->fn->decorators, i));
         }
 
-        SUB(true, e->name == NULL ? "(anon)" : e->name,
-                bind_name(ty, scope, e->name, SYM_FUNCTION | SYM_CONST);
-                visit_params(ty, &e->type_params, scope, ctxt);
-                for (usize i = 0; i < vN(e->params); ++i) {
-                        V(v__(e->dflts, i));
-                        bind_name(ty, scope, v__(e->params, i), 0);
+        SUB(true, e->fn->name == NULL ? "(anon)" : e->fn->name,
+                bind_name(ty, scope, e->fn->name, SYM_FUNCTION | SYM_CONST);
+                visit_params(ty, &e->fn->type_params, scope, ctxt);
+                for (usize i = 0; i < vN(e->fn->params); ++i) {
+                        V(v__(e->fn->dflts, i));
+                        bind_name(ty, scope, v__(e->fn->params, i), 0);
                 }
-                for (usize i = 0; i < vN(e->constraints); ++i) {
-                        VT(v__(e->constraints, i));
+                for (usize i = 0; i < vN(e->fn->constraints); ++i) {
+                        VT(v__(e->fn->constraints, i));
                 }
                 if (e->type != EXPRESSION_MULTI_FUNCTION) {
-                        VT(e->return_type);
-                        for (usize i = 0; i < vN(e->type_bounds); ++i) {
-                                VT(v_(e->type_bounds, i)->var);
-                                VT(v_(e->type_bounds, i)->bound);
+                        VT(e->fn->return_type);
+                        for (usize i = 0; i < vN(e->fn->type_bounds); ++i) {
+                                VT(v_(e->fn->type_bounds, i)->var);
+                                VT(v_(e->fn->type_bounds, i)->bound);
                         }
                 }
-                for (usize i = 0; i < vN(e->functions); ++i) {
-                        V(v__(e->functions, i));
+                for (usize i = 0; i < vN(e->fn->functions); ++i) {
+                        V(v__(e->fn->functions, i));
                 }
-                VS(e->body);
+                VS(e->fn->body);
         );
 }
 
@@ -232,7 +239,7 @@ bind_members(Ty *ty, ExprVec const *members, Scope *scope, u32 flags)
                 case EXPRESSION_IMPLICIT_FUNCTION:
                 case EXPRESSION_MULTI_FUNCTION:
                 case EXPRESSION_GENERATOR:
-                        name = m->name;
+                        name = m->fn->name;
                         break;
                 default:
                         continue;
@@ -353,7 +360,7 @@ visit_statements(Ty *ty, StmtVec *stmts, Scope *scope, VisitorCtx *ctxt)
                         case STATEMENT_TAG_DEFINITION:
                         case STATEMENT_TYPE_DEFINITION:
                                 if (top) {
-                                        bind_name(ty, bound, s->class.name, SYM_CONST);
+                                        bind_name(ty, bound, s->class->name, SYM_CONST);
                                         break;
                                 }
                                 goto Visit;
@@ -492,14 +499,14 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorCtx *ctxt)
                 break;
         case STATEMENT_CLASS_DEFINITION:
         case STATEMENT_TAG_DEFINITION:
-                bind_name(ty, scope, s->class.name, SYM_CONST);
-                visit_class(ty, &s->class, scope, ctxt);
+                bind_name(ty, scope, s->class->name, SYM_CONST);
+                visit_class(ty, s->class, scope, ctxt);
                 break;
         case STATEMENT_TYPE_DEFINITION:
-                bind_name(ty, scope, s->class.name, SYM_TYPE_ALIAS | SYM_CONST);
-                SUB(false, s->class.name,
-                        visit_params(ty, &s->class.type_params, scope, ctxt);
-                        VT(s->class.type);
+                bind_name(ty, scope, s->class->name, SYM_TYPE_ALIAS | SYM_CONST);
+                SUB(false, s->class->name,
+                        visit_params(ty, &s->class->type_params, scope, ctxt);
+                        VT(s->class->type);
                 );
                 break;
         case STATEMENT_IMPORT:
@@ -598,7 +605,9 @@ visit_pattern(Ty *ty, Expr *p, Scope *scope, VisitorCtx *ctxt)
                 break;
 
         case EXPRESSION_DICT:
-                V(p->dflt);
+                if (p->dcx != NULL) {
+                        V(p->dcx->dflt);
+                }
                 for (usize i = 0; i < vN(p->keys); ++i) {
                         V(v__(p->keys, i));
                         VP(v__(p->values, i));
@@ -647,8 +656,8 @@ Arguments:
                 for (usize i = 0; i < vN(p->args); ++i) {
                         VP(v__(p->args, i));
                 }
-                for (usize i = 0; i < vN(p->kwargs); ++i) {
-                        VP(v__(p->kwargs, i));
+                for (usize i = 0; i < vN(CKW(p)->kwargs); ++i) {
+                        VP(v__(CKW(p)->kwargs, i));
                 }
                 break;
 
@@ -662,8 +671,8 @@ Arguments:
                 for (usize i = 0; i < vN(p->method_args); ++i) {
                         VP(v__(p->method_args, i));
                 }
-                for (usize i = 0; i < vN(p->method_kwargs); ++i) {
-                        VP(v__(p->method_kwargs, i));
+                for (usize i = 0; i < vN(MKW(p)->kwargs); ++i) {
+                        VP(v__(MKW(p)->kwargs, i));
                 }
                 break;
 
@@ -726,8 +735,8 @@ Arguments:
                 for (usize i = 0; i < vN(t->args); ++i) {
                         VL_(v__(t->args, i));
                 }
-                for (usize i = 0; i < vN(t->kwargs); ++i) {
-                        VL_(v__(t->kwargs, i));
+                for (usize i = 0; i < vN(CKW(t)->kwargs); ++i) {
+                        VL_(v__(CKW(t)->kwargs, i));
                 }
                 break;
 
@@ -736,8 +745,8 @@ Arguments:
                 for (usize i = 0; i < vN(t->method_args); ++i) {
                         VL_(v__(t->method_args, i));
                 }
-                for (usize i = 0; i < vN(t->method_kwargs); ++i) {
-                        VL_(v__(t->method_kwargs, i));
+                for (usize i = 0; i < vN(MKW(t)->kwargs); ++i) {
+                        VL_(v__(MKW(t)->kwargs, i));
                 }
                 break;
 
@@ -748,7 +757,9 @@ Arguments:
                 break;
 
         case EXPRESSION_DICT:
-                V(t->dflt);
+                if (t->dcx != NULL) {
+                        V(t->dcx->dflt);
+                }
                 for (int i = 0; i < t->keys.count; ++i) {
                         V(t->keys.items[i]);
                         VL_(t->values.items[i]);
@@ -805,11 +816,11 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
 
         case EXPRESSION_SPECIAL_STRING:
                 V(e->lang);
-                for (usize i = 0; i < vN(e->fmts); ++i) {
-                        V(v__(e->fmts, i));
+                for (usize i = 0; i < vN(FMX(e)->fmts); ++i) {
+                        V(v__(FMX(e)->fmts, i));
                 }
-                for (usize i = 0; i < vN(e->fmtfs); ++i) {
-                        V(v__(e->fmtfs, i));
+                for (usize i = 0; i < vN(FMX(e)->fmtfs); ++i) {
+                        V(v__(FMX(e)->fmtfs, i));
                 }
         case EXPRESSION_DYNAMIC_REGEX:
                 for (int i = 0; i < e->expressions.count; ++i) {
@@ -930,8 +941,8 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         V(v__(e->template.exprs, i));
                 }
-                for (usize i = 0; i < vN(e->template.holes); ++i) {
-                        V(v__(e->template.holes, i));
+                for (usize i = 0; i < vN(TMX(&e->template)->holes); ++i) {
+                        V(v__(TMX(&e->template)->holes, i));
                 }
                 for (usize i = 0; i < vN(e->template.stmts); ++i) {
                         VS(v__(e->template.stmts, i));
@@ -946,11 +957,11 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 for (usize i = 0;  i < vN(e->fconds); ++i) {
                         VX(v__(e->fconds, i));
                 }
-                for (usize i = 0; i < vN(e->kwargs); ++i) {
-                        VX(v__(e->kwargs, i));
+                for (usize i = 0; i < vN(CKW(e)->kwargs); ++i) {
+                        VX(v__(CKW(e)->kwargs, i));
                 }
-                for (usize i = 0; i < vN(e->fkwconds); ++i) {
-                        VX(v__(e->fkwconds, i));
+                for (usize i = 0; i < vN(CKW(e)->fkwconds); ++i) {
+                        VX(v__(CKW(e)->fkwconds, i));
                 }
                 break;
 
@@ -984,8 +995,8 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
                 for (usize i = 0; i < e->mconds.count; ++i) {
                         VX(e->mconds.items[i]);
                 }
-                for (usize i = 0; i < e->method_kwargs.count; ++i) {
-                        VX(e->method_kwargs.items[i]);
+                for (usize i = 0; i < MKW(e)->kwargs.count; ++i) {
+                        VX(MKW(e)->kwargs.items[i]);
                 }
                 break;
 
@@ -1045,7 +1056,9 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
         case EXPRESSION_SET_COMPR:
         {
                 Scope *outer = scope;
-                scope = visit_comprehension(ty, &e->compr, scope, ctxt);
+                if (e->lsx != NULL) {
+                        scope = visit_comprehension(ty, &e->lsx->compr, scope, ctxt);
+                }
                 for (usize i = 0; i < e->elements.count; ++i) {
                         VX(e->elements.items[i]);
                         VX(e->aconds.items[i]);
@@ -1055,7 +1068,9 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
         }
 
         case EXPRESSION_DICT:
-                VX(e->dflt);
+                if (e->dcx != NULL) {
+                        VX(e->dcx->dflt);
+                }
                 for (usize i = 0; i < e->keys.count; ++i) {
                         VX(e->keys.items[i]);
                         VX(e->values.items[i]);
@@ -1064,9 +1079,13 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
 
         case EXPRESSION_DICT_COMPR:
         {
-                VX(e->dflt);
+                if (e->dcx != NULL) {
+                        VX(e->dcx->dflt);
+                }
                 Scope *outer = scope;
-                scope = visit_comprehension(ty, &e->dcompr, scope, ctxt);
+                if (e->dcx != NULL) {
+                        scope = visit_comprehension(ty, &e->dcx->dcompr, scope, ctxt);
+                }
                 for (usize i = 0; i < vN(e->keys); ++i) {
                         VX(v__(e->keys, i));
                         VX(v__(e->values, i));
@@ -1090,7 +1109,7 @@ visit_children(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt, bool type)
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
                         VX(e->es.items[i]);
-                        VX(e->tconds.items[i]);
+                        VX(TPX(e)->tconds.items[i]);
                 }
                 break;
 

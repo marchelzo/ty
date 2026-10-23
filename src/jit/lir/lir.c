@@ -57,9 +57,49 @@ lir_scratch(Ty *ty)
 }
 
 void *
-lir_copy(void const *src, usize n, usize size)
+lir_alloc(Lir const *L, usize n)
 {
-        return (n == 0) ? NULL : memcpy(xmA(n * size), src, n * size);
+        return (L->mem != NULL) ? ScratchAlloc(L->mem, n) : xmA(n);
+}
+
+void *
+lir_grow(Lir const *L, void *p, usize n, usize m)
+{
+        return (L->mem != NULL) ? ScratchResize(L->mem, p, n, m) : mrealloc(p, n);
+}
+
+void
+lir_release(Lir const *L, void *p, usize n)
+{
+        if (L->mem != NULL) {
+                ScratchRelease(L->mem, p, n);
+        } else {
+                xmF(p);
+        }
+}
+
+void *
+lir_copy(Lir const *L, void const *src, usize n, usize size)
+{
+        return (n == 0) ? NULL : memcpy(lir_alloc(L, n * size), src, n * size);
+}
+
+LirInst *
+lir_swap(Lir *L)
+{
+        LirInst *old = vv(L->insts);
+        usize    n   = vN(L->insts);
+        usize    cap = vC(L->insts);
+
+        L->insts       = L->spare;
+        vN(L->insts)   = 0;
+        L->spare.items = old;
+        vN(L->spare)   = 0;
+        vC(L->spare)   = cap;
+
+        lvR(L->insts, n);
+
+        return old;
 }
 
 LirClass
@@ -118,6 +158,12 @@ reject(Lir *L, LirErrorKind kind, char const *why)
 Lir *
 lir_new(char const *name, LirSig const *sig, LirMode mode, LirError *err)
 {
+        return lir_new_in(NULL, name, sig, mode, err);
+}
+
+Lir *
+lir_new_in(Scratch *mem, char const *name, LirSig const *sig, LirMode mode, LirError *err)
+{
         if (!sig_valid(sig) || sig->variadic || (u32)mode > LIR_MODE_ATTACHED) {
                 lir_fail(
                         err,
@@ -128,15 +174,19 @@ lir_new(char const *name, LirSig const *sig, LirMode mode, LirError *err)
                 return NULL;
         }
 
-        Lir *L = alloc0(sizeof *L);
+        Lir *L = (mem != NULL) ? ScratchAlloc(mem, sizeof *L) : xmA(sizeof *L);
 
+        memset(L, 0, sizeof *L);
         memset(L->pins, 0xff, sizeof L->pins);
 
-        L->name       = S2((name != NULL) ? name : "");
+        name = (name != NULL) ? name : "";
+
+        L->mem        = mem;
+        L->name       = dupn(name, strlen(name) + 1);
         L->sig        = *sig;
         L->sig.params = dupn(sig->params, sig->nparams);
         L->sig.nfixed = sig->nparams;
-        L->params     = xtA0(LirReg, sig->nparams);
+        L->params     = lir_alloc(L, sig->nparams * sizeof *L->params);
         L->mode       = mode;
         L->pc_param   = LIR_NONE;
         L->ty_param   = LIR_NONE;
@@ -154,11 +204,11 @@ lir_new(char const *name, LirSig const *sig, LirMode mode, LirError *err)
 void
 lir_destroy(Lir *L)
 {
-        if (L == NULL) {
+        if (L == NULL || L->mem != NULL) {
                 return;
         }
 
-        vfor(L->insts, inst_free(it));
+        vfor(L->insts, inst_free(L, it));
 
         xmF(L->name);
         xmF((void *)L->sig.params);
@@ -166,14 +216,17 @@ lir_destroy(Lir *L)
         xvF(L->regs);
         xvF(L->labels);
         xvF(L->insts);
+        xvF(L->spare);
         xvF(L->roots);
 }
 
 void
 lir_free(Lir *L)
 {
-        lir_destroy(L);
-        xmF(L);
+        if (L != NULL && L->mem == NULL) {
+                lir_destroy(L);
+                xmF(L);
+        }
 }
 
 Lir *
@@ -181,16 +234,21 @@ lir_clone(Lir *L, LirError *err)
 {
         Lir *D = memcpy(xmA(sizeof *D), L, sizeof *D);
 
+        D->mem = NULL;
+
+#define dup(v) ((v).items = lir_copy(D, (v).items, vN(v), sizeof *(v).items), vC(v) = vN(v))
         D->name       = S2(L->name);
-        D->sig.params = dupn(L->sig.params, L->sig.nparams);
-        D->params     = dupn(L->params, L->sig.nparams);
+        D->sig.params = lir_copy(D, L->sig.params, L->sig.nparams, sizeof *L->sig.params);
+        D->params     = lir_copy(D, L->params, L->sig.nparams, sizeof *L->params);
         D->trusted    = false;
         D->error      = (LirError) {0};
 
-        vdup(D->regs);
-        vdup(D->labels);
-        vdup(D->roots);
+        dup(D->regs);
+        dup(D->labels);
+        dup(D->roots);
         v00(D->insts);
+        v00(D->spare);
+#undef dup
 
         for (u32 i = 0; i < vN(L->insts); ++i) {
                 if (!lir_emit(D, v_(L->insts, i))) {
@@ -217,7 +275,7 @@ lir_reg(Lir *L, LirClass cls)
                 return LIR_NONE;
         }
 
-        xvP(L->regs, ((LirRegInfo) { .cls = cls, .param = LIR_NONE, .pin = LIR_NONE }));
+        lvP(L->regs, ((LirRegInfo) { .cls = cls, .param = LIR_NONE, .pin = LIR_NONE }));
 
         return vN(L->regs) - 1;
 }
@@ -293,7 +351,7 @@ lir_label(Lir *L)
                 return LIR_NONE;
         }
 
-        xvP(L->labels, ((LirLabelInfo) { .pos = LIR_NONE }));
+        lvP(L->labels, ((LirLabelInfo) { .pos = LIR_NONE }));
 
         return vN(L->labels) - 1;
 }
@@ -360,7 +418,7 @@ root(Lir *L, Value const *v, LirOpndKind kind)
                 return (LirOpnd) {0};
         }
 
-        xvP(L->roots, *v);
+        lvP(L->roots, *v);
 
         return (LirOpnd) { .kind = kind, .index = vN(L->roots) - 1 };
 }
@@ -398,7 +456,7 @@ lir_emit(Lir *L, LirInst const *inst)
         }
 #undef MISSING
 
-        LirInst *in = xvP(L->insts, *inst);
+        LirInst *in = lvP(L->insts, *inst);
 
         if (in->origin == 0) {
                 in->origin = L->origin;
@@ -418,7 +476,7 @@ lir_emit_owned(Lir *L, LirInst const *inst)
                 return false;
         }
 
-        xvP(L->insts, *inst);
+        lvP(L->insts, *inst);
 
         return true;
 }
@@ -438,7 +496,7 @@ lir_emit_to(Lir *L, LirOp op, LirReg dst, LirOpnd const *args, u32 nargs)
                 return reject(L, LE_OPERAND, "invalid operand count");
         }
 
-        LirInst *in = xvP(L->insts, ((LirInst) { .op = op, .dst = dst, .origin = L->origin }));
+        LirInst *in = lvP(L->insts, ((LirInst) { .op = op, .dst = dst, .origin = L->origin }));
 
         in->nargs = nargs;
 
@@ -520,7 +578,7 @@ lir_dump(Lir const *L, FILE *out)
                 out,
                 "%s: %zu registers, %u vslots\n",
                 L->name,
-                vN(L->regs),
+                (usize)vN(L->regs),
                 L->nvslots
         );
 

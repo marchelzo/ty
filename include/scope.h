@@ -88,9 +88,9 @@ typedef struct symbol {
         i32 ci;
 
         Location loc;
-        Module *mod;
-
         T2Type type;
+
+        Module *mod;
         T2Scheme *scheme;
         Expr *expr;
         Expr const *alias;

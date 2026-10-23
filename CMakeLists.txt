@@ -480,6 +480,7 @@ set(_src_files
   src/panic.c
   src/parse.c
   src/qcache.c
+  src/vmem.c
   src/scope.c
   src/screen.c
   src/shared_queue.c
