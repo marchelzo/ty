@@ -1,5 +1,5 @@
 import ty
-import ty.mod as tymod
+import ty.mod
 
 ns my-group {
     pub fn adds-up() -> Int {
@@ -74,7 +74,7 @@ fn sites-in(scope: String) -> Array[Site] {
 
 fn compile-doomed() -> Bool {
     try {
-        tymod.compile('pub fn doomed() {}\nlet x: Int = nope', nil, 'doomed.ty')
+        ty.mod.compile('pub fn doomed() {}\nlet x: Int = nope', nil, 'doomed.ty')
     } catch _: RuntimeError {
         return false
     }
@@ -136,7 +136,7 @@ pub fn imported-modules-register-nothing() {
 
 pub fn runtime-compiled-code-registers-nothing() {
     let n = #ty.tests()
-    tymod.eval(tymod.compile('pub fn late-arrival() {}', nil, 'late.ty'))
+    ty.mod.eval(ty.mod.compile('pub fn late-arrival() {}', nil, 'late.ty'))
     __eval__('pub fn evaluated-arrival() {}')
     assert(!compile-doomed())
     assert(#ty.tests() == n)

@@ -1,5 +1,5 @@
 import ty
-import ty.mod as tymod
+import ty.mod
 
 pub use Restorer = (() -> Any) -> Any
 
@@ -104,8 +104,8 @@ fn trampoline(kind: String, f: Any) -> Any {
     TRAMPOLINES.push(f)
     let n = #TRAMPOLINES - 1
     let src = trampoline-source(n, kind)
-    let m: Any = tymod.compile(src, nil, "(ty.test patch {n})")
-    tymod.eval(m)
+    let m: Any = ty.mod.compile(src, nil, "(ty.test patch {n})")
+    ty.mod.eval(m)
     ty.class-slot(m.P, kind, 'm')
 }
 

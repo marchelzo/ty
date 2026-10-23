@@ -3,7 +3,7 @@ import errno
 import time
 import log
 import ssl
-import ty.mod as tymod
+import ty.mod
 import http.metrics (Metrics)
 import http.backend (Backend)
 import http.wire (Request)
@@ -98,7 +98,7 @@ pub fn make-backend(name: String, entries: Int, factory: BackendFactory | nil) -
             throw RuntimeError('http: io_uring is only available on Linux')
 #|]
         },
-        'kqueue' => (tymod.lookup(tymod.load('http/kqueue'), 'Backend'))(entries),
+        'kqueue' => (ty.mod.lookup(ty.mod.load('http/kqueue'), 'Backend'))(entries),
         other    => throw ValueError("http: unknown backend: {other}")
     }
 }
