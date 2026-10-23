@@ -151,8 +151,8 @@ classify_identifier(Token const *t, char const *source)
         if (is_type_name(t->identifier))
                 return SEM_TYPE;
 
-        if (LocPtr(t->end) != NULL && source != NULL) {
-                char const *p = LocPtr(t->end);
+        if (LocS(t->end) != NULL && source != NULL) {
+                char const *p = LocS(t->end);
                 while (*p == ' ' || *p == '\t') {
                         ++p;
                 }
@@ -1025,7 +1025,7 @@ Serve(Ty *ty, Value req)
                 }
 
                 result = vTn(
-                        "source",      xSs(LocPtr(QueryExpr->start), LocPtr(QueryExpr->end) - LocPtr(QueryExpr->start)),
+                        "source",      xSs(LocS(QueryExpr->start), LocS(QueryExpr->end) - LocS(QueryExpr->start)),
                         "type",        xSz(t2_show(ty, QueryExpr->_type)),
                         "completions", ARRAY(&items)
                 );
@@ -1037,7 +1037,10 @@ Serve(Ty *ty, Value req)
                 }
 
                 v0(items);
-                EncodeTokens(ty, &items, &mod->tokens, mod->source);
+                TokenVector tokens = {0};
+                TokenUnpack(&mod->tokens, &tokens);
+                EncodeTokens(ty, &items, &tokens, mod->source);
+                xvF(tokens);
 
                 result = ARRAY(&items);
                 break;

@@ -29,7 +29,8 @@
         X(FUNCTION,    Function,   7)  \
         X(MODULE,      Module,     8)  \
         X(RELOADING,   Reloading,  9)  \
-        X(QUALIFIED,   Qualified, 10)
+        X(QUALIFIED,   Qualified, 10)  \
+        X(TMP,         Tmp,       11)
 
 
 #define X(f, _, i) SCOPE_##f = (1 << i),
@@ -37,33 +38,33 @@ enum { TY_SCOPE_FLAGS };
 #undef X
 
 
-#define TY_SYM_FLAGS                      \
-        X(PUBLIC,       Public,       0)  \
-        X(THREAD_LOCAL, ThreadLocal,  1)  \
-        X(CLASS,        Class,        2)  \
-        X(TAG,          Tag,          3)  \
-        X(FUNCTION,     Function,     4)  \
-        X(MACRO,        Macro,        5)  \
-        X(FUN_MACRO,    FunMacro,     6)  \
-        X(PATTERN,      Pattern,      7)  \
-        X(PROPERTY,     Property,     8)  \
-        X(CONST,        Const,        9)  \
-        X(BUILTIN,      Builtin,     10)  \
-        X(TYPE_VAR,     TypeVar,     11)  \
-        X(VARIADIC,     Variadic,    12)  \
-        X(IMMORTAL,     Immortal,    13)  \
-        X(TRANSIENT,    Transient,   14)  \
-        X(RECYCLED,     Recycled,    15)  \
-        X(MEMBER,       Member,      16)  \
-        X(STATIC,       Static,      17)  \
-        X(GLOBAL,       Global,      18)  \
-        X(CAPTURED,     Captured,    19)  \
-        X(FIXED,        FixedType,   20)  \
-        X(NAMESPACE,    Namespace,   21)  \
-        X(PARAM_PACK,   ParamPack,   22)  \
-        X(TYPE_ALIAS,   TypeAlias,   23)  \
-        X(EXTERNAL,     External,    24)  \
-        X(OPERATOR,     Operator,    25)  \
+#define TY_SYM_FLAGS                       \
+        X(PUBLIC,       Public,       0)   \
+        X(THREAD_LOCAL, ThreadLocal,  1)   \
+        X(CLASS,        Class,        2)   \
+        X(TAG,          Tag,          3)   \
+        X(FUNCTION,     Function,     4)   \
+        X(MACRO,        Macro,        5)   \
+        X(FUN_MACRO,    FunMacro,     6)   \
+        X(PATTERN,      Pattern,      7)   \
+        X(PROPERTY,     Property,     8)   \
+        X(CONST,        Const,        9)   \
+        X(BUILTIN,      Builtin,     10)   \
+        X(TYPE_VAR,     TypeVar,     11)   \
+        X(VARIADIC,     Variadic,    12)   \
+        X(IMMORTAL,     Immortal,    13)   \
+        X(TRANSIENT,    Transient,   14)   \
+        X(RECYCLED,     Recycled,    15)   \
+        X(MEMBER,       Member,      16)   \
+        X(STATIC,       Static,      17)   \
+        X(GLOBAL,       Global,      18)   \
+        X(CAPTURED,     Captured,    19)   \
+        X(FIXED,        FixedType,   20)   \
+        X(NAMESPACE,    Namespace,   21)   \
+        X(PARAM_PACK,   ParamPack,   22)   \
+        X(TYPE_ALIAS,   TypeAlias,   23)   \
+        X(EXTERNAL,     External,    24)   \
+        X(OPERATOR,     Operator,    25)   \
         X(TYPE_FUNCTION, TypeFunction, 26) \
         X(TYPE_CONSTANT, TypeConstant, 27)
 
@@ -115,6 +116,7 @@ typedef struct scope {
         u32 dense;
         u32 flags;
         i32 eval;
+        u32 kids;
 
         Scope *parent;
 
@@ -157,6 +159,12 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns);
 
 Symbol *
 scope_new_namespace(Ty *ty, char const *name, Scope *parent);
+
+Scope *
+scope_new_tmp(Ty *ty, char const *name, Scope *parent);
+
+Scope *
+scope_retire_tmp(Ty *ty, Scope *scope);
 
 void
 scope_capture(Ty *ty, Scope *scope, Symbol *sym);

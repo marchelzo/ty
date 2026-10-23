@@ -49,7 +49,6 @@ typedef wvec(usize)         SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct token)   TokenVector;
-typedef vec(struct ctoken)  CTokenVector;
 typedef vec(struct try *)   TryStack;
 typedef vec(Value)          ValueVector;
 typedef wvec(Value)         ValueStack;
@@ -75,32 +74,93 @@ typedef struct {
 } InternSet;
 
 typedef struct location {
-        u32 src;
         u32 byte;
+        u32 src;
 } Location;
 
-u32
-SourceRegister(char const *base, bool flat);
+typedef struct source {
+        char const *text;
+        u32         len;
+        u32         nl;
+        u32 const  *lines;
+        u64         hash;
+} Source;
+
+enum {
+        TY_SOURCE_PAGE_BITS = 12,
+        TY_SOURCE_PAGE_SIZE = 1 << TY_SOURCE_PAGE_BITS,
+        TY_SOURCE_PAGES     = 1 << 14
+};
+
+extern Source *SourcePages[TY_SOURCE_PAGES];
 
 u32
-SourceFind(char const *base);
-
-char const *
-LocPtr(Location loc);
+SourceRegister(char const *text, usize len);
 
 u32
-LocLine(Location loc);
+SourceLineOf(Source const *src, u32 byte);
 
-u32
-LocCol(Location loc);
+inline static Source *
+SourceOf(u32 id)
+{
+        return &SourcePages[id >> TY_SOURCE_PAGE_BITS][id & (TY_SOURCE_PAGE_SIZE - 1)];
+}
 
-bool
-LocSameLine(Location a, Location b);
+inline static char const *
+SourceText(u32 id)
+{
+        return (id == 0) ? NULL : SourceOf(id)->text;
+}
 
 inline static Location
-LocOf(u32 src, u32 byte)
+MkLoc(u32 src, u32 byte)
 {
-        return (Location) { .src = src, .byte = byte };
+        return (Location) { .byte = byte, .src = src };
+}
+
+inline static char const *
+LocS(Location loc)
+{
+        return (loc.src == 0) ? NULL : SourceOf(loc.src)->text + loc.byte;
+}
+
+inline static u32
+LocLine(Location loc)
+{
+        return (loc.src == 0) ? 0 : SourceLineOf(SourceOf(loc.src), loc.byte);
+}
+
+inline static u32
+LocCol(Location loc)
+{
+        Source const *src;
+
+        if (loc.src == 0) {
+                return 0;
+        }
+
+        src = SourceOf(loc.src);
+
+        return loc.byte - src->lines[SourceLineOf(src, loc.byte)];
+}
+
+inline static bool
+LocSameLine(Location a, Location b)
+{
+        Source const *src;
+        u32 lo;
+        u32 hi;
+
+        if (a.src != b.src || a.src == 0) {
+                return LocLine(a) == LocLine(b);
+        }
+
+        src = SourceOf(a.src);
+        lo  = (a.byte < b.byte) ? a.byte : b.byte;
+        hi  = (a.byte < b.byte) ? b.byte : a.byte;
+        hi  = (hi > src->len) ? src->len : hi;
+
+        return (lo >= hi) || (memchr(src->text + lo, '\n', hi - lo) == NULL);
 }
 
 typedef struct {
@@ -138,6 +198,10 @@ struct alloc {
 
 typedef struct arena Arena;
 
+enum {
+        ARENA_FREE_CLASSES = 16
+};
+
 struct arena {
         char *base;
         char *beg;
@@ -145,6 +209,8 @@ struct arena {
         Arena *next;
         bool gc;
         bool immortal;
+        u32 fmask;
+        void *free[ARENA_FREE_CLASSES];
 };
 
 typedef struct array {
@@ -425,6 +491,7 @@ struct value {
 
 struct object {
         bool          init;
+        bool          finalized;
         u32           nslot;
         Class         *class;
         struct itable *dynamic;
@@ -536,9 +603,10 @@ typedef struct thread_group {
         vec(TySpinLock *)    ThreadLocks;
         vec(TyThreadState *) ThreadStates;
 
-        TySpinLock DLock;
-        AllocList  DeadAllocs;
-        isize      DeadUsed;
+        TySpinLock  DLock;
+        AllocList   DeadAllocs;
+        isize       DeadUsed;
+        ValueVector Finalize;
 
         TySpinLock GCLock;
         int       *GCBlockedThreads;
@@ -1443,7 +1511,29 @@ void *
 Allocate(Ty *ty, usize n);
 
 void *
-ArenaResize(Ty *ty, void *p, usize n, usize m);
+Reallocate(Ty *ty, void *p, usize old, usize n);
+
+void
+Release(Ty *ty, void *p, usize n);
+
+void *
+Regrow(Ty *ty, void *p, usize old, usize n);
+
+typedef struct {
+        void *blk;
+        char *beg;
+} TmpMark;
+
+void *
+AllocateTmp(usize n);
+
+TmpMark
+TmpSave(void);
+
+void
+TmpRestore(TmpMark m);
+
+#define tmA(n) AllocateTmp((n))
 
 inline static void *
 Allocate0(Ty *ty, usize n)

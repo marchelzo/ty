@@ -1383,12 +1383,15 @@ main(int argc, char **argv)
 
                 Module *mod = CompilerCurrentModule(ty);
                 byte_vector out = {0};
+                TokenVector tokens = {0};
+
+                TokenUnpack(&mod->tokens, &tokens);
 
                 syntax_highlight(
                         ty,
                         &out,
                         mod->source,
-                        &mod->tokens,
+                        &tokens,
                         0,
                         strlen(source),
                         NULL,

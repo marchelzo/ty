@@ -1737,10 +1737,9 @@ Value
 PrettySource(Ty *ty, Value const *v);
 
 static inline Value *
-NewZero(void)
+NewZero(Ty *ty)
 {
-        return alloc0(sizeof (struct alloc) + sizeof *NewZero())
-             + sizeof (struct alloc);
+        return mAo0(sizeof (Value), GC_VALUE);
 }
 
 #define PutMember(o, m, x) ((PutMember)(ty, (o), (m), (x)))

@@ -201,13 +201,13 @@ enum {
         do{                                                  \
                 EMIT_GROUP_LABEL(STATE.match_fails, "Fail"); \
                 INSN(instr);                                 \
-                avP(STATE.match_fails, vN(STATE.code));      \
+                tvP(STATE.match_fails, vN(STATE.code));      \
                 Ei32(0);                                     \
         } while (0)
 
 #define MATCH_SUCCESS() do {                        \
         INSN(JUMP);                                 \
-        avP(STATE.match_successes, vN(STATE.code)); \
+        tvP(STATE.match_successes, vN(STATE.code)); \
         Ei32(0);                                    \
 } while (0)
 
@@ -318,7 +318,7 @@ enum {
 } while (0);
 
 #define HINT_TYPE(t0) do {                                 \
-        if (STATE.func != NULL) {                          \
+        if (STATE.func != NULL && STATE.nohints == 0) {    \
                 avP(STATE.func->fn->type_hints, ((TypeHint) {  \
                         .type = (t0),                      \
                         .pc   = vN(STATE.code)             \
@@ -418,13 +418,9 @@ struct context_entry {
         ContextEntry *next;
         char const *info;
         Expr *e;
-        u32 depth;
 };
 
-enum { CONTEXT_CHUNK = 256 };
-
 static ContextEntry *ContextList;
-static vec(ContextEntry *) ContextPool;
 
 static Expr const *
 ContextSite(Ty *ty, StringVector *notes);
@@ -700,6 +696,14 @@ dumpstr(byte_vector *out, char const *s)
                 xvP(STATE.annotation.text, '\0');                            \
         } while (0)
 
+inline static void
+FreeAnnotation(ProgramAnnotation *annotation)
+{
+        xvF(annotation->map);
+        xvF(annotation->captions);
+        xvF(annotation->text);
+}
+
 static void
 PatchAnnotation(ProgramAnnotation *annotation, void const *base)
 {
@@ -928,7 +932,7 @@ DefaultConstructor(Ty *ty, Class *class)
         ctor->end         = class->def->end;
 
         AddFieldParams(ty, ctor, &class->def->class->fields);
-        class_add_method(ty, class->i, "init", REF(NewZero()));
+        class_add_method(ty, class->i, "init", REF(NewZero(ty)));
 
         return ctor;
 }
@@ -1107,8 +1111,8 @@ static void
 DumpTestSrcName(byte_vector *out, Stmt const *def)
 {
         Expr const *target = def->target;
-        char const *p = LocPtr(target->start);
-        char const *q = LocPtr(target->end);
+        char const *p = LocS(target->start);
+        char const *q = LocS(target->end);
 
         if (
                 (p == NULL)
@@ -1345,13 +1349,13 @@ colorize_code(
 {
         out[0] = '\0';
 
-        if (LocPtr(*start) == NULL || LocPtr(*end) == NULL) {
+        if (LocS(*start) == NULL || LocS(*end) == NULL) {
                 return;
         }
 
-        char const *prefix = LocPtr(*start);
-        char const    *eol = LocPtr(*start) + strcspn(LocPtr(*start), "\n");
-        char const *suffix = (eol > LocPtr(*end)) ? LocPtr(*end) : eol;
+        char const *prefix = LocS(*start);
+        char const    *eol = LocS(*start) + strcspn(LocS(*start), "\n");
+        char const *suffix = (eol > LocS(*end)) ? LocS(*end) : eol;
 
         while (prefix[-1] != '\0' && prefix[-1] != '\n')
                 --prefix;
@@ -1359,8 +1363,8 @@ colorize_code(
         while (xisspace(prefix[0]))
                 ++prefix;
 
-        int before = LocPtr(*start) - prefix;
-        int length = suffix - LocPtr(*start);
+        int before = LocS(*start) - prefix;
+        int length = suffix - LocS(*start);
         int after = strcspn(suffix, "\n");
 
         if (length == 0) {
@@ -1380,7 +1384,7 @@ colorize_code(
                 color ? TERM(1) : "",
                 expr_color,
                 length,
-                LocPtr(*start),
+                LocS(*start),
                 color ? TERM(0) : "",
                 base_color,
                 after,
@@ -1401,12 +1405,12 @@ colorize_code_multiline(
         xvP(*buf, '\0');
         vvX(*buf);
 
-        if (LocPtr(*start) == NULL || LocPtr(*end) == NULL) {
+        if (LocS(*start) == NULL || LocS(*end) == NULL) {
                 return;
         }
 
-        char const *ls = LocPtr(*start);
-        char const *le = LocPtr(*end) + strcspn(LocPtr(*end), "\n");
+        char const *ls = LocS(*start);
+        char const *le = LocS(*end) + strcspn(LocS(*end), "\n");
         char const *p, *q;
         usize min = SIZE_MAX, indent, skip;
         bool color = *base_color != '\0', hi = false;
@@ -1445,7 +1449,7 @@ colorize_code_multiline(
                         p += skip;
                 }
 
-                if (p == LocPtr(*start) && !hi) {
+                if (p == LocS(*start) && !hi) {
                         if (color) {
                                 dump(buf, "%s%s", TERM(1), expr_color);
                         } else {
@@ -1454,7 +1458,7 @@ colorize_code_multiline(
                         hi = true;
                 }
 
-                if (p == LocPtr(*end) && hi) {
+                if (p == LocS(*end) && hi) {
                         if (color) {
                                 dump(buf, "%s%s", TERM(0), base_color);
                         }
@@ -1478,18 +1482,10 @@ PushContext(Ty *ty, void const *ctx)
                 return ContextList;
         }
 
-        u32 depth = (ContextList == NULL) ? 0 : ContextList->depth + 1;
-
-        while (depth / CONTEXT_CHUNK >= vN(ContextPool)) {
-                xvP(ContextPool, xtA0(ContextEntry, CONTEXT_CHUNK));
-        }
-
-        ContextEntry *new = &v__(ContextPool, depth / CONTEXT_CHUNK)[depth % CONTEXT_CHUNK];
-
-        new->next  = ContextList;
-        new->info  = NULL;
-        new->e     = (void *)ctx;
-        new->depth = depth;
+        ContextEntry *new = tmA(sizeof *new);
+        new->next = ContextList;
+        new->info = NULL;
+        new->e = (void *)ctx;
 
         SWAP(ContextEntry *, new, ContextList);
 
@@ -1540,11 +1536,11 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
         va_list ap;
 
         va_start(ap, fmt);
-        ty_snprintf(buffer, sizeof buffer, fmt, ap);
+        ty_vsnprintf(buffer, sizeof buffer, fmt, ap);
         va_end(ap);
 
         void *save = PushContext(ty, ctx);
-        ContextList->info = sclonea(ty, buffer);
+        ContextList->info = strcpy(tmA(strlen(buffer) + 1), buffer);
 
         return save;
 }
@@ -1570,11 +1566,11 @@ VMakeCompileError(Ty *ty, char const *fmt, va_list ap)
         Expr here = {
                 .type  = EXPRESSION_NIL,
                 .start = STATE.start,
-                .end   = (LocPtr(STATE.end) != NULL) ? STATE.end : STATE.start,
+                .end   = (LocS(STATE.end) != NULL) ? STATE.end : STATE.start,
                 .mod   = STATE.module
         };
 
-        if (site == NULL && LocPtr(STATE.start) != NULL && STATE.module != NULL) {
+        if (site == NULL && LocS(STATE.start) != NULL && STATE.module != NULL) {
                 site = &here;
         }
 
@@ -1693,10 +1689,10 @@ show_expr_full(Expr const *e)
 static void
 dump_source_of(Expr const *e, byte_vector *out)
 {
-        ptrdiff_t n = LocPtr(e->end) - LocPtr(e->start);
+        ptrdiff_t n = LocS(e->end) - LocS(e->start);
 
         if (n > 0) {
-                xvPn(*out, LocPtr(e->start), n);
+                xvPn(*out, LocS(e->start), n);
         } else {
                 xvPn(*out, "(it's over)", 11);
         }
@@ -2440,8 +2436,12 @@ add_location_info(Ty *ty)
                 locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
         }
 
-        STATE.expression_locations.items    = mrealloc(locs, vN(STATE.expression_locations) * sizeof *locs);
+        usize n = vN(STATE.expression_locations) * sizeof *locs;
+
+        STATE.expression_locations.items    = memcpy(xmA(n), locs, n);
         STATE.expression_locations.capacity = vN(STATE.expression_locations);
+
+        xmF(locs);
 
         DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);
@@ -2470,7 +2470,7 @@ get_try_ctx(Ty *ty)
 inline static TryState *
 begin_try(Ty *ty)
 {
-        return avP(STATE.tries, ((TryState) {
+        return tvP(STATE.tries, ((TryState) {
                 .t         = ++t,
                 .ctx       = TRY_TRY,
                 .resources = STATE.resources
@@ -2496,7 +2496,7 @@ get_loop(Ty *ty, int i)
 inline static void
 begin_loop(Ty *ty, bool wr, u32 n)
 {
-        avP(STATE.loops, ((LoopState) {
+        tvP(STATE.loops, ((LoopState) {
                 .t         = ++t,
                 .n         = n,
                 .stack     = STATE.stack,
@@ -2701,8 +2701,8 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
 static char const *
 spelled(Ty *ty, char const *name)
 {
-        char const *a = LocPtr(STATE.start);
-        char const *b = LocPtr(STATE.end);
+        char const *a = LocS(STATE.start);
+        char const *b = LocS(STATE.end);
 
         if (a == NULL || b == NULL || b <= a || b - a > 128) {
                 return DashedName(ty, name);
@@ -3420,7 +3420,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
         } else if (e->type == EXPRESSION_METHOD_CALL) {
                 name = e->method->identifier;
                 end = e->object->end;
-                while (*LocPtr(end) != '\0' && *LocPtr(end) != '(') {
+                while (*LocS(end) != '\0' && *LocS(end) != '(') {
                         end.byte += 1;
                 }
         } else {
@@ -3461,19 +3461,19 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
                 }
         }
 
-        avP(parts, (char *)name);
+        tvP(parts, (char *)name);
 
         o = e->object;
 
         for (;;) {
                 if (o->type == EXPRESSION_MEMBER_ACCESS) {
-                        avI(parts, o->member->identifier, 0);
+                        tvI(parts, o->member->identifier, 0);
                         o = o->object;
                 } else if (
                         (o->type == EXPRESSION_NAMESPACE)
                      && (o->fn->parent != NULL)
                 ) {
-                        avI(parts, o->fn->name, 0);
+                        tvI(parts, o->fn->name, 0);
                         o = o->fn->parent;
                 } else {
                         break;
@@ -3481,9 +3481,9 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
         }
 
         if (o->type == EXPRESSION_IDENTIFIER) {
-                avI(parts, o->identifier, 0);
+                tvI(parts, o->identifier, 0);
         } else {
-                avI(parts, o->fn->name, 0);
+                tvI(parts, o->fn->name, 0);
         }
 
 #if defined(TY_DEBUG_NAMES)
@@ -4660,11 +4660,12 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         DefinePending(ty);
         comptime_deps(ty, e->function);
 
-        add_location_info(ty);
+        location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
         byte_vector code_save = STATE.code;
         v00(STATE.code);
+        STATE.nohints += 1;
 
         StackState stack = STATE.stack;
         m0(STATE.stack);
@@ -4679,15 +4680,26 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 
         EE(e->function);
         INSN(HALT);
-        SealCode(ty);
+        STATE.nohints -= 1;
 
-        v0(STATE.expression_locations);
+        xvF(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
-        vm_exec(ty, vv(STATE.code));
+        char     *snippet = vv(STATE.code);
+        VmSnippet outer   = vm_snippet_begin(snippet, vN(STATE.code));
+
+        vm_exec(ty, snippet);
+
+        bool keep = vm_snippet_end(outer);
 
         STATE.loops = loops;
         STATE.stack = stack;
         STATE.code = code_save;
+        if (!keep) {
+                ty_free(snippet);
+        }
+        STATE.expression_locations = locs_save;
+        FreeAnnotation(&STATE.annotation);
         STATE.annotation = annotation;
 
         Value m = *vm_get(ty, 0);
@@ -5969,7 +5981,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 return;
         }
 
-        if (s->mod != NULL && LocPtr(s->start) != NULL && ScopeIsTop(scope)) {
+        if (s->mod != NULL && LocS(s->start) != NULL && ScopeIsTop(scope)) {
                 dont_printf(
                         "%18s:%4d  |  %s\n",
                         s->mod->path,
@@ -6974,7 +6986,7 @@ FailMatchUnlessOrdered(Ty *ty, Expr const *e, int insn, int inverse)
         if (expr_is_int(ty, e->left) && expr_is_int(ty, e->right)) {
                 EMIT_GROUP_LABEL(STATE.match_fails, "Fail");
                 (emit_instr)(ty, inverse);
-                avP(STATE.match_fails, vN(STATE.code));
+                tvP(STATE.match_fails, vN(STATE.code));
                 Ei32(0);
                 return;
         }
@@ -8151,7 +8163,7 @@ emit_generator_return(Ty *ty, Stmt const *s)
         }
 
         INSN(JUMP);
-        avP(STATE.co_returns, vN(STATE.code));
+        tvP(STATE.co_returns, vN(STATE.code));
         Ei32(0);
 }
 
@@ -8735,7 +8747,7 @@ emit_try_match(Ty *ty, Expr const *pattern, bool skip_tag)
         {
                 emit_tgt(ty, pattern->tmp, STATE.fscope, true);
                 INSN(ASSIGN);
-                avP(STATE.match_assignments, (Expr *)pattern);
+                tvP(STATE.match_assignments, (Expr *)pattern);
                 break;
         }
 
@@ -9766,7 +9778,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
 
         LABEL(start);
 
-        bool simple = is_simple_condition(&s->_if.parts);
+        bool simple = is_simple_condition(&s->_while.parts);
         bool has_resources = false;
 
         for (int i = 0; i < vN(s->_while.parts); ++i) {
@@ -12910,7 +12922,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 }
         }
 
-        if (s->mod != NULL && LocPtr(s->start) != NULL && ScopeIsTop(scope)) {
+        if (s->mod != NULL && LocS(s->start) != NULL && ScopeIsTop(scope)) {
                 dont_printf(
                         "[REDPILL] %18s:%4d  |  %s\n",
                         s->mod->path,
@@ -13546,15 +13558,10 @@ tag_start_token(Expr const *e, i32 tag)
                 return;
         }
 
-        CToken *c = (e->start.src == mod->csrc) ? CTokenAt(&mod->ctokens, e->start) : NULL;
-        Token  *t = (c == NULL) ? TokenAt(&mod->tokens, e->start) : NULL;
+        i32 i = TokenFind(&mod->tokens, e->start);
 
-        if (c != NULL) {
-                c->tag = tag;
-        }
-
-        if (t != NULL) {
-                t->tag = tag;
+        if (i >= 0) {
+                TokenSetTag(&mod->tokens, i, tag);
         }
 }
 
@@ -14132,7 +14139,8 @@ NoResolve:
 static Stmt **
 compile(Ty *ty, char const *source)
 {
-        i32 depth = ComptimeDepth;
+        i32     depth = ComptimeDepth;
+        TmpMark tmp   = TmpSave();
 
         TyDiagPush(ty, AllowErrors ? DIAG_RECOVER : 0);
 
@@ -14162,6 +14170,19 @@ compile(Ty *ty, char const *source)
                 } else {
                         TySetError(ty, rep, NIL);
                 }
+        }
+
+        v00(STATE.tries);
+        v00(STATE.loops);
+        v00(STATE.co_returns);
+        v00(STATE.match_fails);
+        v00(STATE.match_successes);
+        v00(STATE.match_assignments);
+
+        TmpRestore(tmp);
+
+        if (!jit_eager()) {
+                ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
         }
 
         return p;
@@ -14545,14 +14566,13 @@ import_module(Ty *ty, Stmt const *s)
 void
 compiler_init(Ty *ty)
 {
-        u32 nowhere = SourceRegister(EmptyString, true);
-        u32 unknown = SourceRegister(UnknownString, true);
+        u32 nowhere = SourceRegister(EmptyString,   sizeof EmptyString   - 1);
+        u32 unknown = SourceRegister(UnknownString, sizeof UnknownString - 1);
 
-        Nowhere      = LocOf(nowhere, 1);
-        UnknownStart = LocOf(unknown, 1);
-        UnknownEnd   = LocOf(unknown, sizeof UnknownString - 1);
+        Nowhere      = MkLoc(nowhere, 1);
+        UnknownStart = MkLoc(unknown, 1);
+        UnknownEnd   = MkLoc(unknown, sizeof UnknownString - 1);
 
-        parse_init(ty);
         tags_init(ty);
 
         m0(null);
@@ -15472,6 +15492,18 @@ ForgetSourceNodesFrom(void const *_base, usize len)
         for (u32 i = 0; i < vN(source_map); ++i) {
                 uptr expr = (uptr)v__(source_map, i);
                 if (expr >= base && expr < base + len) {
+                        v__(source_map, i) = NULL;
+                        source_map_hole = min(source_map_hole, i);
+                }
+        }
+}
+
+void
+ForgetSourceNodesWhere(bool (*f)(void const *, void *), void *ctx)
+{
+        for (u32 i = 0; i < vN(source_map); ++i) {
+                Expr const *expr = v__(source_map, i);
+                if (expr != NULL && f(expr, ctx)) {
                         v__(source_map, i) = NULL;
                         source_map_hole = min(source_map_hole, i);
                 }
@@ -19000,12 +19032,12 @@ emit_top_level(Ty *ty, Stmt **p, int start, Stmt const *result)
         }
 
         for (int i = 0; i < n; ++i) {
-                avP(done, i < start);
-                avP(seen, false);
+                xvP(done, i < start);
+                xvP(seen, false);
         }
 
         while (vN(pos) < vN(ComptimeDefs)) {
-                avP(pos, -1);
+                xvP(pos, -1);
         }
 
         for (int i = 0; i < n; ++i) {
@@ -19029,6 +19061,10 @@ emit_top_level(Ty *ty, Stmt **p, int start, Stmt const *result)
         for (int i = start; i < n; ++i) {
                 emit_top(&co, i);
         }
+
+        xvF(pos);
+        xvF(done);
+        xvF(seen);
 }
 
 bool
@@ -19109,6 +19145,8 @@ xtyeval(Ty *ty, Expr *e, Value *ret, Scope *scope, bool check)
         ComptimeDepth -= 1;
 
         EVAL_DEPTH -= 1;
+
+        FreeAnnotation(&STATE.annotation);
 
         STATE = state;
 
@@ -19212,6 +19250,7 @@ compiler_eval(Ty *ty, Expr *e)
 
         byte_vector code_save = STATE.code;
         v00(STATE.code);
+        STATE.nohints += 1;
 
         StackState stack = STATE.stack;
         m0(STATE.stack);
@@ -19219,7 +19258,7 @@ compiler_eval(Ty *ty, Expr *e)
         LoopStates loops = STATE.loops;
         v00(STATE.loops);
 
-        add_location_info(ty);
+        location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
         ProgramAnnotation annotation = STATE.annotation;
@@ -19227,16 +19266,26 @@ compiler_eval(Ty *ty, Expr *e)
 
         EE(e);
         INSN(HALT);
-        SealCode(ty);
+        STATE.nohints -= 1;
 
+        xvF(STATE.expression_locations);
         v00(STATE.expression_locations);
 
-        vm_exec(ty, vv(STATE.code));
+        char     *snippet = vv(STATE.code);
+        VmSnippet outer   = vm_snippet_begin(snippet, vN(STATE.code));
+
+        vm_exec(ty, snippet);
+
+        bool keep = vm_snippet_end(outer);
 
         STATE.loops = loops;
         STATE.code = code_save;
+        if (!keep) {
+                ty_free(snippet);
+        }
+        FreeAnnotation(&STATE.annotation);
         STATE.annotation = annotation;
-        v00(STATE.expression_locations);
+        STATE.expression_locations = locs_save;
 
         Value v = *vm_get(ty, 0);
         vmX();
@@ -19264,6 +19313,7 @@ xtyparse(
 
         byte_vector code_save = STATE.code;
         v00(STATE.code);
+        STATE.nohints += 1;
 
         StackState stack = STATE.stack;
         m0(STATE.stack);
@@ -19271,7 +19321,7 @@ xtyparse(
         LoopStates loops = STATE.loops;
         v00(STATE.loops);
 
-        add_location_info(ty);
+        location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
         ProgramAnnotation annotation = STATE.annotation;
@@ -19279,20 +19329,33 @@ xtyparse(
 
         EE(e);
         INSN(HALT);
-        SealCode(ty);
+        STATE.nohints -= 1;
 
+        xvF(STATE.expression_locations);
         v00(STATE.expression_locations);
 
-        vm_exec(ty, vv(STATE.code));
+        char     *snippet = vv(STATE.code);
+        VmSnippet outer   = vm_snippet_begin(snippet, vN(STATE.code));
+
+        vm_exec(ty, snippet);
+
+        bool keep = vm_snippet_end(outer);
 
         STATE.loops = loops;
         STATE.stack = stack;
         STATE.code = code_save;
+        if (!keep) {
+                ty_free(snippet);
+        }
+        FreeAnnotation(&STATE.annotation);
         STATE.annotation = annotation;
-        v00(STATE.expression_locations);
+        STATE.expression_locations = locs_save;
 
         Value m = *vm_get(ty, 0);
-        void *ctx = PushInfo(ty, e, "invoking macro %s", SHOW(&m, BASIC));
+        char *shown = SHOW(&m, BASIC);
+        void *ctx   = PushInfo(ty, e, "invoking macro %s", shown);
+
+        ty_free(shown);
 
         if (m.type != VALUE_FUNCTION) {
                 fail("macro did not return a function");
@@ -19574,7 +19637,7 @@ compiler_type_function(Ty *ty, Symbol const *sym)
                 return NIL;
         }
 
-        add_location_info(ty);
+        location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
         byte_vector code_save = STATE.code;
@@ -19595,6 +19658,7 @@ compiler_type_function(Ty *ty, Symbol const *sym)
         INSN(HALT);
         SealCode(ty);
 
+        FreeAnnotation(&STATE.annotation);
         STATE.annotation = an;
 
         add_location_info(ty);
@@ -19605,6 +19669,7 @@ compiler_type_function(Ty *ty, Symbol const *sym)
         STATE.loops = loops;
         STATE.stack = stack;
         STATE.code = code_save;
+        STATE.expression_locations = locs_save;
 
         return *vm_global(ty, sym->i);
 }
@@ -19688,7 +19753,7 @@ inline static void
 InstallMeth(Ty *ty, Expr *meth, char const *name, add_to_class_fn *add)
 {
         if (HasBody(meth) || (meth->type == EXPRESSION_MULTI_FUNCTION)) {
-                (*add)(ty, meth->fn->class->i, name, REF(NewZero()));
+                (*add)(ty, meth->fn->class->i, name, REF(NewZero(ty)));
                 meth->fn->emit = true;
         } else if (add == class_add_getter && meth->fn->class->i < CLASS_BUILTIN_END) {
                 (*add)(ty, meth->fn->class->i, name, NIL);
@@ -20071,7 +20136,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
         Scope *scope = GetNamespace(ty, stmt->ns);
         Expr *expr;
 
-        if (stmt->mod != NULL && LocPtr(stmt->start) != NULL) {
+        if (stmt->mod != NULL && LocS(stmt->start) != NULL) {
                 dont_printf(
                         "[DECL] %18s:%4d  |  %s\n",
                         stmt->mod->path,
@@ -20282,7 +20347,7 @@ define_macro_now(Ty *ty, Stmt *s)
         s->target->symbol->doc = s->doc;
         s->type = STATEMENT_FUNCTION_DEFINITION;
 
-        add_location_info(ty);
+        location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
         byte_vector code_save = STATE.code;
@@ -20301,6 +20366,7 @@ define_macro_now(Ty *ty, Stmt *s)
         INSN(HALT);
         SealCode(ty);
 
+        FreeAnnotation(&STATE.annotation);
         STATE.annotation = an;
 
         add_location_info(ty);
@@ -20313,6 +20379,7 @@ define_macro_now(Ty *ty, Stmt *s)
         STATE.loops = loops;
         STATE.stack = stack;
         STATE.code  = code_save;
+        STATE.expression_locations = locs_save;
         STATE.flags = flags;
 }
 
@@ -20602,8 +20669,8 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         char const *suffix;
         char const *source;
 
-        prefix = source = LocPtr(e->start);
-        suffix = LocPtr(e->end);
+        prefix = source = LocS(e->start);
+        suffix = LocS(e->end);
 
         char const *eol = strchr(prefix, '\n');
 
@@ -20850,8 +20917,8 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         char const *suffix;
         char const *source;
 
-        prefix = source = LocPtr(e->start);
-        suffix = LocPtr(e->end);
+        prefix = source = LocS(e->start);
+        suffix = LocS(e->end);
 
         char const *eol = strchr(prefix, '\n');
 
@@ -20913,6 +20980,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
 typedef struct {
         char const *base;
         TokenVector const *tokens;
+        TokenStore const *store;
 } SourceView;
 
 static TokenVector const *
@@ -20933,30 +21001,37 @@ SourceViewFor(Ty *ty, Expr const *e, TokenVector const *tokens, SourceView *view
 {
         static TokenVector NoTokens = {0};
 
-        if (e == NULL || LocPtr(e->start) == NULL) {
+        if (e == NULL || LocS(e->start) == NULL) {
                 return false;
         }
 
-        char const *base = LocPtr(e->start);
+        char const *base = LocS(e->start);
         while (base[-1] != '\0') {
                 --base;
         }
 
-        view->base = base;
+        view->base  = base;
+        view->store = NULL;
 
         if (tokens == NULL) {
                 tokens = LiveTokensFor(ty, base);
         }
 
-        if (tokens == NULL && e->mod != NULL && e->mod->source == base) {
-                tokens = ModuleTokens(ty, e->mod);
+        if (
+                (tokens == NULL)
+             && (e->mod != NULL)
+             && (e->mod->source == base)
+             && (TokenCount(&e->mod->tokens) > 0)
+             && (SourceText(e->mod->tokens.src) == base)
+        ) {
+                view->store = &e->mod->tokens;
         }
 
         if (
                 (tokens == NULL)
              || (
                         (vN(*tokens) > 0)
-                     && (LocPtr(v_(*tokens, 0)->start) != base + v_(*tokens, 0)->start.byte)
+                     && (LocS(v_(*tokens, 0)->start) != base + v_(*tokens, 0)->start.byte)
                 )
         ) {
                 tokens = &NoTokens;
@@ -20987,16 +21062,24 @@ static void
 )
 {
         if (ColorOutput) {
+                TokenVector range = {0};
+
+                if (view->store != NULL) {
+                        TokenUnpackRange(view->store, start - view->base, end - view->base, &range);
+                }
+
                 syntax_highlight(
                         ty,
                         out,
                         view->base,
-                        view->tokens,
+                        (view->store != NULL) ? &range : view->tokens,
                         start - view->base,
                         end - view->base,
                         attr,
                         theme
                 );
+
+                xvF(range);
         } else {
                 sxdf(out, "%.*s", (int)(end - start), start);
         }
@@ -21005,7 +21088,7 @@ static void
 inline static Location
 SpanEnd(Expr const *e)
 {
-        return (LocPtr(e->end) == NULL || LocPtr(e->end) < LocPtr(e->start)) ? e->start : e->end;
+        return (LocS(e->end) == NULL || LocS(e->end) < LocS(e->start)) ? e->start : e->end;
 }
 
 static Expr const *
@@ -21013,14 +21096,14 @@ DisplaySite(Expr const *e)
 {
         Expr const *origin = e->origin;
 
-        if (origin == NULL || LocPtr(origin->start) == NULL) {
+        if (origin == NULL || LocS(origin->start) == NULL) {
                 return e;
         }
 
         if (
-                (LocPtr(e->start) != NULL)
-             && (LocPtr(e->start) >= LocPtr(origin->start))
-             && (LocPtr(SpanEnd(e)) <= LocPtr(SpanEnd(origin)))
+                (LocS(e->start) != NULL)
+             && (LocS(e->start) >= LocS(origin->start))
+             && (LocS(SpanEnd(e)) <= LocS(SpanEnd(origin)))
         ) {
                 return e;
         }
@@ -21096,8 +21179,8 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
 
         dump(out, "%s\n", TERM(0));
 
-        char const *start = LocPtr(e->start);
-        char const *end   = LocPtr(stop);
+        char const *start = LocS(e->start);
+        char const *end   = LocS(stop);
 
         int line0 = LocLine(e->start);
 
@@ -21148,9 +21231,9 @@ WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 );
 
                 if (in_range && line == LocLine(e->start) && line == LocLine(stop)) {
-                        hl(&tmp, &view, line_start, LocPtr(e->start), NULL,  "muted");
-                        hl(&tmp, &view, LocPtr(e->start), LocPtr(stop),     under, "muted");
-                        hl(&tmp, &view, LocPtr(stop),     line_end,   NULL,  "muted");
+                        hl(&tmp, &view, line_start, LocS(e->start), NULL,  "muted");
+                        hl(&tmp, &view, LocS(e->start), LocS(stop),     under, "muted");
+                        hl(&tmp, &view, LocS(stop),     line_end,   NULL,  "muted");
                 } else {
                         hl(&tmp, &view, line_start, line_end,   NULL,  "muted");
                 }
@@ -21319,8 +21402,8 @@ WriteSourceWindow(
 
         Location const stop = SpanEnd(e);
 
-        char const *start = LocPtr(e->start);
-        char const *end   = LocPtr(stop);
+        char const *start = LocS(e->start);
+        char const *end   = LocS(stop);
 
         int line0 = LocLine(e->start);
 
@@ -21368,8 +21451,8 @@ WriteSourceWindow(
                         line_end,
                         line,
                         in_range,
-                        single ? LocPtr(e->start) : NULL,
-                        single ? LocPtr(stop)     : NULL,
+                        single ? LocS(e->start) : NULL,
+                        single ? LocS(stop)     : NULL,
                         under,
                         NULL
                 );
@@ -21377,8 +21460,8 @@ WriteSourceWindow(
                 if (single && !ColorOutput) {
                         dump(out, "%s\n", vv(tmp));
                         v0(tmp);
-                        sxdf(&tmp, "%*s", 9 + (int)(LocPtr(e->start) - line_start), "");
-                        for (int i = 0; i < max(LocPtr(stop) - LocPtr(e->start), 1); ++i) {
+                        sxdf(&tmp, "%*s", 9 + (int)(LocS(e->start) - line_start), "");
+                        for (int i = 0; i < max(LocS(stop) - LocS(e->start), 1); ++i) {
                                 svP(tmp, '^');
                         }
                         svP(tmp, '\0');
@@ -21526,15 +21609,12 @@ WriteModuleSourceLines(
 
         SourceView view = {
                 .base   = mod->source,
-                .tokens = ModuleTokens(ty, (Module *)mod)
+                .tokens = &NoTokens,
+                .store  = (
+                        (TokenCount(&mod->tokens) > 0)
+                     && (SourceText(mod->tokens.src) == mod->source)
+                ) ? &mod->tokens : NULL
         };
-
-        if (
-                (vN(*view.tokens) == 0)
-             || (LocPtr(v_(*view.tokens, 0)->start) != mod->source + v_(*view.tokens, 0)->start.byte)
-        ) {
-                view.tokens = &NoTokens;
-        }
 
         char const *start = ModuleLineStart(mod, line0);
 
@@ -21645,7 +21725,7 @@ WriteDiagnosticLocus(
 
         Expr const *site = DisplaySite(where);
 
-        if (LocPtr(site->start) == NULL) {
+        if (LocS(site->start) == NULL) {
                 return;
         }
 
@@ -21732,7 +21812,7 @@ ContextSite(Ty *ty, StringVector *notes)
                         continue;
                 }
 
-                if (site == NULL && LocPtr(e->start) != NULL) {
+                if (site == NULL && LocS(e->start) != NULL) {
                         site = e;
                 }
         }
@@ -22923,15 +23003,21 @@ TyCompilerState(Ty *ty)
 void
 CompilerScopePush(Ty *ty)
 {
-        STATE.pscope = scope_new(ty, "(block)", STATE.pscope, false);
+        STATE.pscope = scope_new_tmp(ty, "(block)", STATE.pscope);
         PushScope(STATE.pscope);
 }
 
 void
 CompilerScopePop(Ty *ty)
 {
-        STATE.pscope = STATE.pscope->parent;
+        Scope *scope = STATE.pscope;
+
+        STATE.pscope = scope->parent;
         PopScope();
+
+        if (ScopeIsTmp(scope)) {
+                scope_retire_tmp(ty, scope);
+        }
 }
 
 void
@@ -22997,7 +23083,7 @@ CompilerGetModuleTokens(Ty *ty, TokenVector *out, char const *name)
                 return false;
         }
 
-        *out = *ModuleTokens(ty, mod);
+        TokenUnpack(&mod->tokens, out);
 
         return true;
 }
@@ -23078,9 +23164,7 @@ CompilerReloadModule(
 
         ScopeReset(mod->scope);
         v00(mod->imports);
-        v00(mod->tokens);
-        v00(mod->ctokens);
-        v00(mod->fakes);
+        mod->tokens = (TokenStore) {0};
         mod->prog = NULL;
         mod->source = NULL;
         mod->flags |= MOD_RELOADING;
@@ -23250,7 +23334,7 @@ static char const *
 DanglingMember(Ty *ty, Module const *mod, Expr const *e, i32 line, i32 col)
 {
         char const *cursor = SourcePosition(mod->source, line, col);
-        char const *dot = LocPtr(e->end);
+        char const *dot = LocS(e->end);
 
         if (
                 (cursor == NULL)

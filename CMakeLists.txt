@@ -12,6 +12,7 @@ option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. Fr
 option(TY_EMBED_LIB "Embed lib/*.ty in the executable" OFF)
 option(TY_LOG "Compile in debug logging" OFF)
 option(TY_ASAN "Build with AddressSanitizer" OFF)
+option(TY_SYSMALLOC "Route all allocation (including arenas) through the system malloc" OFF)
 option(TY_NATIVE "Tune for the build machine's CPU (-mcpu=native / -march=native)" OFF)
 option(TY_LTO_FULL "Use full LTO instead of ThinLTO for Release builds" OFF)
 set(TY_PGO_GENERATE "" CACHE PATH "Instrument for PGO, writing raw profiles to this directory")
@@ -473,6 +474,7 @@ set(_src_files
   ${_lir_native}
   src/json.c
   src/lex.c
+  src/source.c
   src/ls.c
   src/mod.c
   src/object.c
@@ -652,7 +654,7 @@ target_link_libraries(${_tgt_ty_link}
     ${_tgt_errnoconstants_h}
     Threads::Threads # pthreads (or equivalent)
     libco
-    $<$<NOT:$<CONFIG:Debug>>:mimalloc-static>
+    $<$<NOT:$<OR:$<CONFIG:Debug>,$<BOOL:${TY_SYSMALLOC}>>>:mimalloc-static>
     xxHash::xxhash
     utf8proc::utf8proc
     PCRE2::8BIT
@@ -748,6 +750,7 @@ target_compile_definitions(${_tgt_ty_interface}
   INTERFACE
     $<$<OR:$<C_COMPILER_ID:GNU>,$<PLATFORM_ID:Linux>>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
+    $<$<BOOL:${TY_SYSMALLOC}>:TY_SYSMALLOC>
     $<$<NOT:$<BOOL:${TY_LOG}>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8

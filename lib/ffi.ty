@@ -1,7 +1,7 @@
 import ffi as c
 import os
 import ty
-import ty.mod as tymod
+import ty.mod
 import ty.token (next, peek)
 import ty.parse (expr, stmt)
 import ty.lex as lex
@@ -1110,7 +1110,7 @@ pub fn library-key(name: String) -> String {
 
 fn bundled(libs: Array[String]) -> Ptr[Any] | nil {
     for lib in libs {
-        if let $path = tymod.native(library-key(lib)) {
+        if let $path = ty.mod.native(library-key(lib)) {
             return c.dlopen(path) ?? throw RuntimeError(
                 "ffi.open: cannot load {path}, the {lib} library bundled with this package: {c.dlerror() ?? 'unknown error'}"
             )

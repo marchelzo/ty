@@ -9755,6 +9755,21 @@ mdocs(Ty *ty, struct itable const *t, struct array *a)
         }
 }
 
+inline static char *
+OwnedCStr(Ty *ty, char const *s, usize n)
+{
+        if (s == NULL) {
+                return NULL;
+        }
+
+        char *new = mA(n + 1);
+
+        memcpy(new, s, n);
+        new[n] = '\0';
+
+        return new;
+}
+
 // setDoc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T
 TY_BUILTIN_RAW(set_doc)
 {
@@ -9766,20 +9781,23 @@ TY_BUILTIN_RAW(set_doc)
         Value doc   = KWARG("doc",   STRING, _NIL);
 
         if (f.xinfo == NULL) {
-                f.xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
+                f.xinfo = mAo0(sizeof (FunUserInfo), GC_FUN_INFO);
+        } else if (ALLOC_OF(f.xinfo)->type != GC_FUN_INFO) {
+                f.xinfo->name  = OwnedCStr(ty, f.xinfo->name,  (f.xinfo->name  == NULL) ? 0 : strlen(f.xinfo->name));
+                f.xinfo->proto = OwnedCStr(ty, f.xinfo->proto, (f.xinfo->proto == NULL) ? 0 : strlen(f.xinfo->proto));
+                f.xinfo->doc   = OwnedCStr(ty, f.xinfo->doc,   (f.xinfo->doc   == NULL) ? 0 : strlen(f.xinfo->doc));
+                ALLOC_OF(f.xinfo)->type = GC_FUN_INFO;
         }
 
-        if (name.type == VALUE_STRING) {
-                f.xinfo->name = TY_C_STR(name);
+#define X(field, v)                                                                   \
+        if ((v).type == VALUE_STRING) {                                               \
+                mF((void *)f.xinfo->field);                                           \
+                f.xinfo->field = OwnedCStr(ty, ss(v), sN(v));                         \
         }
-
-        if (proto.type == VALUE_STRING) {
-                f.xinfo->proto = TY_C_STR(proto);
-        }
-
-        if (doc.type == VALUE_STRING) {
-                f.xinfo->doc = TY_C_STR(doc);
-        }
+        X(name,  name);
+        X(proto, proto);
+        X(doc,   doc);
+#undef X
 
         return f;
 }
@@ -10020,7 +10038,7 @@ test_site(Ty *ty, TyTest const *test, usize n)
         if (vN(fun->fn->decorators) > 0) {
                 Expr const *deco = v__(fun->fn->decorators, 0);
                 if (
-                        (LocPtr(deco->start) != NULL)
+                        (LocS(deco->start) != NULL)
                      && (deco->start.byte < start.byte)
                 ) {
                         start = deco->start;
@@ -10155,8 +10173,8 @@ trace_frame(Ty *ty, Expr const *e)
                 name = vSsz(KebabName(ty, func));
         }
 
-        if (LocPtr(e->start) != NULL) {
-                src = LocPtr(e->start) - LocCol(e->start);
+        if (LocS(e->start) != NULL) {
+                src = LocS(e->start) - LocCol(e->start);
         }
 
         end = strchr(src, '\n');
@@ -10765,12 +10783,16 @@ TY_BUILTIN_RAW(ty_tokens)
 
         Value mod = ARGx(0, VALUE_STRING);
 
-        TokenVector tokens;
+        TokenVector tokens = {0};
         if (!CompilerGetModuleTokens(ty, &tokens, TY_TMP_C_STR(mod))) {
                 return NIL;
         }
 
-        return make_tokens(ty, &tokens);
+        Value v = make_tokens(ty, &tokens);
+
+        xvF(tokens);
+
+        return v;
 }
 
 // ty.scope() -> Ptr[prelude.Any] | nil
@@ -11327,9 +11349,15 @@ TY_BUILTIN_RAW(ty_mod_tokens)
         Module *mod = this ? CompilerCurrentModule(ty)
                            : ARGx(0, VALUE_MODULE).mod;
 
-        TokenVector tokens = *ModuleTokens(ty, mod);
+        TokenVector tokens = {0};
 
-        return make_tokens(ty, &tokens);
+        TokenUnpack(&mod->tokens, &tokens);
+
+        Value v = make_tokens(ty, &tokens);
+
+        xvF(tokens);
+
+        return v;
 }
 
 // ty/mod.source(mod: ?Module = nil) -> String
@@ -12168,7 +12196,7 @@ TY_BUILTIN_RAW(ty_get_source)
                 return BuiltinSource(ty, &expr);
         }
 
-        if (src == NULL || LocPtr(src->start) == NULL || LocPtr(src->end) == NULL) {
+        if (src == NULL || LocS(src->start) == NULL || LocS(src->end) == NULL) {
                 return NIL;
         }
 
@@ -12183,8 +12211,8 @@ TY_BUILTIN_RAW(ty_get_source)
                 "end",   make_location(ty, &src->end),
                 "file",  file,
                 "mod",   (src->mod != NULL) ? MODULE(src->mod) : NIL,
-                "prog",  xSz(LocPtr(src->start) - src->start.byte),
-                "src",   xSs(LocPtr(src->start), LocPtr(src->end) - LocPtr(src->start))
+                "prog",  xSz(LocS(src->start) - src->start.byte),
+                "src",   xSs(LocS(src->start), LocS(src->end) - LocS(src->start))
         );
 
         GC_RESUME();
@@ -12219,7 +12247,7 @@ TY_BUILTIN_RAW(lex_state)
 
         return vTn(
                 "source",       xSs(st.start, st.end - st.start),
-                "position",     make_location(ty, &(Location) { st.src, st.loc.byte }),
+                "position",     make_location(ty, &st.loc),
                 "context",      INTEGER(st.ctx),
                 "keepComments", BOOLEAN(st.keep_comments),
                 "keepNewline",  BOOLEAN(st.need_nl),
@@ -12485,16 +12513,16 @@ TY_BUILTIN_RAW(parse_show)
 
         if (
                 (src == NULL)
-             || (LocPtr(src->start) == NULL)
-             || (LocPtr(src->end) == NULL)
-             || (LocPtr(src->end) < LocPtr(src->start))
+             || (LocS(src->start) == NULL)
+             || (LocS(src->end) == NULL)
+             || (LocS(src->end) < LocS(src->start))
         ) {
                 return NIL;
         }
 
-        usize n = strnlen(LocPtr(src->start), LocPtr(src->end) - LocPtr(src->start));
+        usize n = strnlen(LocS(src->start), LocS(src->end) - LocS(src->start));
 
-        return vSs(LocPtr(src->start), n);
+        return vSs(LocS(src->start), n);
 }
 
 // ty/parse.highlight(mod: Module, start: Int, end: Int, theme: ?String = nil) -> _
@@ -12532,10 +12560,12 @@ TY_BUILTIN_RAW(parse_highlight)
         SCRATCH_SAVE();
         char const *theme_z = IsMissing(theme) ? NULL : TY_TMP_C_STR(theme);
         char const *src = mod->source;
-        TokenVector tok = *ModuleTokens(ty, (Module *)mod);
+        TokenVector tok = {0};
+        TokenUnpackRange(&mod->tokens, start, end, &tok);
         if (syntax_highlight(ty, &text, src, &tok, start, end, NULL, theme_z)) {
                 result = vSs(vv(text), vN(text));
         }
+        xvF(tok);
         SCRATCH_RESTORE();
 
         return result;

@@ -1,4 +1,4 @@
-import ty.mod as tymod
+import ty.mod
 import json
 import os
 import path (Path)
@@ -58,7 +58,7 @@ fn entry(url: String, base: String, line: String) -> Entry {
 
 /// GETs `url` with the HTTP client, which is loaded only when a remote registry is used.
 fn fetch(url: String, timeout: Float) -> _ {
-    let client = tymod.load('http/client')
+    let client = ty.mod.load('http/client')
     let get = client.get
     try {
         get(url, timeout: timeout, follow-redirects: true)

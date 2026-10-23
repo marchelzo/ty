@@ -3643,7 +3643,9 @@ jit_lower(Ty *ty, Value const *f)
         JitFn *fn = compile(ty, f, begin);
         SCRATCH_RESTORE();
 
-        ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
+        if (!jit_eager()) {
+                ScratchTrim(&ty->scratch, TY_SCRATCH_KEEP);
+        }
 
         PROF_LEAVE();
 

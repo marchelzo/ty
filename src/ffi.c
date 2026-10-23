@@ -876,9 +876,13 @@ TY_BUILTIN_RAW(ffi_fun)
         Value owner = ARG(1);
         FunUserInfo *xinfo;
         GC_STOP();
-        xinfo = mAo0(sizeof *xinfo, GC_ANY);
+        xinfo = mAo0(sizeof *xinfo, GC_FUN_INFO);
         if (ARG_T(2) == VALUE_STRING) {
-                xinfo->name = TY_C_STR(ARG(2));
+                usize n     = sN(ARG(2));
+                char *name  = mA(n + 1);
+                memcpy(name, ss(ARG(2)), n);
+                name[n]     = '\0';
+                xinfo->name = name;
         }
         if (owner.gcptr != NULL) {
                 xinfo->cif_owner = mAo(sizeof *xinfo->cif_owner, GC_VALUE);

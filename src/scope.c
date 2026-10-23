@@ -118,9 +118,12 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
         return scope_add_namespace(ty, parent, name, ns);
 }
 
-Scope *
-NewSubscope(
+static vec(Scope *) TmpKids;
+
+inline static Scope *
+InitSubscope(
         Ty *ty,
+        Scope *scope,
 #if TY_NAMED_SCOPES
         char const *name,
 #endif
@@ -128,7 +131,10 @@ NewSubscope(
         bool is_function
 )
 {
-        Scope *scope = amA0(sizeof *scope);
+        if (ScopeIsTmp(parent)) {
+                xvP(TmpKids, parent);
+                xvP(TmpKids, scope);
+        }
 
         scope->parent = parent;
         scope->flags |= is_function * SCOPE_FUNCTION;
@@ -142,6 +148,94 @@ NewSubscope(
 #endif
 
         return scope;
+}
+
+Scope *
+NewSubscope(
+        Ty *ty,
+#if TY_NAMED_SCOPES
+        char const *name,
+#endif
+        Scope *parent,
+        bool is_function
+)
+{
+#if TY_NAMED_SCOPES
+        return InitSubscope(ty, amA0(sizeof (Scope)), name, parent, is_function);
+#else
+        return InitSubscope(ty, amA0(sizeof (Scope)), parent, is_function);
+#endif
+}
+
+Scope *
+scope_new_tmp(Ty *ty, char const *name, Scope *parent)
+{
+        Scope *scope = memset(tmA(sizeof (Scope)), 0, sizeof (Scope));
+
+#if TY_NAMED_SCOPES
+        InitSubscope(ty, scope, name, parent, false);
+#else
+        InitSubscope(ty, scope, parent, false);
+#endif
+
+        scope->flags |= SCOPE_TMP;
+        scope->kids   = vN(TmpKids);
+
+        return scope;
+}
+
+Scope *
+scope_retire_tmp(Ty *ty, Scope *scope)
+{
+        bool keep = (scope->count > 0)
+                 || (vN(scope->owned) > 0)
+                 || (vN(scope->captured) > 0);
+
+        for (usize i = scope->kids; i < vN(TmpKids); i += 2) {
+                if (v__(TmpKids, i) == scope && !ScopeIsTmp(v__(TmpKids, i + 1))) {
+                        keep = true;
+                }
+        }
+
+        if (!keep) {
+                vN(TmpKids) = scope->kids;
+                return NULL;
+        }
+
+        Scope *new = amA(sizeof *new);
+        *new = *scope;
+        new->flags &= ~SCOPE_TMP;
+
+        for (u32 i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        if (sym->scope == scope) {
+                                sym->scope = new;
+                        }
+                }
+        }
+
+        for (int i = 0; i < vN(scope->owned); ++i) {
+                if (v__(scope->owned, i)->scope == scope) {
+                        v__(scope->owned, i)->scope = new;
+                }
+        }
+
+        for (usize i = scope->kids; i < vN(TmpKids); i += 2) {
+                if (v__(TmpKids, i) == scope) {
+                        v__(TmpKids, i + 1)->parent = new;
+                }
+        }
+
+        vN(TmpKids) = scope->kids;
+
+        for (usize i = vN(TmpKids); i >= 2; i -= 2) {
+                if (v__(TmpKids, i - 1) == scope) {
+                        *v_(TmpKids, i - 1) = new;
+                        break;
+                }
+        }
+
+        return new;
 }
 
 inline static bool
@@ -167,8 +261,8 @@ capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 
         sym->flags |= SYM_CAPTURED;
 
-        avP(s->captured, sym);
-        avP(s->cap_indices, parent_index);
+        rvP(s->captured, sym);
+        rvP(s->cap_indices, parent_index);
 
         LOG(
                 "capture(sym=%s, scope=%s (%p), cap_index=%d)",
@@ -339,6 +433,8 @@ grow(Ty *ty, Scope *scope)
 
         SCRATCH_RESTORE();
 
+        Release(ty, scope->table, sizeof (Symbol *) * scope->size);
+
         scope->table = new_table;
         scope->size  = new_size;
 }
@@ -490,7 +586,7 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
         }
 
         while (vN(owner->owned) <= idx) {
-                avP(owner->owned, NULL);
+                rvP(owner->owned, NULL);
         }
 
         while (
@@ -501,7 +597,7 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
         }
 
         if (idx == vN(owner->owned)) {
-                avP(owner->owned, sym);
+                rvP(owner->owned, sym);
         } else {
                 v__(owner->owned, idx) = sym;
         }

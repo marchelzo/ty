@@ -39,7 +39,7 @@
 #define VA_SELECT_INNER(f, i) CAT(f##_, i)
 #define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
-#if defined(TY_RELEASE)
+#if defined(TY_RELEASE) && !defined(TY_SYSMALLOC)
  #include <mimalloc.h>
  #define ty_malloc        mi_malloc
  #define ty_calloc        mi_calloc
@@ -231,7 +231,17 @@ typedef vec(Module *)       ModuleVector;
 #define xmF(p)     ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
-#define Resize(p, n, m) ((p) = ArenaResize(ty, (p), (n), (m)))
+#define Resize(p, n, m) ((p) = Reallocate(ty, (p), (m), (n)))
+#define TmpResize(p, n, m) ((p) = __builtin_memcpy(tmA(n), (p), (m)))
+#define RegrowResize(p, n, m) ((p) = Regrow(ty, (p), (m), (n)))
+#define rvP(v, x)          vec_push_((v), (x), RegrowResize)
+#define rvPn(v, xs, n)     vec_push_n_((v), (xs), (n), RegrowResize)
+#define rvPv(v, u)         vec_push_n_((v), ((u).items), ((u).count), RegrowResize)
+#define rvI(v, x, i)       vec_insert_((v), (x), (i), RegrowResize)
+#define rvIn(v, xs, n, i)  vec_insert_n_((v), (xs), (n), (i), RegrowResize)
+#define tvP(v, x)          vec_push_((v), (x), TmpResize)
+#define tvPn(v, xs, n)     vec_push_n_((v), (xs), (n), TmpResize)
+#define tvI(v, x, i)       vec_insert_((v), (x), (i), TmpResize)
 #define resize_scratch(p, n, m) ((p) = __builtin_memcpy(smA(n), (p), (m)))
 
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))

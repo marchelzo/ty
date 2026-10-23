@@ -3,6 +3,7 @@
 
 #include "ty.h"
 #include "ast.h"
+#include "token.h"
 
 #define HAVE_COMPILER_FLAG(flag) (TyCompilerState(ty)->flags & TYC_##flag)
 
@@ -165,10 +166,7 @@ typedef struct module {
         char const *source;
         struct module const *host;
         Stmt **prog;
-        TokenVector tokens;
-        CTokenVector ctokens;
-        TokenVector fakes;
-        u32 csrc;
+        TokenStore tokens;
         Expr *last;
         Arena arena;
         Location error;
@@ -316,6 +314,8 @@ typedef struct compiler_state {
 
         location_vector expression_locations;
         TokenVector source_tokens;
+
+        u32 nohints;
 } CompileState;
 
 void
@@ -588,6 +588,9 @@ source_lookup(Ty *ty, u32 src);
 
 void
 ForgetSourceNodesFrom(void const *base, usize len);
+
+void
+ForgetSourceNodesWhere(bool (*f)(void const *, void *), void *ctx);
 
 void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e);

@@ -3126,17 +3126,17 @@ Snippet(char *buf, usize n, Module const *mod, u32 line)
         buf[len] = '\0';
 }
 
-static TokenVector const *
+static TokenStore const *
 HaveTokens(Ty *ty, Module const *mod)
 {
         if (mod == NULL || mod->source == NULL) {
                 return NULL;
         }
 
-        TokenVector const *ts = ModuleTokens(ty, (Module *)mod);
+        TokenStore const *ts = &mod->tokens;
 
-        bool ok = (vN(*ts) > 0)
-               && (LocPtr(v_(*ts, 0)->start) == mod->source + v_(*ts, 0)->start.byte);
+        bool ok = (TokenCount(ts) > 0)
+               && (SourceText(ts->src) == mod->source);
 
         return ok ? ts : NULL;
 }
@@ -3167,19 +3167,22 @@ PutSource(Module const *mod, u32 line, int max)
 
         byte_vector b = {0};
 
-        TokenVector const *ts = ColorProfile ? HaveTokens(ty, mod) : NULL;
+        TokenStore const *ts = ColorProfile ? HaveTokens(ty, mod) : NULL;
 
         if (ts != NULL) {
+                TokenVector range = {0};
+                TokenUnpackRange(ts, s - mod->source, s + len - mod->source, &range);
                 syntax_highlight(
                         ty,
                         &b,
                         mod->source,
-                        ts,
+                        &range,
                         s - mod->source,
                         s + len - mod->source,
                         NULL,
                         NULL
                 );
+                xvF(range);
         } else {
                 sxdf(&b, "%.*s", len, s);
         }

@@ -21,14 +21,8 @@ typedef enum LexContext {
         LEX_HIDDEN
 } LexContext;
 
-typedef struct lex_cursor {
-        char const *s;
-        u32 byte;
-} LexCursor;
-
 typedef struct LexState {
-        LexCursor loc;
-        u32 src;
+        Location loc;
 
         int ctx;
         int quotes;
@@ -60,9 +54,6 @@ void
 lex_rewind(Ty *ty, struct location const *where);
 
 void
-lex_seek(LexState *st, Location loc);
-
-void
 lex_end(Ty *ty);
 
 Token
@@ -70,9 +61,6 @@ lex_token(Ty *ty, LexContext ctx);
 
 Token
 lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool first);
-
-Token
-lex_token_at(Ty *ty, u32 src, char const *base, char const *end, struct ctoken const *c);
 
 int
 lex_peek_byte(Ty *ty);

@@ -10,6 +10,7 @@
 
 #include <pcre2.h>
 #include <utf8proc.h>
+#include <xxhash.h>
 
 #include "vec.h"
 #include "token.h"
@@ -40,26 +41,7 @@ enum {
         MAX_OP_LEN = 8,
 };
 
-typedef struct source {
-        char const *base;
-        char const *end;
-        u32 *_Atomic lines;
-        u32 nlines;
-        bool flat;
-} Source;
-
-enum {
-        SOURCE_CHUNK  = 1 << 10,
-        SOURCE_CHUNKS = 1 << 12
-};
-
-static Source *SourceChunks[SOURCE_CHUNKS];
-static u32 *SourceIndex;
-static u32 SourceSlots;
-static u32 _Atomic SourceCount;
-static TySpinLock SourceLock = TY_MUTEX_INIT;
-
-static LexCursor Start;
+static Location Start;
 
 static jmp_buf jb;
 static char const *LexErrorMessage;
@@ -67,212 +49,103 @@ static char const *LexErrorMessage;
 LexState *lxst;
 static LexState state;
 
-#define SRC state.loc.s
+#define SRC (state.start + state.loc.byte)
 #define END state.end
 
-inline static Source *
-SourceOf(u32 src)
-{
-        return (src == 0 || src > atomic_load_explicit(&SourceCount, memory_order_acquire))
-             ? NULL
-             : &SourceChunks[(src - 1) / SOURCE_CHUNK][(src - 1) % SOURCE_CHUNK];
-}
+typedef struct {
+        char const *s;
+        u32         n;
+        u32         h;
+} Ident;
 
-inline static u32 *
-SourceSlot(char const *base)
-{
-        u32 h = (u32)((((uptr)base >> 3) * 11400714819323198485ULL) >> 32);
-
-        for (u32 mask = SourceSlots - 1;; h = (h + 1) & mask) {
-                u32 *slot = &SourceIndex[h & mask];
-                if (*slot == 0 || SourceOf(*slot)->base == base) {
-                        return slot;
-                }
-        }
-}
+static Ident *Idents;
+static usize  IdentCap;
+static usize  IdentCount;
 
 static void
-SourceGrowIndex(void)
+grow_idents(void)
 {
-        u32  n   = SourceSlots;
-        u32 *old = SourceIndex;
+        usize  cap = (IdentCap == 0) ? 4096 : 2 * IdentCap;
+        Ident *new = calloc(cap, sizeof *new);
 
-        SourceSlots = (n == 0) ? 256 : 2 * n;
-        SourceIndex = xtA0(u32, SourceSlots);
+        if (UNLIKELY(new == NULL)) {
+                panic("out of memory: identifier table");
+        }
 
-        for (u32 i = 0; i < n; ++i) {
-                if (old[i] != 0) {
-                        *SourceSlot(SourceOf(old[i])->base) = old[i];
+        for (usize i = 0; i < IdentCap; ++i) {
+                if (Idents[i].s == NULL) {
+                        continue;
+                }
+                usize j = Idents[i].h & (cap - 1);
+                while (new[j].s != NULL) {
+                        j = (j + 1) & (cap - 1);
+                }
+                new[j] = Idents[i];
+        }
+
+        free(Idents);
+
+        Idents   = new;
+        IdentCap = cap;
+}
+
+static char *
+ident(Ty *ty, char const *s, usize n)
+{
+        if (ty->arena.gc && !ty->arena.immortal) {
+                char *w = amA(n + 1);
+                memcpy(w, s, n);
+                w[n] = '\0';
+                return w;
+        }
+
+        if (2 * (IdentCount + 1) > IdentCap) {
+                grow_idents();
+        }
+
+        u32   h = (u32)XXH3_64bits(s, n);
+        usize i = h & (IdentCap - 1);
+
+        for (; Idents[i].s != NULL; i = (i + 1) & (IdentCap - 1)) {
+                if (Idents[i].h == h && Idents[i].n == n && memcmp(Idents[i].s, s, n) == 0) {
+                        return (char *)Idents[i].s;
                 }
         }
 
-        xmF(old);
-}
-
-u32
-SourceRegister(char const *base, bool flat)
-{
-        TySpinLockLock(&SourceLock);
-
-        u32 count = atomic_load_explicit(&SourceCount, memory_order_relaxed);
-
-        if (2 * (count + 1) > SourceSlots) {
-                SourceGrowIndex();
+        char *w = malloc(n + 1);
+        if (UNLIKELY(w == NULL)) {
+                panic("out of memory: identifier table");
         }
 
-        u32 *slot = SourceSlot(base);
-        u32  id   = *slot;
+        memcpy(w, s, n);
+        w[n] = '\0';
 
-        if (id == 0) {
-                if (count == SOURCE_CHUNK * SOURCE_CHUNKS) {
-                        TySpinLockUnlock(&SourceLock);
-                        return 0;
-                }
-                id = count + 1;
-                if (SourceChunks[count / SOURCE_CHUNK] == NULL) {
-                        SourceChunks[count / SOURCE_CHUNK] = xtA0(Source, SOURCE_CHUNK);
-                }
-                atomic_store_explicit(&SourceCount, id, memory_order_release);
-                *slot = id;
-        }
+        Idents[i]   = (Ident) { .s = w, .n = (u32)n, .h = h };
+        IdentCount += 1;
 
-        Source *src = SourceOf(id);
-
-        xmF(atomic_exchange(&src->lines, NULL));
-
-        src->base   = base;
-        src->end    = base + strlen(base);
-        src->nlines = 0;
-        src->flat   = flat;
-
-        TySpinLockUnlock(&SourceLock);
-
-        return id;
+        return w;
 }
 
-u32
-SourceFind(char const *base)
+inline static char *
+idkeep(Ty *ty, byte_vector *v)
 {
-        u32 id;
+        char *s = (vN(*v) == 0) ? NULL : ident(ty, vv(*v), vN(*v) - 1);
 
-        TySpinLockLock(&SourceLock);
-        id = (SourceSlots == 0) ? 0 : *SourceSlot(base);
-        TySpinLockUnlock(&SourceLock);
+        xvF(*v);
+        v00(*v);
 
-        return (id != 0) ? id : SourceRegister(base, false);
+        return s;
 }
 
-static u32 const *
-SourceLines(Source *src, u32 *n)
+inline static char *
+keep(Ty *ty, byte_vector *v, usize off)
 {
-        u32 *lines = atomic_load_explicit(&src->lines, memory_order_acquire);
+        char *s = (vv(*v) == NULL) ? NULL : memcpy(amA(vN(*v) - off), vv(*v) + off, vN(*v) - off);
 
-        if (lines == NULL) {
-                TySpinLockLock(&SourceLock);
+        xvF(*v);
+        v00(*v);
 
-                if ((lines = atomic_load_explicit(&src->lines, memory_order_relaxed)) == NULL) {
-                        u32 bom   = (src->end - src->base >= 3) && (memcmp(src->base, "\xEF\xBB\xBF", 3) == 0);
-                        u32 count = 1;
-
-                        for (char const *p = src->base; (p = memchr(p, '\n', src->end - p)) != NULL; ++p) {
-                                count += 1;
-                        }
-
-                        lines    = xmA(count * sizeof *lines);
-                        lines[0] = 3 * bom;
-                        count    = 1;
-
-                        for (char const *p = src->base; (p = memchr(p, '\n', src->end - p)) != NULL; ++p) {
-                                lines[count++] = (u32)(p + 1 - src->base);
-                        }
-
-                        src->nlines = count;
-                        atomic_store_explicit(&src->lines, lines, memory_order_release);
-                }
-
-                TySpinLockUnlock(&SourceLock);
-        }
-
-        *n = src->nlines;
-
-        return lines;
-}
-
-static u32
-LineIndex(Location loc, u32 *start)
-{
-        Source *src = SourceOf(loc.src);
-
-        if (src == NULL || src->flat) {
-                *start = loc.byte;
-                return 0;
-        }
-
-        u32        n;
-        u32 const *lines = SourceLines(src, &n);
-        u32        lo    = 0;
-        u32        hi    = n;
-
-        while (hi - lo > 1) {
-                u32 mid = lo + (hi - lo) / 2;
-                if (lines[mid] <= loc.byte) {
-                        lo = mid;
-                } else {
-                        hi = mid;
-                }
-        }
-
-        *start = min(lines[lo], loc.byte);
-
-        return lo;
-}
-
-char const *
-LocPtr(Location loc)
-{
-        Source const *src = SourceOf(loc.src);
-        return (src == NULL) ? NULL : src->base + loc.byte;
-}
-
-u32
-LocLine(Location loc)
-{
-        u32 start;
-        return LineIndex(loc, &start);
-}
-
-u32
-LocCol(Location loc)
-{
-        u32 start;
-        LineIndex(loc, &start);
-        return loc.byte - start;
-}
-
-bool
-LocSameLine(Location a, Location b)
-{
-        if (a.src != b.src) {
-                return LocLine(a) == LocLine(b);
-        }
-
-        u32         lo = min(a.byte, b.byte);
-        u32         hi = max(a.byte, b.byte);
-        char const *p  = LocPtr(LocOf(a.src, lo));
-
-        return (p == NULL) || (memchr(p, '\n', hi - lo) == NULL);
-}
-
-inline static LexCursor
-Cursor(Location loc)
-{
-        return (LexCursor) { .s = LocPtr(loc), .byte = loc.byte };
-}
-
-inline static Location
-Mark(LexCursor c)
-{
-        return LocOf(state.src, c.byte);
+        return s;
 }
 
 inline static unsigned char
@@ -303,8 +176,8 @@ mktoken(Ty *ty, int type)
 {
         return (Token) {
                 .type  = type,
-                .start = Mark(Start),
-                .end   = Mark(state.loc),
+                .start = Start,
+                .end   = state.loc,
                 .ctx   = state.ctx,
                 .nl    = (state.need_nl || type == TOKEN_NEWLINE)
         };
@@ -317,8 +190,8 @@ mkid(Ty *ty, char *id, char *module, bool raw)
                 .type       = TOKEN_IDENTIFIER,
                 .identifier = id,
                 .module     = module,
-                .start      = Mark(Start),
-                .end        = Mark(state.loc),
+                .start      = Start,
+                .end        = state.loc,
                 .nl         = state.need_nl,
                 .ctx        = state.ctx,
                 .raw        = raw
@@ -331,8 +204,8 @@ mkstring(Ty *ty, char const *string, usize length)
         return (Token) {
                 .type   = TOKEN_STRING,
                 .string = BYTES(string, length),
-                .start  = Mark(Start),
-                .end    = Mark(state.loc),
+                .start  = Start,
+                .end    = state.loc,
                 .nl     = state.need_nl,
                 .ctx    = state.ctx
         };
@@ -394,8 +267,8 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed, bool speculative)
         return (Token) {
                 .type  = TOKEN_REGEX,
                 .regex = r,
-                .start = Mark(Start),
-                .end   = Mark(state.loc),
+                .start = Start,
+                .end   = state.loc,
                 .ctx   = state.ctx
         };
 }
@@ -406,8 +279,8 @@ mkreal(Ty *ty, double real)
         return (Token) {
                 .type  = TOKEN_REAL,
                 .real  = real,
-                .start = Mark(Start),
-                .end   = Mark(state.loc),
+                .start = Start,
+                .end   = state.loc,
                 .nl    = state.need_nl,
                 .ctx   = state.ctx
         };
@@ -419,8 +292,8 @@ mkinteger(Ty *ty, intmax_t k)
         return (Token) {
                 .type    = TOKEN_INTEGER,
                 .integer = k,
-                .start   = Mark(Start),
-                .end     = Mark(state.loc),
+                .start   = Start,
+                .end     = state.loc,
                 .nl      = state.need_nl,
                 .ctx     = state.ctx
         };
@@ -432,8 +305,8 @@ mkkw(Ty *ty, int kw)
         return (Token) {
                 .type = TOKEN_KEYWORD,
                 .keyword = kw,
-                .start = Mark(Start),
-                .end = Mark(state.loc),
+                .start = Start,
+                .end = state.loc,
                 .nl = state.need_nl,
                 .ctx = state.ctx
         };
@@ -465,14 +338,14 @@ nextchar(Ty *ty)
                 state.blank_line = true;
                 break;
 
-        default:
-                state.blank_line = false;
         case '\t':
         case ' ':
                 break;
+
+        default:
+                state.blank_line = false;
         }
 
-        SRC += 1;
         state.loc.byte += 1;
 
         return c;
@@ -552,23 +425,29 @@ static Token
 lexplainword(Ty *ty, isize n)
 {
         bool kw_ok = (state.ctx != LEX_MEMBER);
-        char *w    = amA(n + 1);
+        char kw[32];
+        char *w;
 
-        memcpy(w, SRC, n);
-        w[n] = '\0';
+        if (kw_ok && n < (isize)sizeof kw) {
+                memcpy(kw, SRC, n);
+                kw[n] = '\0';
 
-        SRC              += n;
+                int keyword = keyword_get_number(kw);
+                if (keyword != -1) {
+                        state.loc.byte   += n;
+                        state.blank_line  = false;
+                        state.need_nl    |= (
+                                (keyword == KEYWORD_OPERATOR)
+                             || (keyword == KEYWORD_NAMESPACE)
+                        );
+                        return mkkw(ty, keyword);
+                }
+        }
+
+        w = ident(ty, SRC, n);
+
         state.loc.byte   += n;
         state.blank_line  = false;
-
-        int keyword;
-        if (kw_ok && (keyword = keyword_get_number(w)) != -1) {
-                state.need_nl |= (
-                        (keyword == KEYWORD_OPERATOR)
-                     || (keyword == KEYWORD_NAMESPACE)
-                );
-                return mkkw(ty, keyword);
-        }
 
         return mkid(ty, w, NULL, false);
 }
@@ -605,14 +484,14 @@ lexword(Ty *ty)
 
         for (;;) {
                 if (C(0) == '$') {
-                        avP(word, nextchar(ty));
+                        xvP(word, nextchar(ty));
 
                         while (C(0) == '_') {
-                                avP(word, nextchar(ty));
+                                xvP(word, nextchar(ty));
                         }
 
                         while (xisdigit(C(0))) {
-                                avP(word, nextchar(ty));
+                                xvP(word, nextchar(ty));
                         }
 
                         continue;
@@ -628,7 +507,7 @@ lexword(Ty *ty)
                                         error(ty, "unterminated raw identifier");
                                 }
 
-                                avP(word, nextchar(ty));
+                                xvP(word, nextchar(ty));
                         }
 
                         nextchar(ty);
@@ -636,10 +515,10 @@ lexword(Ty *ty)
 
                 for (;;) {
                         if (idchar(C(0))) {
-                                avP(word, nextchar(ty));
+                                xvP(word, nextchar(ty));
                         } else if (C(0) == '-' && idchar(C(1))) {
                                 nextchar(ty);
-                                avP(word, xtoupper(nextchar(ty)));
+                                xvP(word, xtoupper(nextchar(ty)));
                         } else {
                                 break;
                         }
@@ -650,11 +529,11 @@ lexword(Ty *ty)
                         nextchar(ty);
 
                         if (module.count != 0) {
-                                avP(module, '/');
+                                xvP(module, '/');
                         }
 
                         if (vN(word) > 0) {
-                                avPn(module, word.items, word.count);
+                                xvPn(module, word.items, word.count);
                         }
 
                         v0(word);
@@ -676,26 +555,28 @@ lexword(Ty *ty)
          * Identifiers are allowed to end in '?' or '!'. e.g., [1, 2, 3].map!(a -> a + 1)
          */
         if (C(0) == '!' || C(0) == '?') {
-                avP(word, nextchar(ty));
+                xvP(word, nextchar(ty));
         }
 
         if (has_module) {
-                avP(module, '\0');
+                xvP(module, '\0');
         }
 
-        avP(word, '\0');
-
-        char *w = vv(word);
-        char *m = vv(module);
+        xvP(word, '\0');
 
         int keyword;
-        if (!raw && kw_ok && (keyword = keyword_get_number(w)) != -1) {
+        if (!raw && kw_ok && (keyword = keyword_get_number(vv(word))) != -1) {
                 state.need_nl |= (
                         (keyword == KEYWORD_OPERATOR)
                      || (keyword == KEYWORD_NAMESPACE)
                 );
+                xvF(word);
+                xvF(module);
                 return mkkw(ty, keyword);
         }
+
+        char *w = idkeep(ty, &word);
+        char *m = idkeep(ty, &module);
 
         return mkid(ty, w, m, raw);
 }
@@ -707,7 +588,7 @@ lexname(Ty *ty)
 
         bool raw = false;
         byte_vector name = {0};
-        avP(name, nextchar(ty));
+        xvP(name, nextchar(ty));
 
         if (v_L(name) == '`') {
                 vvX(name);
@@ -719,8 +600,8 @@ lexname(Ty *ty)
         for (u8 c; strchr(STOP, (c = C(0))) == NULL; nextchar(ty)) {
                 if (c == ':') {
                         if (C(1) == ':') {
-                                avP(name, c);
-                                avP(name, nextchar(ty));
+                                xvP(name, c);
+                                xvP(name, nextchar(ty));
                                 continue;
                         } else if (!contains(OperatorCharset, C(1))) {
                                 break;
@@ -740,13 +621,13 @@ lexname(Ty *ty)
                 ) {
                         v_L(name) = c + ('A' - 'a');
                 } else if (c != '`') {
-                        avP(name, c);
+                        xvP(name, c);
                 }
         }
 
-        avP(name, '\0');
+        xvP(name, '\0');
 
-        return mkid(ty, (char *)vv(name), NULL, raw);
+        return mkid(ty, keep(ty, &name, 0), NULL, raw);
 }
 
 static bool
@@ -794,22 +675,22 @@ lexdocstring(Ty *ty)
 
         while (!end_of_docstring(ty, '\'', ndelim) && C(0) != '\0') {
                 if (eat_line_ending(ty)) {
-                        avP(line, '\0');
-                        avP(lines, vv(line));
+                        xvP(line, '\0');
+                        xvP(lines, vv(line));
                         v00(line);
                 } else {
-                        avP(line, nextchar(ty));
+                        xvP(line, nextchar(ty));
                 }
         }
 
         if (!end_of_docstring(ty, '\'', ndelim)) {
-                error(ty, "unterminated docstring starting on line %d", LocLine(Mark(Start)) + 1);
+                error(ty, "unterminated docstring starting on line %d", LocLine(Start) + 1);
         }
 
         // The only characters on this line before the docstring terminator should be whitespace
         for (usize i = 0; i < vN(line); ++i) {
                 if (!xisspace(v__(line, i))) {
-                        error(ty, "illegal docstring terminator on line %d", LocLine(Mark(state.loc)) + 1);
+                        error(ty, "illegal docstring terminator on line %d", LocLine(state.loc) + 1);
                 }
         }
 
@@ -826,16 +707,25 @@ lexdocstring(Ty *ty)
                         off += 1;
                 }
                 while (v__(lines, i)[off] != '\0') {
-                        avP(s, v__(lines, i)[off++]);
+                        xvP(s, v__(lines, i)[off++]);
                 }
                 if (i + 1 != vN(lines)) {
-                        avP(s, '\n');
+                        xvP(s, '\n');
                 }
         }
 
-        avP(s, '\0');
+        xvP(s, '\0');
 
-        return mkstring(ty, vv(s), vN(s) - 1);
+        for (usize i = 0; i < vN(lines); ++i) {
+                ty_free(v__(lines, i));
+        }
+
+        xvF(lines);
+        xvF(line);
+
+        usize n = vN(s) - 1;
+
+        return mkstring(ty, keep(ty, &s, 0), n);
 }
 
 inline static bool
@@ -849,7 +739,7 @@ lex_code_escape(Ty *ty, byte_vector *str)
         nextchar(ty);
 
         if (c == '0') {
-                avP(*str, '\0');
+                xvP(*str, '\0');
                 return;
         }
 
@@ -858,7 +748,7 @@ lex_code_escape(Ty *ty, byte_vector *str)
                 if (!readhex(ty, 2, &b)) {
                         error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
                 }
-                avP(*str, b);
+                xvP(*str, b);
                 return;
         }
 
@@ -875,7 +765,7 @@ lex_code_escape(Ty *ty, byte_vector *str)
 
         unsigned char bytes[4];
         int n = utf8proc_encode_char(cp, bytes);
-        avPn(*str, (char *)bytes, max(n, 0));
+        xvPn(*str, (char *)bytes, max(n, 0));
 }
 
 static void
@@ -910,7 +800,7 @@ lexrawstr(Ty *ty)
                 switch (C(0)) {
                 case '\0':
                 Unterminated:
-                        error(ty, "unterminated string literal starting on line %d", LocLine(Mark(Start)) + 1);
+                        error(ty, "unterminated string literal starting on line %d", LocLine(Start) + 1);
                 case '\\':
                         nextchar(ty);
                         switch (C(0)) {
@@ -918,31 +808,31 @@ lexrawstr(Ty *ty)
                                 goto Unterminated;
                         case 'a':
                                 nextchar(ty);
-                                avP(str, '\a');
+                                xvP(str, '\a');
                                 continue;
                         case 'b':
                                 nextchar(ty);
-                                avP(str, '\b');
+                                xvP(str, '\b');
                                 continue;
                         case 'f':
                                 nextchar(ty);
-                                avP(str, '\f');
+                                xvP(str, '\f');
                                 continue;
                         case 'v':
                                 nextchar(ty);
-                                avP(str, '\v');
+                                xvP(str, '\v');
                                 continue;
                         case 'n':
                                 nextchar(ty);
-                                avP(str, '\n');
+                                xvP(str, '\n');
                                 continue;
                         case 'r':
                                 nextchar(ty);
-                                avP(str, '\r');
+                                xvP(str, '\r');
                                 continue;
                         case 't':
                                 nextchar(ty);
-                                avP(str, '\t');
+                                xvP(str, '\t');
                                 continue;
                         case '0':
                         case 'x':
@@ -955,16 +845,17 @@ lexrawstr(Ty *ty)
                         }
                         //------- FALLTHROUGH -------
                 default:
-                           avP(str, nextchar(ty));
+                           xvP(str, nextchar(ty));
                 }
         }
 
         // '
         nextchar(ty);
 
-        avP(str, '\0');
+        xvP(str, '\0');
 
-        return mkstring(ty, vv(str), vN(str) - 1);
+        usize n = vN(str) - 1;
+        return mkstring(ty, keep(ty, &str, 0), n);
 }
 
 inline static bool
@@ -1008,7 +899,7 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                         goto Done;
                 }
 
-                if (doc && (first || LocCol(Mark(state.loc)) == 0)) {
+                if (doc && (first || LocCol(state.loc) == 0)) {
                         usize n = 0;
                         while (
                                 (n < indent)
@@ -1028,7 +919,7 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                 }
 
                 if (doc && eat_line_ending(ty)) {
-                        avP(str, '\n');
+                        xvP(str, '\n');
                         continue;
                 }
 
@@ -1038,7 +929,7 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
 
                 case '"':
                         if (doc && !end_of_docstring(ty, '"', state.quotes)) {
-                                avP(str, nextchar(ty));
+                                xvP(str, nextchar(ty));
                                 continue;
                         }
                         goto Done;
@@ -1059,33 +950,33 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
 
                         case 'a':
                                 nextchar(ty);
-                                avP(str, '\a');
+                                xvP(str, '\a');
                                 continue;
                         case 'b':
                                 nextchar(ty);
-                                avP(str, '\b');
+                                xvP(str, '\b');
                                 continue;
                         case 'f':
                                 nextchar(ty);
-                                avP(str, '\f');
+                                xvP(str, '\f');
                                 continue;
                         case 'v':
                                 nextchar(ty);
-                                avP(str, '\v');
+                                xvP(str, '\v');
                                 continue;
                         case 'n':
                                 nextchar(ty);
-                                avP(str, '\n');
+                                xvP(str, '\n');
                                 continue;
 
                         case 'r':
                                 nextchar(ty);
-                                avP(str, '\r');
+                                xvP(str, '\r');
                                 continue;
 
                         case 't':
                                 nextchar(ty);
-                                avP(str, '\t');
+                                xvP(str, '\t');
                                 continue;
 
                         case '0':
@@ -1117,19 +1008,20 @@ lex_ss_string(Ty *ty, usize indent, bool first, char const *limit)
                         }
                 }
 
-                avP(str, nextchar(ty));
+                xvP(str, nextchar(ty));
         }
 
 Done:
-        avP(str, '\0');
-        return mkstring(ty, vv(str), vN(str) - 1);
+        xvP(str, '\0');
+        usize n = vN(str) - 1;
+        return mkstring(ty, keep(ty, &str, 0), n);
 
 Unterminated:
         error(
                 ty,
                 "unterminated %s starting on line %d",
                 doc ? "docstring" : "string literal",
-                LocLine(Mark(Start)) + 1
+                LocLine(Start) + 1
         );
 }
 
@@ -1210,7 +1102,7 @@ lex_tyx(Ty *ty)
                                         error(ty, "invalid codepoint in tyx literal: %04lx", rune);
                                 }
                                 len = utf8proc_encode_char(rune, buf);
-                                avPn(text, (char *)buf, len);
+                                xvPn(text, (char *)buf, len);
                         } else {
                                 end = NULL;
                                 for (int i = 0; i < countof(entities); ++i) {
@@ -1231,7 +1123,7 @@ BadEntity:
                                                 SRC + 1
                                         );
                                 }
-                                avP(text, *end);
+                                xvP(text, *end);
                         }
                         while (SRC <= semi) {
                                 nextchar(ty);
@@ -1241,17 +1133,18 @@ BadEntity:
                 case '<':
                 case '{':
                 case '}':
-                        avP(text, '\0');
-                        return mkstring(ty, vv(text), vN(text) - 1);
+                        xvP(text, '\0');
+                        usize n = vN(text) - 1;
+                        return mkstring(ty, keep(ty, &text, 0), n);
 
                 default:
                         if (xisspace(C(0))) {
                                 while (xisspace(C(0))) {
                                         nextchar(ty);
                                 }
-                                avP(text, ' ');
+                                xvP(text, ' ');
                         } else {
-                                avP(text, nextchar(ty));
+                                xvP(text, nextchar(ty));
                         }
                 }
         }
@@ -1260,7 +1153,7 @@ Unterminated:
         error(
                 ty,
                 "unterminated tyx literal starting on line %d",
-                LocLine(Mark(Start)) + 1
+                LocLine(Start) + 1
         );
 }
 
@@ -1279,7 +1172,7 @@ lexregex(Ty *ty, bool strict, bool speculative)
                         nextchar(ty);
                         return mktoken(ty, TOKEN_DYN_REGEX);
                 } else {
-                        avP(pat, *s);
+                        xvP(pat, *s);
                 }
                 break;
 
@@ -1288,11 +1181,11 @@ lexregex(Ty *ty, bool strict, bool speculative)
                         goto Unterminated;
                 }
                 if (*++s != '/') {
-                        avP(pat, '\\');
+                        xvP(pat, '\\');
                 }
 
         default:
-                avP(pat, *s);
+                xvP(pat, *s);
         }
 
         while (SRC != s) {
@@ -1325,17 +1218,19 @@ lexregex(Ty *ty, bool strict, bool speculative)
                 nextchar(ty);
         }
 
-        avP(pat, '\0');
+        xvP(pat, '\0');
 
-        return mkregex(ty, vv(pat), flags, detailed, speculative);
+        return mkregex(ty, keep(ty, &pat, 0), flags, detailed, speculative);
 
 Unterminated:
+        xvF(pat);
         if (!strict) {
                 return mktoken(ty, TOKEN_UNTERMINATED_REGEX);
         }
         error(ty, "unterminated regex literal");
 
 BadFlags:
+        xvF(pat);
         if (!strict) {
                 return mktoken(ty, TOKEN_INVALID_REGEX_FLAGS);
         }
@@ -1351,16 +1246,17 @@ lex_re(Ty *ty)
                 while (xisalpha(C(0))) {
                         switch (C(0)) {
                         case 'i': case 'u': case 'm': case 'x': case 'v':
-                                avP(flags, C(0));
+                                xvP(flags, C(0));
                                 nextchar(ty);
                                 break;
                         default:
                                 error(ty, "invalid regex flags");
                         }
                 }
-                avP(flags, '\0');
+                xvP(flags, '\0');
                 Token t = mktoken(ty, TOKEN_DYN_REGEX);
-                t.string = BYTES(vv(flags), vN(flags) - 1);
+                usize n = vN(flags) - 1;
+                t.string = BYTES(keep(ty, &flags, 0), n);
                 return t;
         }
 
@@ -1379,7 +1275,7 @@ lex_re(Ty *ty)
                 if (s + 1 < END && s[1] == '{') {
                         goto Stop;
                 } else {
-                        avP(pat, *s);
+                        xvP(pat, *s);
                 }
                 break;
 
@@ -1388,11 +1284,11 @@ lex_re(Ty *ty)
                         goto Unterminated;
                 }
                 if (*++s != '/') {
-                        avP(pat, '\\');
+                        xvP(pat, '\\');
                 }
 
         default:
-                avP(pat, *s);
+                xvP(pat, *s);
         }
 
 Stop:
@@ -1400,9 +1296,10 @@ Stop:
                 nextchar(ty);
         }
 
-        avP(pat, '\0');
+        xvP(pat, '\0');
 
-        return mkstring(ty, vv(pat), vN(pat) - 1);
+        usize n = vN(pat) - 1;
+        return mkstring(ty, keep(ty, &pat, 0), n);
 
 Unterminated:
         error(ty, "unterminated regex literal");
@@ -1657,7 +1554,7 @@ lexlinecomment(Ty *ty)
                 }
 
                 while (C(0) != '\n' && C(0) != '\0') {
-                        avP(comment, nextchar(ty));
+                        xvP(comment, nextchar(ty));
                 }
 
                 while (vN(comment) > 0 && v_L(comment) == ' ') {
@@ -1673,21 +1570,21 @@ lexlinecomment(Ty *ty)
                         nextchar(ty);
                 }
 
-                avP(comment, '\n');
+                xvP(comment, '\n');
                 multi = true;
         }
 
-        avP(comment, '\0');
+        xvP(comment, '\0');
 
-        char *text = vv(comment);
+        usize skip = 0;
         if (!multi) {
-                while (xisspace(*text)) {
-                        text += 1;
+                while (xisspace(v__(comment, skip))) {
+                        skip += 1;
                 }
         }
 
         Token t = mktoken(ty, TOKEN_COMMENT);
-        t.comment = text;
+        t.comment = keep(ty, &comment, skip);
 
         Start = state.loc;
 
@@ -1720,7 +1617,7 @@ lexcomment(Ty *ty)
                         level -= 1;
                 }
                 if (level != 0) {
-                        avP(comment, C(0));
+                        xvP(comment, C(0));
                 }
                 nextchar(ty);
         }
@@ -1729,13 +1626,13 @@ lexcomment(Ty *ty)
                 error(ty, "unterminated comment");
         }
 
-        avP(comment, '\0');
+        xvP(comment, '\0');
 
         // /
         nextchar(ty);
 
         Token t = mktoken(ty, TOKEN_COMMENT);
-        t.comment = vv(comment);
+        t.comment = keep(ty, &comment, 0);
 
         Start = state.loc;
 
@@ -1775,9 +1672,14 @@ saferegex(Ty *ty, bool defer_error)
         Token t = lexregex(ty, false, !defer_error);
         if (
                 (t.type != TOKEN_REGEX)
-             || (!LocSameLine(t.start, t.end) && (t.regex->pattern[0] == ' '))
+             || ((!LocSameLine(t.start, t.end)) && (t.regex->pattern[0] == ' '))
         ) {
                 state = save;
+                if (t.type == TOKEN_REGEX) {
+                        pcre2_code_free(t.regex->pcre2);
+                        Release(ty, (char *)t.regex->pattern, strlen(t.regex->pattern) + 1);
+                        Release(ty, (void *)t.regex, sizeof *t.regex);
+                }
                 if (defer_error) {
                         nextchar(ty);
                         return mktoken(ty, t.type);
@@ -1791,7 +1693,7 @@ saferegex(Ty *ty, bool defer_error)
 static Token
 dotoken(Ty *ty, int ctx)
 {
-        LexCursor start;
+        Location start;
 
 Begin:
         start = Start = state.loc;
@@ -1817,8 +1719,8 @@ Begin:
         if (SRC >= END) {
                 return (Token) {
                         .type = TOKEN_END,
-                        .start = Mark(start),
-                        .end = Mark(state.loc),
+                        .start = start,
+                        .end = state.loc,
                         .ctx = state.ctx
                 };
         }
@@ -1968,8 +1870,8 @@ lex_token(Ty *ty, LexContext ctx)
         if (ty_setjmp(jb) != 0) {
                 return (Token) {
                         .type  = TOKEN_ERROR,
-                        .start = Mark(Start),
-                        .end   = Mark(state.loc),
+                        .start = Start,
+                        .end   = state.loc,
                         .nl    = state.need_nl,
                         .ctx   = state.ctx,
                         .error = LexErrorMessage
@@ -1982,47 +1884,20 @@ lex_token(Ty *ty, LexContext ctx)
 Token
 lex_docstring_part(Ty *ty, Location start, char const *end, usize indent, bool first)
 {
-        LexState  saved      = state;
-        LexCursor savedstart = Start;
-        Token     t;
+        LexState saved = state;
+        Location savedstart = Start;
+        Token t;
 
-        state.src = start.src;
-        state.loc = Start = Cursor(start);
+        state.loc = Start = start;
         state.ctx = LEX_DOC;
 
         if (ty_setjmp(jb) == 0) {
                 t = lex_ss_string(ty, indent, first, end);
         } else {
                 t = mktoken(ty, TOKEN_ERROR);
-                t.end = Mark(state.loc);
+                t.end = state.loc;
                 t.error = LexErrorMessage;
         }
-
-        state = saved;
-        Start = savedstart;
-
-        return t;
-}
-
-Token
-lex_token_at(Ty *ty, u32 src, char const *base, char const *end, CToken const *c)
-{
-        LexState  saved      = state;
-        LexCursor savedstart = Start;
-        Token     t;
-
-        state = (LexState) {
-                .loc     = { .s = base + c->start, .byte = c->start },
-                .src     = src,
-                .ctx     = c->ctx,
-                .quotes  = c->quotes,
-                .start   = base,
-                .end     = end,
-                .in_pp   = (c->bits & CTOKEN_PP) != 0,
-                .need_nl = (c->bits & CTOKEN_NL) != 0
-        };
-
-        t = lex_token(ty, c->ctx);
 
         state = saved;
         Start = savedstart;
@@ -2035,11 +1910,7 @@ lex_init(Ty *ty, char const *file, char const *src)
 {
         lxst = &state;
         state = (LexState) {
-                .loc = (LexCursor) {
-                        .s = src,
-                        .byte = 0
-                },
-                .src = SourceRegister(src, false),
+                .loc = MkLoc(SourceRegister(src, strlen(src)), 0),
                 .start = src,
                 .end = src + strlen(src),
                 .need_nl = false,
@@ -2048,7 +1919,6 @@ lex_init(Ty *ty, char const *file, char const *src)
         };
 
         if (C(0) == 0xEF && C(1) == 0xBB && C(2) == 0xBF) {
-                SRC += 3;
                 state.loc.byte += 3;
         }
 
@@ -2085,8 +1955,7 @@ lex_restore(Ty *ty, LexState *s)
 void
 lex_rewind(Ty *ty, Location const *where)
 {
-        state.src = where->src;
-        state.loc = Cursor(*where);
+        state.loc = *where;
 }
 
 void
@@ -2107,17 +1976,10 @@ lex_state(Ty *ty)
         return &state;
 }
 
-void
-lex_seek(LexState *st, Location loc)
-{
-        st->src = loc.src;
-        st->loc = Cursor(loc);
-}
-
 Location
 lex_pos(Ty *ty)
 {
-        return Mark(state.loc);
+        return state.loc;
 }
 
 int

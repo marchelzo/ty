@@ -16,6 +16,217 @@ static char token_show_buffer[512];
 #include "keywords.h"
 #include "optokens.h"
 
+static i32 const TypeExtra[] = { '/>', '</', '$$', '$~>' };
+
+enum {
+        TYPE_BYTES = 256,
+        TYPE_ENUM  = TOKEN_TYPE_MAX - TOKEN_KEYWORD,
+        TYPE_CODES = TYPE_BYTES + TYPE_ENUM + countof(TypeExtra)
+};
+
+_Static_assert(TYPE_CODES <= (1 << 9), "token type codes must fit DenseToken.type");
+_Static_assert(TT_CALL     <  (1 << 4), "token tags must fit DenseToken.tag");
+_Static_assert(LEX_HIDDEN  <  (1 << 4), "lexer contexts must fit DenseToken.ctx");
+
+inline static int
+TypeEncode(i32 type)
+{
+        if (type >= 0 && type < TYPE_BYTES) {
+                return type;
+        }
+
+        if (type >= TOKEN_KEYWORD && type < TOKEN_TYPE_MAX) {
+                return TYPE_BYTES + (type - TOKEN_KEYWORD);
+        }
+
+        for (int i = 0; i < countof(TypeExtra); ++i) {
+                if (TypeExtra[i] == type) {
+                        return TYPE_BYTES + TYPE_ENUM + i;
+                }
+        }
+
+        return -1;
+}
+
+inline static i32
+TypeDecode(u32 code)
+{
+        return (code < TYPE_BYTES)             ? (i32)code
+             : (code < TYPE_BYTES + TYPE_ENUM) ? TOKEN_KEYWORD + (i32)(code - TYPE_BYTES)
+             :                                   TypeExtra[code - TYPE_BYTES - TYPE_ENUM];
+}
+
+inline static bool
+IsWide(Token const *t, u32 src)
+{
+        return (TypeEncode(t->type) < 0)
+            || (t->start.src != src)
+            || (t->end.src   != src)
+            || (t->end.byte  <  t->start.byte)
+            || (t->end.byte  -  t->start.byte >= DT_WIDE)
+            || (t->start.byte >= (1u << DT_BYTE_BITS));
+}
+
+void
+TokenStorePack(Ty *ty, TokenStore *store, TokenVector const *ts)
+{
+        u32 src = (vN(*ts) > 0) ? v_(*ts, 0)->start.src : 0;
+
+        v00(store->dense);
+        v00(store->wide);
+        store->src = src;
+
+        avR(store->dense, vN(*ts));
+
+        for (int i = 0; i < vN(*ts); ++i) {
+                Token const *t    = v_(*ts, i);
+                bool         wide = IsWide(t, src);
+                DenseToken   d    = {
+                        .type = wide ? 0 : TypeEncode(t->type),
+                        .tag  = t->tag,
+                        .ctx  = t->ctx,
+                        .pp   = (t->pp != 0),
+                        .nl   = (t->nl != 0),
+                        .raw  = t->raw,
+                        .len  = wide ? DT_WIDE : (t->end.byte - t->start.byte),
+                        .byte = min(t->start.byte, (1u << DT_BYTE_BITS) - 1)
+                };
+
+                if (t->w[1] == 0 && t->w[2] == 0) {
+                        d.shape = DT_INLINE0;
+                        d.word  = t->w[0];
+                } else if (t->w[0] == 0 && t->w[2] == 0) {
+                        d.shape = DT_INLINE1;
+                        d.word  = t->w[1];
+                } else {
+                        d.shape = DT_BOXED;
+                        d.word  = (u64)(uptr)memcpy(amA(sizeof t->w), t->w, sizeof t->w);
+                }
+
+                if (wide) {
+                        avP(store->wide, ((WideToken) {
+                                .index = i,
+                                .type  = t->type,
+                                .start = t->start,
+                                .end   = t->end
+                        }));
+                }
+
+                avP(store->dense, d);
+        }
+}
+
+static WideToken const *
+WideOf(TokenStore const *store, i32 i)
+{
+        i32 lo = 0;
+        i32 hi = vN(store->wide);
+
+        while (lo < hi) {
+                i32 mid = lo + (hi - lo) / 2;
+                if (v_(store->wide, mid)->index < (u32)i) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        return v_(store->wide, lo);
+}
+
+Token
+TokenGet(TokenStore const *store, i32 i)
+{
+        DenseToken const *d = v_(store->dense, i);
+        Token             t = {
+                .type  = TypeDecode(d->type),
+                .tag   = d->tag,
+                .ctx   = d->ctx,
+                .pp    = d->pp,
+                .nl    = d->nl,
+                .raw   = d->raw,
+                .start = MkLoc(store->src, d->byte),
+                .end   = MkLoc(store->src, d->byte + d->len)
+        };
+
+        switch (d->shape) {
+        case DT_INLINE0: t.w[0] = d->word;                                       break;
+        case DT_INLINE1: t.w[1] = d->word;                                       break;
+        case DT_BOXED:   memcpy(t.w, (void const *)(uptr)d->word, sizeof t.w);  break;
+        }
+
+        if (d->len == DT_WIDE) {
+                WideToken const *w = WideOf(store, i);
+                t.type  = w->type;
+                t.start = w->start;
+                t.end   = w->end;
+        }
+
+        return t;
+}
+
+i32
+TokenFind(TokenStore const *store, Location loc)
+{
+        i32 lo = 0;
+        i32 hi = vN(store->dense);
+
+        if (loc.src == 0 || loc.src != store->src) {
+                return -1;
+        }
+
+        while (lo < hi) {
+                i32 mid = lo + (hi - lo) / 2;
+                if (v_(store->dense, mid)->byte < loc.byte) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        return (lo < vN(store->dense) && v_(store->dense, lo)->byte == loc.byte) ? lo : -1;
+}
+
+void
+TokenUnpackRange(TokenStore const *store, u32 lo, u32 hi, TokenVector *out)
+{
+        i32 a = 0;
+        i32 b = vN(store->dense);
+
+        v00(*out);
+
+        while (a < b) {
+                i32 mid = a + (b - a) / 2;
+                if (v_(store->dense, mid)->byte < lo) {
+                        a = mid + 1;
+                } else {
+                        b = mid;
+                }
+        }
+
+        while (a > 0 && TokenGet(store, a - 1).end.byte > lo) {
+                a -= 1;
+        }
+
+        for (; a < vN(store->dense); ++a) {
+                Token t = TokenGet(store, a);
+                if (t.start.byte >= hi) {
+                        break;
+                }
+                xvP(*out, t);
+        }
+}
+
+void
+TokenUnpack(TokenStore const *store, TokenVector *out)
+{
+        v00(*out);
+
+        for (int i = 0; i < vN(store->dense); ++i) {
+                xvP(*out, TokenGet(store, i));
+        }
+}
+
 int
 keyword_get_number(char const *s)
 {

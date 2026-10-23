@@ -223,7 +223,7 @@ class_add_s_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
 {
         (void)type;
         (void)dflt;
-        itable_add(ty, &c->s_fields, id, REF(NewZero()));
+        itable_add(ty, &c->s_fields, id, REF(NewZero(ty)));
 }
 
 inline static usize
@@ -237,10 +237,11 @@ NewPristine(Class *c, void *mem)
 {
         TyObject *obj = mem;
 
-        obj->init    = false;
-        obj->class   = c;
-        obj->dynamic = NULL;
-        obj->nslot   = vN(c->fields.ids);
+        obj->init      = false;
+        obj->finalized = false;
+        obj->class     = c;
+        obj->dynamic   = NULL;
+        obj->nslot     = vN(c->fields.ids);
 
         memcpy(obj->slots, LOTS_OF_NILS, obj->nslot * sizeof (Value));
 
@@ -376,6 +377,32 @@ class_ctor(Ty *ty, int class)
         }
 
         return &c->init;
+}
+
+inline static void
+mark_refs(Ty *ty, struct itable const *t)
+{
+        for (u32 i = 0; i < vN(t->values); ++i) {
+                Value const *v = v_(t->values, i);
+                if (v->type == VALUE_REF) {
+                        value_mark(ty, v);
+                }
+        }
+}
+
+void
+class_mark_refs(Ty *ty)
+{
+        for (int i = 0; i < vN(classes); ++i) {
+                Class const *c = v__(classes, i);
+                mark_refs(ty, &c->s_fields);
+                mark_refs(ty, &c->s_methods);
+                mark_refs(ty, &c->s_getters);
+                mark_refs(ty, &c->s_setters);
+                mark_refs(ty, &c->methods);
+                mark_refs(ty, &c->getters);
+                mark_refs(ty, &c->setters);
+        }
 }
 
 void

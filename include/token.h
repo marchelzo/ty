@@ -100,11 +100,12 @@ enum {
 
 typedef struct token {
 
-        i32 type;
-        i8 pp;
-        i8 nl;
-        i8 ctx;
-        i8 tag;
+        i32  type;
+        i8   pp;
+        i8   nl;
+        i8   ctx;
+        i8   tag;
+        bool raw;
 
         Location start;
         Location end;
@@ -170,30 +171,56 @@ typedef struct token {
                                 char *comment;
                                 char const *error;
                         };
-                        bool raw;
                 };
 
                 Expr *e;
                 Regex const *regex;
                 double real;
                 imax integer;
+                u64 w[3];
         };
 } Token;
 
-typedef struct ctoken {
-        i32 type;
-        u8  ctx;
-        i8  tag;
-        u8  bits;
-        u8  quotes;
-        u32 start;
-        u32 end;
-} CToken;
+enum {
+        DT_INLINE0,
+        DT_INLINE1,
+        DT_BOXED
+};
 
 enum {
-        CTOKEN_PP = 1 << 0,
-        CTOKEN_NL = 1 << 1
+        DT_LEN_BITS  = 13,
+        DT_BYTE_BITS = 29,
+        DT_WIDE      = (1 << DT_LEN_BITS) - 1
 };
+
+typedef struct dense_token {
+        u64 type  : 9;
+        u64 tag   : 4;
+        u64 ctx   : 4;
+        u64 pp    : 1;
+        u64 nl    : 1;
+        u64 raw   : 1;
+        u64 shape : 2;
+        u64 len   : DT_LEN_BITS;
+        u64 byte  : DT_BYTE_BITS;
+        u64 word;
+} DenseToken;
+
+typedef struct wide_token {
+        u32      index;
+        i32      type;
+        Location start;
+        Location end;
+} WideToken;
+
+typedef struct token_store {
+        vec(DenseToken) dense;
+        vec(WideToken)  wide;
+        u32             src;
+} TokenStore;
+
+_Static_assert(sizeof (DenseToken) == 16, "DenseToken must stay 16 bytes");
+_Static_assert(sizeof ((Token *)0)->w == sizeof ((Token *)0)->module + sizeof ((Token *)0)->string, "Token payload words");
 
 char const *
 token_show(Ty *ty, Token const *t);
@@ -212,28 +239,6 @@ keyword_get_number(char const *s);
 
 int
 optoken_get_type(char const *s, usize n);
-
-inline static CToken *
-CTokenAt(CTokenVector const *ts, Location loc)
-{
-        isize lo = 0;
-        isize hi = vN(*ts) - 1;
-
-        while (lo <= hi) {
-                isize   mid = lo + (hi - lo) / 2;
-                CToken *t   = v_(*ts, mid);
-
-                if (t->start < loc.byte) {
-                        lo = mid + 1;
-                } else if (t->start > loc.byte) {
-                        hi = mid - 1;
-                } else {
-                        return t;
-                }
-        }
-
-        return NULL;
-}
 
 inline static Token *
 TokenAt(TokenVector const *ts, Location loc)
@@ -255,6 +260,33 @@ TokenAt(TokenVector const *ts, Location loc)
         }
 
         return NULL;
+}
+
+void
+TokenStorePack(Ty *ty, TokenStore *store, TokenVector const *ts);
+
+Token
+TokenGet(TokenStore const *store, i32 i);
+
+i32
+TokenFind(TokenStore const *store, Location loc);
+
+void
+TokenUnpack(TokenStore const *store, TokenVector *out);
+
+void
+TokenUnpackRange(TokenStore const *store, u32 lo, u32 hi, TokenVector *out);
+
+inline static i32
+TokenCount(TokenStore const *store)
+{
+        return vN(store->dense);
+}
+
+inline static void
+TokenSetTag(TokenStore *store, i32 i, i8 tag)
+{
+        v_(store->dense, i)->tag = tag;
 }
 
 #endif

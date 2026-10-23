@@ -8,6 +8,9 @@ endif
 ifdef OPTIMIZED
 	MODE := optimized
 endif
+ifdef SYSMALLOC
+	MODE := sysmalloc
+endif
 
 BUILD      := _build/$(MODE)
 TOOLS      := _build/tools.mk
@@ -134,7 +137,7 @@ _build/%/build.ninja: _build/%/.config CMakePresets.json | $(TOOLS)
 	@touch $@
 
 clean:
-	rm -rf _build/dev _build/debug _build/release _build/optimized $(PGO_BUILD) ty compile_commands.json $(LEGACY)
+	rm -rf _build/dev _build/debug _build/release _build/optimized _build/sysmalloc $(PGO_BUILD) ty compile_commands.json $(LEGACY)
 
 freebsd-plist:
 	{ printf 'bin/ty\n'; \

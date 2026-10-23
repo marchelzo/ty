@@ -2070,10 +2070,11 @@ dobj(JP *p, JNode *n, Value *out)
 
         if (n->obj.raw) {
                 o = mAo(sizeof (TyObject) + n->obj.nslot * sizeof (Value), GC_OBJECT);
-                o->init    = false;
-                o->class   = n->obj.c;
-                o->dynamic = NULL;
-                o->nslot   = n->obj.nslot;
+                o->init      = false;
+                o->finalized = false;
+                o->class     = n->obj.c;
+                o->dynamic   = NULL;
+                o->nslot     = n->obj.nslot;
         } else {
                 o = class_new_instance(ty, n->obj.class);
         }

@@ -320,12 +320,10 @@ typedef struct ParserState {
 static ParserState state;
 
 enum {
-        TOKEN_BUFFER_SIZE   = 50000,
-        TOKEN_BUFFER_MAPPED = 1 << 20
+        TOKEN_BUFFER_SIZE = 50000
 };
 
 static TokenVector TokenBuffer;
-static bool        TokenBufferMapped;
 
 struct table uops;
 struct table uopcs;
@@ -678,7 +676,7 @@ tokenxx_slow(Ty *ty, int i)
                         lex_save(ty, &CtxCheckpoint);
                 }
 
-                if (vN(TOKENS) > 0 && LocPtr(vvL(TOKENS)->start) == LocPtr(t.start)) {
+                if (vN(TOKENS) > 0 && LocS(vvL(TOKENS)->start) == LocS(t.start)) {
                         *vvL(TOKENS) = t;
                         return vvL(TOKENS);
                 }
@@ -954,16 +952,16 @@ ctx_insensitive(Token const *t, int ctx)
              || (t->type == TOKEN_END)
              || (t->type == TOKEN_ERROR)
              || (t->type == TOKEN_NEWLINE)
-             || (LocPtr(t->start) == NULL)
+             || (LocS(t->start) == NULL)
         ) {
                 return false;
         }
 
-        unsigned char c = *LocPtr(t->start);
+        unsigned char c = *LocS(t->start);
 
         return !xisdigit(c)
             && !contains("/-#&*!?$'%", c)
-            && !(c == '.' && xisdigit(LocPtr(t->start)[1]));
+            && !(c == '.' && xisdigit(LocS(t->start)[1]));
 }
 
 inline static bool
@@ -1040,7 +1038,7 @@ inline static void
                 vN(TOKENS) -= 1;
         }
 
-        while (vN(TOKENS) > 0 && LocPtr(vvL(TOKENS)->start) == LocPtr(seek)) {
+        while (vN(TOKENS) > 0 && LocS(vvL(TOKENS)->start) == LocS(seek)) {
                 PLOG("  Pop tokens[%zu]: %s", vN(TOKENS) - 1, token_showx(ty, vvL(TOKENS), ""));
                 vN(TOKENS) -= 1;
         }
@@ -1084,7 +1082,7 @@ logctx(Ty *ty)
                 );
         }
 
-        char const *ahead = LocPtr(lex_pos(ty));
+        char const *ahead = LocS(lex_pos(ty));
 
         PLOG(
                 "    next: %s%.*s%s~%s",
@@ -1198,7 +1196,7 @@ ErrorLocation(Ty *ty, Location start, Location end)
 static Location
 ClampToLine(Location start, Location end)
 {
-        if (LocPtr(end) == NULL || LocPtr(end) < LocPtr(start)) {
+        if (LocS(end) == NULL || LocS(end) < LocS(start)) {
                 return start;
         }
 
@@ -1208,7 +1206,7 @@ ClampToLine(Location start, Location end)
 
         Location stop = start;
 
-        while (LocPtr(stop)[0] != '\0' && LocPtr(stop)[0] != '\n') {
+        while (LocS(stop)[0] != '\0' && LocS(stop)[0] != '\n') {
                 stop.byte += 1;
         }
 
@@ -1218,7 +1216,7 @@ ClampToLine(Location start, Location end)
 static Location
 BackOverSpace(Location loc)
 {
-        while ((LocPtr(loc)[0] == '\0' || xisspace((u8)LocPtr(loc)[0])) && LocPtr(loc)[-1] != '\0') {
+        while ((LocS(loc)[0] == '\0' || xisspace((u8)LocS(loc)[0])) && LocS(loc)[-1] != '\0') {
                 loc.byte -= 1;
         }
 
@@ -1241,7 +1239,7 @@ SyntaxFailure(Ty *ty, int class, char const *msg, Location start, Location end)
                 &text,
                 class_name(ty, class),
                 msg,
-                (LocPtr(start) != NULL) ? &where : NULL,
+                (LocS(start) != NULL) ? &where : NULL,
                 NULL,
                 NULL,
                 3,
@@ -1249,7 +1247,7 @@ SyntaxFailure(Ty *ty, int class, char const *msg, Location start, Location end)
         );
 
         GC_STOP();
-        Value locs = ErrorLocation(ty, start, (LocPtr(end) == NULL) ? start : end);
+        Value locs = ErrorLocation(ty, start, (LocS(end) == NULL) ? start : end);
         Value err = TyNewCompileError(ty, class, msg, locs, vv(text), NIL, NIL);
         GC_RESUME();
 
@@ -1298,7 +1296,7 @@ ParseError(Ty *ty, char const *fmt, ...)
         Location start = EStart;
         Location end   = EEnd;
 
-        if (LocPtr(start) != NULL && tokenx(0)->type == TOKEN_END) {
+        if (LocS(start) != NULL && tokenx(0)->type == TOKEN_END) {
                 start = BackOverSpace(start);
                 end   = start;
         }
@@ -1329,14 +1327,14 @@ PushNS(Ty *ty, char *id, Token const *src, bool pub)
         ns->start  = src->start;
 
         if (
-                (LocPtr(src->start) != NULL)
-             && (LocPtr(src->end) != NULL)
-             && (LocPtr(src->end) > LocPtr(src->start))
-             && (strcspn(LocPtr(src->start), " \t\n(){}[]") >= (usize)(LocPtr(src->end) - LocPtr(src->start)))
+                (LocS(src->start) != NULL)
+             && (LocS(src->end) != NULL)
+             && (LocS(src->end) > LocS(src->start))
+             && (strcspn(LocS(src->start), " \t\n(){}[]") >= (usize)(LocS(src->end) - LocS(src->start)))
         ) {
-                usize n = LocPtr(src->end) - LocPtr(src->start);
+                usize n = LocS(src->end) - LocS(src->start);
                 char *sid = amA(n + 1);
-                memcpy(sid, LocPtr(src->start), n);
+                memcpy(sid, LocS(src->start), n);
                 sid[n] = '\0';
                 ns->src_id = sid;
         }
@@ -2129,8 +2127,8 @@ static void
 dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
 {
         Location close = tok()->start;
-        char const *begin = LocPtr(v__(*parts, 0).start);
-        char const *line = LocPtr(close);
+        char const *begin = LocS(v__(*parts, 0).start);
+        char const *line = LocS(close);
 
         if (T0 != '"') {
                 die("unterminated docstring starting on line %d", LocLine(v__(*parts, 0).start) + 1);
@@ -2140,13 +2138,13 @@ dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
                 line -= 1;
         }
 
-        for (char const *p = line; p < LocPtr(close); ++p) {
+        for (char const *p = line; p < LocS(close); ++p) {
                 if (!xisspace((u8)*p)) {
                         die("illegal docstring terminator on line %d", LocLine(close) + 1);
                 }
         }
 
-        usize indent = LocPtr(close) - line;
+        usize indent = LocS(close) - line;
         char const *end = line;
         if (end > begin && end[-1] == '\n') {
                 end -= 1;
@@ -2157,7 +2155,7 @@ dedent_string(Ty *ty, Expr *e, TokenVector const *parts)
 
         for (usize i = 0; i < vN(*parts); ++i) {
                 Token const *part = v_(*parts, i);
-                char const *stop = (i + 1 == vN(*parts)) ? end : LocPtr(part->end);
+                char const *stop = (i + 1 == vN(*parts)) ? end : LocS(part->end);
                 Token str = lex_docstring_part(ty, part->start, stop, indent, i == 0);
                 if (str.type == TOKEN_ERROR) {
                         LexError(ty, &str);
@@ -2225,7 +2223,7 @@ ss_inner(Ty *ty, int quotes)
                 }
 
                 Location end = tok()->end;
-                avP(FMXx(e)->widths, LocPtr(end) - LocPtr(start));
+                avP(FMXx(e)->widths, LocS(end) - LocS(start));
 
                 consume('}');
 
@@ -3021,7 +3019,7 @@ parse_expr_template(Ty *ty)
 static void
 parse_function_header(Ty *ty, Expr *e)
 {
-        char const *volatile proto_start = LocPtr(tok()->start);
+        char const *volatile proto_start = LocS(tok()->start);
         bool volatile recovered = false;
 
         SAVE_NE(true);
@@ -3103,7 +3101,7 @@ EndOfParams:
         }
 
         if (!recovered) {
-                e->fn->proto = clone_span_a(ty, proto_start, LocPtr(TEnd));
+                e->fn->proto = clone_span_a(ty, proto_start, LocS(TEnd));
         }
 
         if (try_consume(KEYWORD_WHERE)) {
@@ -3179,7 +3177,7 @@ parse_function(Ty *ty, Expr **name, bool *is_operator)
 
         e->fn->star = try_consume('*');
 
-        if (e->fn->name != NULL && LocPtr(tok()->start)[-1] == ' ') {
+        if (e->fn->name != NULL && LocS(tok()->start)[-1] == ' ') {
                 Expr *f = parse_expr(ty, 0);
                 if (
                         (f->type != EXPRESSION_FUNCTION)
@@ -5757,7 +5755,7 @@ infix_arrow_function(Ty *ty, Expr *left)
         e = mkfunc(ty);
         e->start = left->start;
 
-        e->fn->proto = clone_span_a(ty, LocPtr(left->start), LocPtr(left->end));
+        e->fn->proto = clone_span_a(ty, LocS(left->start), LocS(left->end));
 
         if (
                 (left->type != EXPRESSION_LIST)
@@ -6261,7 +6259,7 @@ get_infix_prec(Ty *ty)
         case '(':                  return 11;
 
         case '{':
-                return (LocPtr(tok()->start) == LocPtr(token(-1)->end)) ? 11 : -3;
+                return (LocS(tok()->start) == LocS(token(-1)->end)) ? 11 : -3;
 
         case '\\':
         case '@':
@@ -7530,7 +7528,7 @@ should_split(Ty *ty)
         case TOKEN_USER_OP:
                 return InField
                     && (T1 == '(')
-                    && (LocPtr(token(1)->start) == LocPtr(tok()->end));
+                    && (LocS(token(1)->start) == LocS(tok()->end));
         }
 
         return false;
@@ -7604,7 +7602,7 @@ parse_expr(Ty *ty, int prec)
                 e = ss;
         }
 
-        if (T0 == TOKEN_STRING && LocPtr(tok()->start) == LocPtr(TEnd)) {
+        if (T0 == TOKEN_STRING && LocS(tok()->start) == LocS(TEnd)) {
                 Expr *lit = mkxpr(LANG_LITERAL);
                 lit->start    = e->start;
                 lit->lit.lang = e;
@@ -7893,7 +7891,7 @@ parse_class_definition(Ty *ty)
                         try_consume(';');
                 } else if (
                         (T0 == ':')
-                     || (T0 == '=' && LocPtr(tok()->start)[-1] == ' ')
+                     || (T0 == '=' && LocS(tok()->start)[-1] == ' ')
                 ) {
                         Expr *field = mkid(name);
                         field->start = start;
@@ -8670,6 +8668,10 @@ ClaimTokens(Ty *ty, ParserState const *outer)
 {
         usize base = outer->TokenBase;
 
+        if (vC(TokenBuffer) == 0) {
+                xvR(TokenBuffer, TOKEN_BUFFER_SIZE);
+        }
+
         if (
                 (vv(outer->tokens) != NULL)
              && (vv(outer->tokens) == v_(TokenBuffer, base))
@@ -8683,165 +8685,13 @@ ClaimTokens(Ty *ty, ParserState const *outer)
         state.tokens.capacity = vC(TokenBuffer) - base;
 }
 
-static TyMutex TokenLock = TY_MUTEX_INIT;
-
-static void
-CompactTokens(Ty *ty, Module *mod, TokenVector const *ts)
+inline static void
+ReleaseTokens(Ty *ty, ParserState const *outer)
 {
-        v00(mod->ctokens);
-        v00(mod->fakes);
-        avR(mod->ctokens, vN(*ts));
-
-        mod->csrc = (vN(*ts) > 0) ? v_(*ts, 0)->start.src : 0;
-
-        for (int i = 0; i < vN(*ts); ++i) {
-                Token const *t = v_(*ts, i);
-                if (t->ctx == LEX_FAKE || t->ctx == LEX_HIDDEN) {
-                        avP(mod->fakes, *t);
-                }
-                avP(
-                        mod->ctokens,
-                        ((CToken) {
-                                .type  = t->type,
-                                .ctx   = t->ctx,
-                                .tag   = t->tag,
-                                .bits  = (t->pp ? CTOKEN_PP : 0) | (t->nl ? CTOKEN_NL : 0),
-                                .start = t->start.byte,
-                                .end   = t->end.byte
-                        })
-                );
+        if (vv(outer->tokens) == NULL) {
+                xvF(TokenBuffer);
+                v00(TokenBuffer);
         }
-}
-
-static Token
-ExpandToken(Ty *ty, Module const *mod, char const *base, char const *end, CToken const *c, int *fake)
-{
-        if (c->ctx == LEX_FAKE || c->ctx == LEX_HIDDEN) {
-                return v__(mod->fakes, (*fake)++);
-        }
-
-        Token t = lex_token_at(ty, mod->csrc, base, end, c);
-
-        if (t.type != c->type && c->type == TOKEN_IDENTIFIER) {
-                char *id = amA(c->end - c->start + 1);
-                memcpy(id, base + c->start, c->end - c->start);
-                id[c->end - c->start] = '\0';
-                t.identifier = id;
-                t.module     = NULL;
-        }
-
-        t.type = c->type;
-        t.ctx = c->ctx;
-        t.tag = c->tag;
-        t.pp  = (c->bits & CTOKEN_PP) != 0;
-        t.nl  = (c->bits & CTOKEN_NL) != 0;
-
-        return t;
-}
-
-static bool
-SameToken(Token const *a, Token const *b)
-{
-        if (
-                (a->type        != b->type)
-             || (a->start.byte  != b->start.byte)
-             || (a->end.byte    != b->end.byte)
-             || (a->start.src   != b->start.src)
-             || (a->end.src     != b->end.src)
-        ) {
-                return false;
-        }
-
-        switch (a->type) {
-        case TOKEN_KEYWORD:
-                return a->keyword == b->keyword;
-
-        case TOKEN_IDENTIFIER:
-                return ((a->identifier == NULL) == (b->identifier == NULL))
-                    && (a->identifier == NULL || s_eq(a->identifier, b->identifier))
-                    && ((a->module == NULL) == (b->module == NULL))
-                    && (a->module == NULL || s_eq(a->module, b->module));
-
-        case TOKEN_STRING:
-                return (a->string.length == b->string.length)
-                    && (memcmp(a->string.data, b->string.data, a->string.length) == 0);
-
-        case TOKEN_INTEGER:
-                return a->integer == b->integer;
-
-        case TOKEN_REAL:
-                return (a->real == b->real) || (a->real != a->real && b->real != b->real);
-
-        default:
-                return true;
-        }
-}
-
-static void
-CheckTokens(Ty *ty, Module const *mod, TokenVector const *ts, bool verbose)
-{
-        char const *base = LocPtr((Location) { .src = mod->csrc });
-        char const *end  = base + strlen(base);
-        int         bad  = 0;
-        int         fake = 0;
-
-        for (int i = 0; i < vN(mod->ctokens); ++i) {
-                Token const *t = v_(*ts, i);
-                Token        u = ExpandToken(ty, mod, base, end, v_(mod->ctokens, i), &fake);
-                if (!SameToken(t, &u)) {
-                        if (bad++ < 8) {
-                                fprintf(
-                                        stderr,
-                                        "token mismatch %s:%d [%d]: %s vs %s (ctx=%d)\n",
-                                        mod->path ? mod->path : mod->name,
-                                        LocLine(t->start) + 1,
-                                        i,
-                                        token_show(ty, t),
-                                        token_show(ty, &u),
-                                        t->ctx
-                                );
-                        }
-                }
-        }
-
-        if (verbose) {
-                fprintf(stderr, "checked %s: %d fakes %d\n", mod->path ? mod->path : mod->name, (int)vN(*ts), (int)vN(mod->fakes));
-        }
-
-        if (bad > 0) {
-                fprintf(stderr, "token mismatches in %s: %d/%d\n", mod->path ? mod->path : mod->name, bad, (int)vN(*ts));
-        }
-}
-
-TokenVector *
-ModuleTokens(Ty *ty, Module *mod)
-{
-        if (vN(mod->tokens) > 0 || vN(mod->ctokens) == 0) {
-                return &mod->tokens;
-        }
-
-        TyMutexLock(&TokenLock);
-
-        if (vN(mod->tokens) == 0) {
-                char const *base = LocPtr((Location) { .src = mod->csrc });
-                char const *end  = base + strlen(base);
-                TokenVector ts   = {0};
-                int         fake = 0;
-                Arena       old  = NewArenaNoGC(ty, 1 << 16);
-
-                xvR(ts, vN(mod->ctokens));
-
-                for (int i = 0; i < vN(mod->ctokens); ++i) {
-                        xvP(ts, ExpandToken(ty, mod, base, end, v_(mod->ctokens, i), &fake));
-                }
-
-                ty->arena   = old;
-                mod->tokens = ts;
-        }
-
-        TyMutexUnlock(&TokenLock);
-
-        return &mod->tokens;
 }
 
 static bool
@@ -9091,22 +8941,10 @@ Finally:
         avP(program, NULL);
         mod->prog = vv(program);
 
-        if (
-                (vv(TOKENS) == v_(TokenBuffer, state.TokenBase))
-             && !LangServer
-             && !HAVE_COMPILER_FLAG(SNAPSHOT)
-        ) {
-                v00(mod->tokens);
-                CompactTokens(ty, mod, &TOKENS);
-                if (getenv("TY_TOKEN_CHECK") != NULL) {
-                        CheckTokens(ty, mod, &TOKENS, getenv("TY_TOKEN_CHECK")[0] == 'v');
-                }
-        } else if (vv(TOKENS) == v_(TokenBuffer, state.TokenBase)) {
-                v00(mod->tokens);
-                avR(mod->tokens, vN(TOKENS));
-                avPv(mod->tokens, TOKENS);
-        } else {
-                mod->tokens = TOKENS;
+        TokenStorePack(ty, &mod->tokens, &TOKENS);
+
+        if (vv(TOKENS) != v_(TokenBuffer, state.TokenBase)) {
+                Release(ty, vv(TOKENS), vC(TOKENS) * sizeof (Token));
         }
 
         if (HAVE_COMPILER_FLAG(SNAPSHOT)) {
@@ -9114,6 +8952,8 @@ Finally:
         }
 
         mod->last = state.last;
+
+        ReleaseTokens(ty, &save);
 
         state = save;
         lex_restore(ty, &CtxCheckpoint);
@@ -9395,7 +9235,7 @@ pp_if(Ty *ty)
                                         svP(conds, NULL);
                                 }
                                 consume('\n');
-                                lex_seek(&st0, token(0)->start);
+                                st0.loc = token(0)->start;
                                 svP(arms, st0);
                         }
                         break;
@@ -9405,7 +9245,7 @@ pp_if(Ty *ty)
                         if (++depth == 1) {
                                 svP(conds, parse_expr(ty, 0));
                                 consume('\n');
-                                lex_seek(&st0, token(0)->start);
+                                st0.loc = token(0)->start;
                                 svP(arms, st0);
                         }
                         break;
@@ -9444,7 +9284,7 @@ pp_if(Ty *ty)
                 }
 
                 if (vN(arms) > 0) {
-                        vvL(arms)->end = LocPtr(tokenx(0)->start);
+                        vvL(arms)->end = LocS(tokenx(0)->start);
                 }
 
                 nextx();
@@ -9491,36 +9331,10 @@ pp_if(Ty *ty)
         if (take != NULL) {
                 avP(state.stack, *lex_state(ty));
                 *lex_state(ty) = *take;
-                PLOG("PP_IF() took arm starting at: %.20s", take->loc.s);
+                PLOG("PP_IF() took arm starting at: %.20s", LocS(take->loc));
         }
 
         SCRATCH_RESTORE();
-}
-
-void
-parse_init(Ty *ty)
-{
-        Token *mapped;
-
-        if (vC(TokenBuffer) != 0) {
-                return;
-        }
-
-        if ((mapped = VMap(TOKEN_BUFFER_MAPPED * sizeof (Token))) != NULL) {
-                TokenBuffer.items    = mapped;
-                TokenBuffer.capacity = TOKEN_BUFFER_MAPPED;
-                TokenBufferMapped    = true;
-        } else {
-                avR(TokenBuffer, TOKEN_BUFFER_SIZE);
-        }
-}
-
-void
-parse_trim(Ty *ty)
-{
-        if (TokenBufferMapped) {
-                VDrop(TokenBuffer.items, vC(TokenBuffer) * sizeof (Token));
-        }
 }
 
 void
@@ -9580,9 +9394,9 @@ parse_mark_region(Ty *ty, char const *kind, u32 start, u32 end)
                 return false;
         }
 
-        u32      src = SourceFind(mod->source);
-        Location a   = LocOf(src, start);
-        Location b   = LocOf(src, end);
+        u32      src = SourceRegister(mod->source, n);
+        Location a   = MkLoc(src, start);
+        Location b   = MkLoc(src, end);
 
         record_extra(ty, "Region", sclonea(ty, kind), a, b);
 

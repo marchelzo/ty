@@ -562,15 +562,59 @@ NextGCPhase(Ty *ty, int phase, int n_running)
 }
 
 static void
-MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
+MarkPendingFFIAutoValues(Ty *marker, AllocList const *allocs)
 {
-        for (usize i = 0; i < vN(owner->allocs); ++i) {
-                struct alloc *a = v__(owner->allocs, i);
+        for (usize i = 0; i < vN(*allocs); ++i) {
+                struct alloc *a = v__(*allocs, i);
                 if (a->type == GC_FFI_AUTO && !(a->mark & 1) && a->hard == 0) {
                         Value *values = (Value *)a->data;
                         value_mark(marker, &values[0]);
                         value_mark(marker, &values[1]);
                 }
+        }
+}
+
+static void
+QueueFinalizers(Ty *ty, AllocList const *allocs)
+{
+        for (usize i = 0; i < vN(*allocs); ++i) {
+                struct alloc *a = v__(*allocs, i);
+                TyObject     *o = (TyObject *)a->data;
+                Value         v;
+                if (
+                        (a->type == GC_OBJECT)
+                     && !(a->mark & 1)
+                     && (a->hard == 0)
+                     && !o->finalized
+                     && (class_get_finalizer(ty, o->class->i).type != VALUE_NONE)
+                ) {
+                        v = OBJECT(o, o->class->i);
+                        o->finalized = true;
+                        xvP(ty->group->Finalize, v);
+                        value_mark(ty, &v);
+                }
+        }
+}
+
+static void
+RunFinalizers(Ty *ty)
+{
+        for (;;) {
+                Value o = NIL;
+                Value f;
+                GC_STOP();
+                TySpinLockLock(&ty->group->DLock);
+                if (vN(ty->group->Finalize) > 0) {
+                        o = vXx(ty->group->Finalize);
+                }
+                TySpinLockUnlock(&ty->group->DLock);
+                if (o.type == VALUE_NIL) {
+                        GC_RESUME();
+                        break;
+                }
+                f = class_get_finalizer(ty, o.class);
+                vm_call_method(ty, &o, &f, 0);
+                GC_RESUME();
         }
 }
 
@@ -614,7 +658,7 @@ WaitGC(Ty *ty)
         }
 
         MarkStorage(ty);
-        MarkPendingFFIAutoValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, &ty->allocs);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
@@ -721,9 +765,16 @@ DoGC(Ty *ty)
         MarkStorage(ty);
 
         for (int i = 0; i < nBlocked; ++i) {
-                MarkPendingFFIAutoValues(ty, v__(ty->group->TyList, blockedThreads[i]));
+                MarkPendingFFIAutoValues(ty, &v__(ty->group->TyList, blockedThreads[i])->allocs);
         }
-        MarkPendingFFIAutoValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, &ty->allocs);
+
+        TySpinLockLock(&ty->group->DLock);
+        MarkPendingFFIAutoValues(ty, &ty->group->DeadAllocs);
+        for (int i = 0; i < vN(ty->group->Finalize); ++i) {
+                value_mark(ty, v_(ty->group->Finalize, i));
+        }
+        TySpinLockUnlock(&ty->group->DLock);
 
         if (ty->group == &MainGroup) {
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
@@ -732,6 +783,8 @@ DoGC(Ty *ty)
                         value_mark(ty, v_(Globals, i));
                 }
                 LOG_REACHED(" => globals reached %llu", TotalReached);
+
+                class_mark_refs(ty);
 
                 RESET_TOTAL_REACHED();
                 GCRootSet *immortal = GCImmortalSet(ty);
@@ -746,6 +799,21 @@ DoGC(Ty *ty)
 
                 DebugMarkRoots(ty);
         }
+
+        while (ty->group->GCReadyCount < nRunning) {
+                ;
+        }
+
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                if (v__(ty->group->TyList, i) != ty) {
+                        QueueFinalizers(ty, &v__(ty->group->TyList, i)->allocs);
+                }
+        }
+        QueueFinalizers(ty, &ty->allocs);
+
+        TySpinLockLock(&ty->group->DLock);
+        QueueFinalizers(ty, &ty->group->DeadAllocs);
+        TySpinLockUnlock(&ty->group->DLock);
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
@@ -783,6 +851,8 @@ DoGC(Ty *ty)
         TySpinLockUnlock(&ty->group->Lock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
+
+        RunFinalizers(ty);
 
 #if defined(TY_GC_STATS)
         u64 end = TyMonotonicTime();
@@ -7553,10 +7623,40 @@ Strict:
         put(v);
 }
 
+static _Thread_local VmSnippet Snippet;
+
+VmSnippet
+vm_snippet_begin(char const *code, usize n)
+{
+        VmSnippet outer = Snippet;
+
+        Snippet = (VmSnippet) {
+                .lo   = code,
+                .hi   = code + n,
+                .made = false
+        };
+
+        return outer;
+}
+
+bool
+vm_snippet_end(VmSnippet outer)
+{
+        bool made = Snippet.made;
+
+        Snippet = outer;
+
+        return made;
+}
+
 char *
 DoFunction(Ty *ty, char const *ip, Value *locals, Value **env)
 {
         Value v = {0};
+
+        if (UNLIKELY(Snippet.lo != NULL) && ip >= Snippet.lo && ip < Snippet.hi) {
+                Snippet.made = true;
+        }
 
         v.type = VALUE_FUNCTION;
 
@@ -10850,7 +10950,6 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         TY_FINISH_LOADING();
 
         DoGC(ty);
-        parse_trim(ty);
         ty_collect(true);
 
         ty->code = mod->code;

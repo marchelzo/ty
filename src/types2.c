@@ -3153,8 +3153,8 @@ tuple_is_record(Expr const *expression)
         return tuple_has_names(expression)
             || (
                        (expression != NULL)
-                    && (LocPtr(expression->start) != NULL)
-                    && (*LocPtr(expression->start) == '{')
+                    && (LocS(expression->start) != NULL)
+                    && (*LocS(expression->start) == '{')
                )
         ;
 }
@@ -21079,8 +21079,12 @@ generalize_binding(
                 return false;
         }
 
-        t2_scheme_free(binding->scheme);
+        if (!binding->borrowed) {
+                t2_scheme_free(binding->scheme);
+        }
+
         binding->scheme      = t2_scheme_prune(scheme);
+        binding->borrowed    = false;
         binding->type        = type;
         binding->initialized = true;
 
@@ -24661,7 +24665,7 @@ infer_single_function(T2Checker *checker, Expr const *function)
                 if (
                         (function->fn->mtype == MT_DFL)
                      && (value->type == EXPRESSION_NIL)
-                     && (LocPtr(value->start) == NULL)
+                     && (LocS(value->start) == NULL)
                 ) {
                         continue;
                 }
@@ -29427,11 +29431,31 @@ resolve_external_predicate(
         return relation;
 }
 
+static u32               LiveCheckers;
+static vec(T2Scheme *)    RetiredSchemes;
+
+inline static void
+publish_scheme(Symbol *symbol, T2Scheme *scheme)
+{
+        if (symbol->scheme != NULL && symbol->scheme != scheme) {
+                xvP(RetiredSchemes, symbol->scheme);
+        }
+
+        symbol->scheme = scheme;
+}
+
 static void
 destroy_checker(T2Checker *checker)
 {
         if (checker == NULL) {
                 return;
+        }
+
+        if (--LiveCheckers == 0) {
+                for (usize i = 0; i < vN(RetiredSchemes); ++i) {
+                        t2_scheme_free(v__(RetiredSchemes, i));
+                }
+                v0(RetiredSchemes);
         }
 
         for (usize i = 0; i < vN(checker->bindings); ++i) {
@@ -29741,10 +29765,10 @@ rich_context_available(T2Diagnostic const *diagnostic)
             && (syntax->mod != NULL)
             && (syntax->mod->source != NULL)
             && (syntax->mod->source[0] != '\0')
-            && (LocPtr(syntax->start) != NULL)
-            && (LocPtr(syntax->end) != NULL)
-            && (LocPtr(syntax->start) >= syntax->mod->source)
-            && (LocPtr(syntax->end) >= LocPtr(syntax->start));
+            && (LocS(syntax->start) != NULL)
+            && (LocS(syntax->end) != NULL)
+            && (LocS(syntax->start) >= syntax->mod->source)
+            && (LocS(syntax->end) >= LocS(syntax->start));
 }
 
 static void
@@ -31797,7 +31821,7 @@ restore_cache(T2Checker *checker)
                              ? binding->type
                              : t2_scheme_body(binding->scheme);
                 if (binding->scheme != NULL) {
-                        symbol->scheme  = binding->scheme;
+                        publish_scheme(symbol, binding->scheme);
                         binding->scheme = NULL;
                 }
                 restored_bindings += 1;
@@ -32575,6 +32599,8 @@ static T2Checker *
 new_checker(char const *unit, char const *path, char const *source, bool logged)
 {
         T2Checker *checker = alloc0(sizeof *checker);
+        LiveCheckers += 1;
+
 
         checker->unit         = (unit == NULL) ? "<unknown>" : unit;
         checker->path         = (path == NULL) ? "<unknown>" : path;
@@ -33203,7 +33229,7 @@ publish_types(T2Checker *checker)
                      && !binding->borrowed
                      && ((symbol->scheme == NULL) || !binding->imported)
                 ) {
-                        symbol->scheme    = binding->scheme;
+                        publish_scheme(symbol, binding->scheme);
                         binding->borrowed = true;
                 }
         }
@@ -34336,7 +34362,7 @@ settle_declaration(T2Checker *checker, Symbol *symbol)
 
         symbol->type = published_type(checker, type);
         if (binding->scheme != NULL && !binding->borrowed) {
-                symbol->scheme    = binding->scheme;
+                publish_scheme(symbol, binding->scheme);
                 binding->borrowed = true;
         }
 }
@@ -34443,7 +34469,7 @@ install_declaration(Ty *ty, T2CachedDeclaration *entry)
         symbol->type = (entry->type != T2_TYPE_INVALID)
                      ? entry->type
                      : t2_scheme_body(entry->scheme);
-        symbol->scheme = entry->scheme;
+        publish_scheme(symbol, entry->scheme);
         entry->scheme  = NULL;
 }
 

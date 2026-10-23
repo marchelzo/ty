@@ -53,6 +53,14 @@
             }
         },
         {
+            "name": "sysmalloc",
+            "inherits": "dev",
+            "displayName": "Development, libSystem malloc for every allocation",
+            "cacheVariables": {
+                "TY_SYSMALLOC": true
+            }
+        },
+        {
             "name": "release",
             "inherits": "local",
             "displayName": "Release (-O3, LTO)",

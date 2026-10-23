@@ -2831,16 +2831,19 @@ PrettySource(Ty *ty, Value const *v)
         }
 
         if (ColorOutput) {
+                TokenVector range = {0};
+                TokenUnpackRange(&mod->tokens, start, end, &range);
                 syntax_highlight(
                         ty,
                         &buf,
                         mod->source,
-                        ModuleTokens(ty, (Module *)mod),
+                        &range,
                         start,
                         end,
                         NULL,
                         NULL
                 );
+                xvF(range);
         } else {
                 sxdf(&buf, "%.*s", (int)(end - start), mod->source + start);
         }

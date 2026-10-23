@@ -409,10 +409,10 @@ post_s(Stmt *s, Scope *scope, void *u)
 static bool
 in_source(SpanCheck const *c, Expr const *e)
 {
-        return (LocPtr(e->start) >= c->src)
-            && (LocPtr(e->end) >= c->src)
-            && (LocPtr(e->start) <= c->src + c->n)
-            && (LocPtr(e->end) <= c->src + c->n)
+        return (LocS(e->start) >= c->src)
+            && (LocS(e->end) >= c->src)
+            && (LocS(e->start) <= c->src + c->n)
+            && (LocS(e->end) <= c->src + c->n)
             && (e->start.byte <= c->n)
             && (e->end.byte <= c->n);
 }
@@ -590,10 +590,11 @@ check_siblings(Ty *ty, SpanCheck *c, SpanWalk const *w)
 }
 
 static void
-mark_tokens(Ty *ty, SpanCheck *c, TokenVector const *tokens)
+mark_tokens(Ty *ty, SpanCheck *c, TokenStore const *tokens)
 {
-        for (isize i = 0; i < vN(*tokens); ++i) {
-                Token const *t = v_(*tokens, i);
+        for (i32 i = 0; i < TokenCount(tokens); ++i) {
+                Token        tk = TokenGet(tokens, i);
+                Token const *t  = &tk;
                 if (
                         (t->ctx == LEX_FAKE)
                      || (t->type == TOKEN_END)
@@ -722,7 +723,7 @@ TY_BUILTIN_RAW(ty_syntax_check)
         c.starts = smA0(c.n + 1);
         c.ends   = smA0(c.n + 1);
 
-        mark_tokens(ty, &c, ModuleTokens(ty, (Module *)mod));
+        mark_tokens(ty, &c, &mod->tokens);
 
         for (isize i = 0; i < vN(mod->macros); ++i) {
                 MacroSpan const *m = v_(mod->macros, i);
@@ -859,11 +860,13 @@ static void
 add_pp_regions(Ty *ty, Module const *mod, usize n, void *pending)
 {
         vec(u32) stack = {0};
-        TokenVector const *ts = ModuleTokens(ty, (Module *)mod);
+        TokenStore const *ts = &mod->tokens;
 
-        for (isize i = 0; i + 1 < vN(*ts); ++i) {
-                Token const *t = v_(*ts, i);
-                Token const *u = v_(*ts, i + 1);
+        for (i32 i = 0; i + 1 < TokenCount(ts); ++i) {
+                Token        t0 = TokenGet(ts, i);
+                Token        u0 = TokenGet(ts, i + 1);
+                Token const *t  = &t0;
+                Token const *u  = &u0;
                 if (t->type != TOKEN_DIRECTIVE || !t->pp) {
                         continue;
                 }
@@ -965,8 +968,8 @@ syntax_snapshot(Ty *ty, Module *mod)
                 i32 kind = extra_kind(x->kind);
                 if (
                         (kind == 0)
-                     || (LocPtr(x->start) < mod->source)
-                     || (LocPtr(x->start) > mod->source + c.n)
+                     || (LocS(x->start) < mod->source)
+                     || (LocS(x->start) > mod->source + c.n)
                      || (x->end.byte > c.n)
                      || (x->start.byte >= x->end.byte)
                 ) {
@@ -986,8 +989,8 @@ syntax_snapshot(Ty *ty, Module *mod)
                 MacroSpan const *m = v_(mod->macros, k);
                 if (
                         (strcmp(m->name, "$$[") == 0)
-                     || (LocPtr(m->start) < mod->source)
-                     || (LocPtr(m->start) > mod->source + c.n)
+                     || (LocS(m->start) < mod->source)
+                     || (LocS(m->start) > mod->source + c.n)
                      || (m->end.byte > c.n)
                      || (m->start.byte >= m->end.byte)
                 ) {
@@ -1116,8 +1119,8 @@ TY_BUILTIN_RAW(ty_syntax_macros)
         for (isize i = 0; i < vN(mod->macros); ++i) {
                 MacroSpan const *m = v_(mod->macros, i);
                 if (
-                        (LocPtr(m->start) < mod->source)
-                     || (LocPtr(m->start) > mod->source + n)
+                        (LocS(m->start) < mod->source)
+                     || (LocS(m->start) > mod->source + n)
                      || (m->end.byte > n)
                      || (m->start.byte >= m->end.byte)
                 ) {
@@ -1176,8 +1179,8 @@ TY_BUILTIN_RAW(ty_syntax_extras)
         for (isize i = 0; i < vN(mod->extras); ++i) {
                 SyntaxExtra const *x = v_(mod->extras, i);
                 if (
-                        (LocPtr(x->start) < mod->source)
-                     || (LocPtr(x->start) > mod->source + n)
+                        (LocS(x->start) < mod->source)
+                     || (LocS(x->start) > mod->source + n)
                      || (x->end.byte > n)
                      || (x->start.byte >= x->end.byte)
                 ) {
@@ -2504,8 +2507,8 @@ collect_e(Expr *e, Scope *scope, void *u)
         if (
                 (e == NULL)
              || pset_has(&r->seen, e)
-             || (LocPtr(e->start) < r->src)
-             || (LocPtr(e->start) > r->src + r->n)
+             || (LocS(e->start) < r->src)
+             || (LocS(e->start) > r->src + r->n)
              || (e->start.byte >= e->end.byte)
              || (e->end.byte > r->n)
         ) {
@@ -3427,10 +3430,11 @@ TY_BUILTIN_RAW(ty_syntax_tree)
         Array *tokens = vA();
         i64 edge = 0;
 
-        TokenVector const *ts = ModuleTokens(ty, (Module *)mod);
+        TokenStore const *ts = &mod->tokens;
 
-        for (isize i = 0; i < vN(*ts); ++i) {
-                Token const *t = v_(*ts, i);
+        for (i32 i = 0; i < TokenCount(ts); ++i) {
+                Token        tk = TokenGet(ts, i);
+                Token const *t  = &tk;
                 if (t->ctx == LEX_FAKE || t->ctx == LEX_HIDDEN || t->type == TOKEN_END) {
                         continue;
                 }
@@ -3857,14 +3861,14 @@ TY_BUILTIN_RAW(ty_syntax_member)
 
         bool method = (e->type == EXPRESSION_FUNCTION);
         Class const *owner = (method && e->fn->class != NULL) ? e->fn->class : t2_class_of(ty, (T2Type)t);
-        Module const *mod = source_module(ty, LocPtr(e->start));
+        Module const *mod = source_module(ty, LocS(e->start));
 
         if (
                 (mod == NULL)
              && (home.type == VALUE_MODULE)
              && (home.mod->source != NULL)
-             && (LocPtr(e->start) >= home.mod->source)
-             && (LocPtr(e->start) <= home.mod->source + strlen(home.mod->source))
+             && (LocS(e->start) >= home.mod->source)
+             && (LocS(e->start) <= home.mod->source + strlen(home.mod->source))
         ) {
                 mod = home.mod;
         }

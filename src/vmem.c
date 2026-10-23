@@ -101,7 +101,7 @@ VPoolPut(VPool *p, void *slot)
 void
 VNoHugePages(void)
 {
-#if defined(TY_RELEASE)
+#if defined(TY_RELEASE) && !defined(TY_SYSMALLOC)
         mi_option_disable(mi_option_allow_large_os_pages);
 #endif
 #if defined(__linux__) && defined(PR_SET_THP_DISABLE)
