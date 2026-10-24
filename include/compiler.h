@@ -157,14 +157,14 @@ typedef struct {
         void const *node;
 } SyntaxExtra;
 
-typedef struct module {
+struct module {
         char *code;
         Scope *scope;
         import_vector imports;
         char const *name;
         char const *path;
         char const *source;
-        struct module const *host;
+        Module const *host;
         Stmt **prog;
         TokenStore tokens;
         Expr *last;
@@ -175,7 +175,7 @@ typedef struct module {
         vec(SyntaxExtra) extras;
         vec(SyntaxNode) syntax;
         bool has_syntax;
-} Module;
+};
 
 typedef vec(struct eloc) location_vector;
 

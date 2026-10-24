@@ -255,10 +255,10 @@ vm_local(Ty *ty, int i);
 Value *
 vm_global(Ty *ty, int i);
 
-struct module *
+Module *
 vm_caller_module(Ty *ty);
 
-struct module *
+Module *
 vm_foreign_caller_module(Ty *ty);
 
 void

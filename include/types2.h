@@ -7,12 +7,6 @@
 
 #include "types2_core.h"
 
-typedef struct ty Ty;
-typedef struct statement Stmt;
-typedef struct expression Expr;
-typedef struct value Value;
-typedef struct class Class;
-typedef struct module Module;
 typedef struct t2_checker T2Checker;
 
 typedef enum t2_checkpoint {
