@@ -2393,9 +2393,9 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        Expr const *src   = source_lookup(ty, v->src);
-        void       *arena = (src == NULL) ? NULL : ArenaOf(src);
+        void *arena = source_arena(ty, v->src);
         if (arena != NULL) {
+                Expr const *src = source_lookup(ty, v->src);
                 MARK(arena);
                 if (src->mod != NULL) {
                         MarkArena(ty, &src->mod->arena);

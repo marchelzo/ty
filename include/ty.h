@@ -38,22 +38,22 @@
 #endif
 
 typedef vec(struct alloc *) AllocList;
-typedef wvec(char *)        IPVector;
+typedef vec(char *)         IPVector;
 typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
-typedef wvec(Frame)         FrameStack;
+typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
 typedef vec(Value *)        GCWorkStack;
 typedef vec(Scope *)        ScopeVector;
-typedef wvec(usize)         SPStack;
+typedef vec(usize)          SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct token)   TokenVector;
 typedef vec(struct try *)   TryStack;
 typedef vec(Value)          ValueVector;
-typedef wvec(Value)         ValueStack;
+typedef vec(Value)          ValueStack;
 typedef vec(Class *)        ClassVector;
-typedef vec(Symbol *)       symbol_vector;
+typedef svec(Symbol *)      symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
 enum { INTERN_TABLE_SIZE = 256 };

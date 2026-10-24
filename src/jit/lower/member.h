@@ -136,7 +136,7 @@ field_slot(BcLir *c, LirReg value, i32 member, bool writing, LirLabel slow)
         LirReg declared = ldw(c, class, offsetof(Class, i));
 
         jcc(c, LIR_NE, lir_r(actual), lir_r(declared), slow);
-        jcc(c, LIR_UGE, lir_i(member), lir_r(ldw(c, class, count)), slow);
+        jcc(c, LIR_UGE, lir_i(member), lir_r(ldq(c, class, count)), slow);
 
         LirReg offsets = ldp(c, class, items);
         LirReg field   = ldx(c, LIR_LD_U16, LIR_I64, offsets, member * sizeof (u16));

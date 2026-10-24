@@ -586,6 +586,9 @@ source_register(Ty *ty, void const *src);
 void *
 source_lookup(Ty *ty, u32 src);
 
+void *
+source_arena(Ty *ty, u32 src);
+
 void
 ForgetSourceNodesFrom(void const *base, usize len);
 

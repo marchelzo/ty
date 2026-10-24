@@ -180,18 +180,18 @@ typedef struct diag_sink        DiagSink;
 
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
-typedef vec(int)            int_vector;
-typedef vec(i32)            i32Vector;
+typedef svec(int)           int_vector;
+typedef svec(i32)           i32Vector;
 typedef vec(i16)            i16Vector;
 typedef vec(u16)            u16Vector;
 typedef vec(u32)            U32Vector;
 typedef vec(u64)            u64Vector;
-typedef vec(char *)         StringVector;
-typedef vec(char const *)   ConstStringVector;
-typedef vec(Expr *)         ExprVec;
-typedef vec(Stmt *)         StmtVec;
-typedef vec(TypeBound)      TypeBoundVector;
-typedef vec(TypeHint)       TypeHintVector;
+typedef svec(char *)        StringVector;
+typedef svec(char const *)  ConstStringVector;
+typedef svec(Expr *)        ExprVec;
+typedef svec(Stmt *)        StmtVec;
+typedef svec(TypeBound)     TypeBoundVector;
+typedef svec(TypeHint)      TypeHintVector;
 typedef vec(Module *)       ModuleVector;
 
 #define m0(x) memset(&(x), 0, sizeof (x))

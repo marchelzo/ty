@@ -381,7 +381,12 @@ static CompileState STATE;
 static ModuleVector modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
-static vec(Expr const *) source_map;
+typedef struct {
+        Expr const *e;
+        void       *arena;
+} SourceNode;
+
+static vec(SourceNode) source_map;
 static u32 source_map_hole;
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
@@ -15460,15 +15465,20 @@ inline static char *
 u32
 source_register(Ty *ty, void const *src)
 {
+        SourceNode node = {
+                .e     = src,
+                .arena = ArenaOf(src)
+        };
+
         for (u32 i = source_map_hole; i < vN(source_map); ++i) {
-                if (v__(source_map, i) == NULL) {
-                        *v_(source_map, i) = (Expr const *)src;
+                if (v_(source_map, i)->e == NULL) {
+                        *v_(source_map, i) = node;
                         source_map_hole = i + 1;
                         return i + 1;
                 }
         }
 
-        xvP(source_map, (Expr const *)src);
+        xvP(source_map, node);
         source_map_hole = vN(source_map);
 
         return vN(source_map);
@@ -15480,7 +15490,17 @@ source_lookup(Ty *ty, u32 src)
         if (src == 0 || src > vN(source_map)) {
                 return NULL;
         } else {
-                return (void *)v__(source_map, src - 1);
+                return (void *)v_(source_map, src - 1)->e;
+        }
+}
+
+void *
+source_arena(Ty *ty, u32 src)
+{
+        if (src == 0 || src > vN(source_map)) {
+                return NULL;
+        } else {
+                return v_(source_map, src - 1)->arena;
         }
 }
 
@@ -15490,9 +15510,9 @@ ForgetSourceNodesFrom(void const *_base, usize len)
         uptr base = (uptr)_base;
 
         for (u32 i = 0; i < vN(source_map); ++i) {
-                uptr expr = (uptr)v__(source_map, i);
+                uptr expr = (uptr)v_(source_map, i)->e;
                 if (expr >= base && expr < base + len) {
-                        v__(source_map, i) = NULL;
+                        *v_(source_map, i) = (SourceNode) {0};
                         source_map_hole = min(source_map_hole, i);
                 }
         }
@@ -15502,9 +15522,9 @@ void
 ForgetSourceNodesWhere(bool (*f)(void const *, void *), void *ctx)
 {
         for (u32 i = 0; i < vN(source_map); ++i) {
-                Expr const *expr = v__(source_map, i);
+                Expr const *expr = v_(source_map, i)->e;
                 if (expr != NULL && f(expr, ctx)) {
-                        v__(source_map, i) = NULL;
+                        *v_(source_map, i) = (SourceNode) {0};
                         source_map_hole = min(source_map_hole, i);
                 }
         }
