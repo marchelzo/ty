@@ -39,6 +39,12 @@
 #include "bundle.h"
 #endif
 
+#include "BuildFlags.h"
+
+#if defined(__linux__)
+#include <elf.h>
+#endif
+
 Ty vvv;
 TY xD;
 
@@ -137,6 +143,58 @@ ls_main(Ty *vm, char **argv);
 
 static char **
 complete(char const *s, int start, int end);
+
+#if !defined(TY_BUILD_PGO)
+  #define TY_BUILD_PGO "off"
+#endif
+
+#if defined(TY_BUILD_BOLT)
+  #define TY_BUILD_BOLT_RELOCS "yes"
+#else
+  #define TY_BUILD_BOLT_RELOCS "no"
+#endif
+
+static bool
+isbolted(void)
+{
+#if defined(__linux__) && defined(__LP64__)
+        Elf64_Ehdr eh;
+        Elf64_Shdr sh;
+        Elf64_Shdr strtab;
+        char name[32];
+        bool found = false;
+        int fd = open("/proc/self/exe", O_RDONLY);
+
+        if (fd == -1) {
+                return false;
+        }
+
+        if (
+                (pread(fd, &eh, sizeof eh, 0) != sizeof eh)
+             || (eh.e_shstrndx == SHN_UNDEF)
+             || (pread(fd, &strtab, sizeof strtab, eh.e_shoff + eh.e_shstrndx * sizeof sh) != sizeof strtab)
+        ) {
+                goto End;
+        }
+
+        for (int i = 0; !found && i < eh.e_shnum; ++i) {
+                if (
+                        (pread(fd, &sh, sizeof sh, eh.e_shoff + i * sizeof sh) != sizeof sh)
+                     || (pread(fd, name, sizeof name, strtab.sh_offset + sh.sh_name) <= 0)
+                ) {
+                        break;
+                }
+                name[sizeof name - 1] = '\0';
+                found = s_eq(name, ".note.bolt_info");
+        }
+
+End:
+        close(fd);
+        return found;
+#else
+        return false;
+#endif
+}
 
 static void
 usage(void)
@@ -654,7 +712,11 @@ ProcessArgs(char *argv[], bool first)
                         printf(
                                 "%s version %s (%s)\n"
                                 "Compiler: %s %s\n"
-                                "Platform: %s-%s\n",
+                                "Platform: %s-%s\n"
+                                "PGO:      %s\n"
+                                "BOLT:     %s (relocs: %s)\n"
+                                "CFLAGS:   %s\n"
+                                "LDFLAGS:  %s\n",
                                 VersionInfo_ProjectName,
                                 VersionInfo_ProjectVersion,
 #if defined(TY_HAVE_GIT_STATUS)
@@ -665,7 +727,12 @@ ProcessArgs(char *argv[], bool first)
                                 VersionInfo_CompilerId,
                                 VersionInfo_CompilerVersion,
                                 VersionInfo_Architecture,
-                                VersionInfo_BuildType
+                                VersionInfo_BuildType,
+                                TY_BUILD_PGO,
+                                isbolted() ? "yes" : "no",
+                                TY_BUILD_BOLT_RELOCS,
+                                TY_BUILD_CFLAGS,
+                                TY_BUILD_LDFLAGS
                         );
 #else
                         printf("ty version 0.1\n");

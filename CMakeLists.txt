@@ -768,6 +768,25 @@ add_executable(${_tgt_ty})
 target_sources(${_tgt_ty} PRIVATE ty.c)
 target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})
 
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _ty_cfg)
+set(_ty_tp "$<TARGET_PROPERTY:${_tgt_ty},")
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.txt CONTENT
+"${CMAKE_C_COMPILER} ${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${_ty_cfg}} ${CMAKE_C${CMAKE_C_STANDARD}_STANDARD_COMPILE_OPTION} $<JOIN:$<LIST:TRANSFORM,$<LIST:FILTER,${_ty_tp}COMPILE_DEFINITIONS>,EXCLUDE,^$>,PREPEND,-D>, > $<JOIN:${_ty_tp}COMPILE_OPTIONS>, >
+${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS_${_ty_cfg}} $<JOIN:${_ty_tp}LINK_OPTIONS>, >
+")
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.h
+  COMMAND ${CMAKE_COMMAND} -DIN=${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.txt -DOUT=${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.h -P ${PROJECT_SOURCE_DIR}/cmake/BuildFlags.cmake
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.txt ${PROJECT_SOURCE_DIR}/cmake/BuildFlags.cmake
+)
+target_sources(${_tgt_ty} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/BuildFlags.h)
+target_include_directories(${_tgt_ty} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_compile_definitions(${_tgt_ty} PRIVATE
+  $<$<BOOL:${TY_PGO_GENERATE}>:TY_BUILD_PGO="generate">
+  $<$<BOOL:${TY_PGO_USE}>:TY_BUILD_PGO="use">
+  $<$<BOOL:${TY_BOLT}>:TY_BUILD_BOLT>
+)
+
 # ---
 #  install rules
 # ---
