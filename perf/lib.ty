@@ -5,6 +5,8 @@ import path (Path)
 import os
 import ty
 
+import sched (inherit-elevation)
+
 pub use BenchRecord = {
     name: String,
     times: Array[Float],
@@ -127,6 +129,7 @@ fn benchmark-program(name: String, categories: String, f) {
             if #argv != 3 {
                 throw ValueError("{CALIBRATE_MODE} requires TARGET-SECONDS")
             }
+            inherit-elevation()
             print(json.encode(calibrate(f, Float(argv[2]))))
             os.exit(0)
         },
@@ -134,6 +137,7 @@ fn benchmark-program(name: String, categories: String, f) {
             if #argv != 5 {
                 throw ValueError("{BENCH_MODE} requires ITERATIONS WARMUP ROUNDS")
             }
+            inherit-elevation()
             let iters = Int(argv[2])
             let warmup = Int(argv[3])
             let rounds = Int(argv[4])

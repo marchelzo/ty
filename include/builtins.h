@@ -471,6 +471,73 @@ JIT_BUILTINS(JIT_TABLE)
 #ifdef RLIM_INFINITY
   { .module = "os",         .name = "RLIM_INFINITY",            .value = INT((imax)RLIM_INFINITY)                 },
 #endif
+#ifdef PRIO_PROCESS
+  { .module = "os",         .name = "PRIO_PROCESS",             .value = INT(PRIO_PROCESS)                        },
+#endif
+#ifdef PRIO_PGRP
+  { .module = "os",         .name = "PRIO_PGRP",                .value = INT(PRIO_PGRP)                           },
+#endif
+#ifdef PRIO_USER
+  { .module = "os",         .name = "PRIO_USER",                .value = INT(PRIO_USER)                           },
+#endif
+#ifdef PRIO_MIN
+  { .module = "os",         .name = "PRIO_MIN",                 .value = INT(PRIO_MIN)                            },
+#endif
+#ifdef PRIO_MAX
+  { .module = "os",         .name = "PRIO_MAX",                 .value = INT(PRIO_MAX)                            },
+#endif
+#ifdef PRIO_DARWIN_THREAD
+  { .module = "os",         .name = "PRIO_DARWIN_THREAD",       .value = INT(PRIO_DARWIN_THREAD)                  },
+#endif
+#ifdef PRIO_DARWIN_PROCESS
+  { .module = "os",         .name = "PRIO_DARWIN_PROCESS",      .value = INT(PRIO_DARWIN_PROCESS)                 },
+#endif
+#ifdef PRIO_DARWIN_BG
+  { .module = "os",         .name = "PRIO_DARWIN_BG",           .value = INT(PRIO_DARWIN_BG)                      },
+#endif
+#ifdef PRIO_DARWIN_NONUI
+  { .module = "os",         .name = "PRIO_DARWIN_NONUI",        .value = INT(PRIO_DARWIN_NONUI)                   },
+#endif
+#ifdef SCHED_OTHER
+  { .module = "os",         .name = "SCHED_OTHER",              .value = INT(SCHED_OTHER)                         },
+#endif
+#ifdef SCHED_FIFO
+  { .module = "os",         .name = "SCHED_FIFO",               .value = INT(SCHED_FIFO)                          },
+#endif
+#ifdef SCHED_RR
+  { .module = "os",         .name = "SCHED_RR",                 .value = INT(SCHED_RR)                            },
+#endif
+#ifdef SCHED_BATCH
+  { .module = "os",         .name = "SCHED_BATCH",              .value = INT(SCHED_BATCH)                         },
+#endif
+#ifdef SCHED_IDLE
+  { .module = "os",         .name = "SCHED_IDLE",               .value = INT(SCHED_IDLE)                          },
+#endif
+#ifdef SCHED_DEADLINE
+  { .module = "os",         .name = "SCHED_DEADLINE",           .value = INT(SCHED_DEADLINE)                      },
+#endif
+#ifdef SCHED_RESET_ON_FORK
+  { .module = "os",         .name = "SCHED_RESET_ON_FORK",      .value = INT(SCHED_RESET_ON_FORK)                 },
+#endif
+#ifdef __APPLE__
+  { .module = "os",         .name = "QOS_CLASS_USER_INTERACTIVE", .value = INT(QOS_CLASS_USER_INTERACTIVE)        },
+  { .module = "os",         .name = "QOS_CLASS_USER_INITIATED", .value = INT(QOS_CLASS_USER_INITIATED)            },
+  { .module = "os",         .name = "QOS_CLASS_DEFAULT",        .value = INT(QOS_CLASS_DEFAULT)                   },
+  { .module = "os",         .name = "QOS_CLASS_UTILITY",        .value = INT(QOS_CLASS_UTILITY)                   },
+  { .module = "os",         .name = "QOS_CLASS_BACKGROUND",     .value = INT(QOS_CLASS_BACKGROUND)                },
+  { .module = "os",         .name = "QOS_CLASS_UNSPECIFIED",    .value = INT(QOS_CLASS_UNSPECIFIED)               },
+  { .module = "os",         .name = "TASK_RENICED",             .value = INT(TASK_RENICED)                        },
+  { .module = "os",         .name = "TASK_UNSPECIFIED",         .value = INT(TASK_UNSPECIFIED)                    },
+  { .module = "os",         .name = "TASK_FOREGROUND_APPLICATION", .value = INT(TASK_FOREGROUND_APPLICATION)      },
+  { .module = "os",         .name = "TASK_BACKGROUND_APPLICATION", .value = INT(TASK_BACKGROUND_APPLICATION)      },
+  { .module = "os",         .name = "TASK_CONTROL_APPLICATION", .value = INT(TASK_CONTROL_APPLICATION)            },
+  { .module = "os",         .name = "TASK_GRAPHICS_SERVER",     .value = INT(TASK_GRAPHICS_SERVER)                },
+  { .module = "os",         .name = "TASK_THROTTLE_APPLICATION", .value = INT(TASK_THROTTLE_APPLICATION)          },
+  { .module = "os",         .name = "TASK_NONUI_APPLICATION",   .value = INT(TASK_NONUI_APPLICATION)              },
+  { .module = "os",         .name = "TASK_DEFAULT_APPLICATION", .value = INT(TASK_DEFAULT_APPLICATION)            },
+  { .module = "os",         .name = "TASK_DARWINBG_APPLICATION", .value = INT(TASK_DARWINBG_APPLICATION)          },
+  { .module = "os",         .name = "TASK_USER_INIT_APPLICATION", .value = INT(TASK_USER_INIT_APPLICATION)        },
+#endif
 #ifdef SIGXCPU
   { .module = "os",         .name = "SIGXCPU",                  .value = INT(SIGXCPU)                             },
 #endif

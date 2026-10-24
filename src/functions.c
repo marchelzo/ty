@@ -55,6 +55,9 @@
 #include <sys/mount.h>
 #include <sys/sysctl.h>
 #include <util.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <pthread/qos.h>
 #endif
 
 #if defined(__FreeBSD__)
@@ -6649,6 +6652,411 @@ TY_BUILTIN_RAW(os_setrlimit)
         return NIL;
 #endif
 }
+
+#ifndef _WIN32
+#define xE(f, ...) ({                            \
+        int _r = (f)(__VA_ARGS__);               \
+        if (_r == -1) {                          \
+                OSError(errno, #f "()");         \
+        }                                        \
+        _r;                                      \
+})
+
+#define xT(f, ...) do {                          \
+        int _e = (f)(__VA_ARGS__);               \
+        if (_e != 0) {                           \
+                OSError(_e, #f "()");            \
+        }                                        \
+} while (0)
+
+// os.getpriority(which: Int, who: Int) -> Int
+TY_BUILTIN(os_getpriority)
+{
+        errno = 0;
+        int prio = getpriority(which, who);
+        if (prio == -1 && errno != 0) {
+                OSError(errno, "getpriority()");
+        }
+        return INTEGER(prio);
+}
+
+// os.setpriority(which: Int, who: Int, prio: Int) -> nil
+TY_BUILTIN(os_setpriority)
+{
+        xE(setpriority, which, who, prio);
+        return NIL;
+}
+
+// os.nice(inc: Int) -> Int
+TY_BUILTIN(os_nice)
+{
+        errno = 0;
+        int prio = nice(inc);
+        if (prio == -1 && errno != 0) {
+                OSError(errno, "nice()");
+        }
+        return INTEGER(prio);
+}
+
+// os.sched_yield() -> nil
+TY_BUILTIN(os_sched_yield)
+{
+        UnlockTy();
+        sched_yield();
+        LockTy();
+        return NIL;
+}
+
+// os.sched_get_priority_min(policy: Int) -> Int
+TY_BUILTIN(os_sched_get_priority_min)
+{
+        return INTEGER(xE(sched_get_priority_min, policy));
+}
+
+// os.sched_get_priority_max(policy: Int) -> Int
+TY_BUILTIN(os_sched_get_priority_max)
+{
+        return INTEGER(xE(sched_get_priority_max, policy));
+}
+
+// os.pthread_getschedparam() -> (Int, Int)
+TY_BUILTIN(os_pthread_getschedparam)
+{
+        int policy;
+        struct sched_param sp;
+        xT(pthread_getschedparam, pthread_self(), &policy, &sp);
+        return PAIR(INTEGER(policy), INTEGER(sp.sched_priority));
+}
+
+// os.pthread_setschedparam(policy: Int, priority: Int) -> nil
+TY_BUILTIN(os_pthread_setschedparam)
+{
+        struct sched_param sp = { .sched_priority = priority };
+        xT(pthread_setschedparam, pthread_self(), policy, &sp);
+        return NIL;
+}
+
+// os.gettid() -> Int
+TY_BUILTIN(os_gettid)
+{
+#if defined(__linux__)
+        return INTEGER(syscall(SYS_gettid));
+#elif defined(__APPLE__)
+        u64 tid;
+        xT(pthread_threadid_np, NULL, &tid);
+        return INTEGER(tid);
+#else
+        bP("unsupported platform");
+#endif
+}
+
+#ifdef __linux__
+inline static cpu_set_t *
+cpuset(Ty *ty, int n, usize *size)
+{
+        cpu_set_t *set = CPU_ALLOC(n);
+        if (set == NULL) {
+                OSError(errno, "CPU_ALLOC()");
+        }
+        *size = CPU_ALLOC_SIZE(n);
+        CPU_ZERO_S(*size, set);
+        return set;
+}
+
+// os.sched_getaffinity(pid: Int = 0) -> Array[Int]
+TY_BUILTIN(os_sched_getaffinity)
+{
+        int n = CPU_SETSIZE;
+        usize size;
+        cpu_set_t *set;
+        for (;;) {
+                set = cpuset(ty, n, &size);
+                if (sched_getaffinity(pid, size, set) == 0) {
+                        break;
+                }
+                int err = errno;
+                CPU_FREE(set);
+                if (err != EINVAL || n >= (1 << 22)) {
+                        OSError(err, "sched_getaffinity()");
+                }
+                n *= 2;
+        }
+        Array *cpus = vA();
+        for (int i = 0; i < n; ++i) {
+                if (CPU_ISSET_S(i, size, set)) {
+                        vAp(cpus, INTEGER(i));
+                }
+        }
+        CPU_FREE(set);
+        return ARRAY(cpus);
+}
+
+// os.sched_setaffinity(pid: Int, cpus: Array[Int]) -> nil
+TY_BUILTIN(os_sched_setaffinity)
+{
+        if (cpus.type != VALUE_ARRAY) {
+                TyBuiltinBadArg(ty, _name__, "cpus", "Array[Int]", &cpus);
+        }
+        imax top = 0;
+        vfor(*cpus.array, {
+                if (it->type != VALUE_INTEGER || it->z < 0) {
+                        bP("bad CPU index: %s", VSC(it));
+                }
+                top = (it->z > top) ? it->z : top;
+        });
+        usize size;
+        cpu_set_t *set = cpuset(ty, top + 1, &size);
+        vfor(*cpus.array, CPU_SET_S(it->z, size, set));
+        int ret = sched_setaffinity(pid, size, set);
+        int err = errno;
+        CPU_FREE(set);
+        if (ret != 0) {
+                OSError(err, "sched_setaffinity()");
+        }
+        return NIL;
+}
+
+// os.sched_getcpu() -> Int
+TY_BUILTIN(os_sched_getcpu)
+{
+        return INTEGER(xE(sched_getcpu));
+}
+
+// os.sched_getscheduler(pid: Int = 0) -> Int
+TY_BUILTIN(os_sched_getscheduler)
+{
+        return INTEGER(xE(sched_getscheduler, pid));
+}
+
+// os.sched_setscheduler(pid: Int, policy: Int, priority: Int = 0) -> nil
+TY_BUILTIN(os_sched_setscheduler)
+{
+        struct sched_param sp = { .sched_priority = priority };
+        xE(sched_setscheduler, pid, policy, &sp);
+        return NIL;
+}
+
+// os.sched_getparam(pid: Int = 0) -> Int
+TY_BUILTIN(os_sched_getparam)
+{
+        struct sched_param sp;
+        xE(sched_getparam, pid, &sp);
+        return INTEGER(sp.sched_priority);
+}
+
+// os.sched_setparam(pid: Int, priority: Int) -> nil
+TY_BUILTIN(os_sched_setparam)
+{
+        struct sched_param sp = { .sched_priority = priority };
+        xE(sched_setparam, pid, &sp);
+        return NIL;
+}
+
+// os.sched_rr_get_interval(pid: Int = 0) -> Float
+TY_BUILTIN(os_sched_rr_get_interval)
+{
+        struct timespec ts;
+        xE(sched_rr_get_interval, pid, &ts);
+        return REAL(ts.tv_sec + ts.tv_nsec / 1e9);
+}
+#endif
+
+#ifdef __APPLE__
+// os.pthread_set_qos_class_self_np(qos: Int, relpri: Int = 0) -> nil
+TY_BUILTIN(os_pthread_set_qos_class_self_np)
+{
+        xT(pthread_set_qos_class_self_np, (qos_class_t)qos, relpri);
+        return NIL;
+}
+
+// os.pthread_get_qos_class_np() -> (Int, Int)
+TY_BUILTIN(os_pthread_get_qos_class_np)
+{
+        qos_class_t qos;
+        int relpri;
+        xT(pthread_get_qos_class_np, pthread_self(), &qos, &relpri);
+        return PAIR(INTEGER(qos), INTEGER(relpri));
+}
+
+inline static double
+mtscale(void)
+{
+        mach_timebase_info_data_t tb;
+        mach_timebase_info(&tb);
+        return 1e9 * tb.denom / tb.numer;
+}
+
+inline static int
+kerrno(kern_return_t kr)
+{
+        return (kr == KERN_NOT_SUPPORTED)      ? ENOTSUP
+             : (kr == KERN_INVALID_ARGUMENT)   ? EINVAL
+             : (kr == KERN_INVALID_POLICY)     ? EINVAL
+             : (kr == KERN_NO_ACCESS)          ? EPERM
+             : (kr == KERN_PROTECTION_FAILURE) ? EPERM
+             : (kr == KERN_RESOURCE_SHORTAGE)  ? ENOMEM
+             :                                   EIO;
+}
+
+#define MachError(kr, f) OSError(kerrno(kr), "%s()", (f))
+
+#define TSET(f, p) do {                                                 \
+        kern_return_t _kr = thread_policy_set(                          \
+                pthread_mach_thread_np(pthread_self()),                 \
+                THREAD_##f##_POLICY,                                    \
+                (thread_policy_t)&(p),                                  \
+                THREAD_##f##_POLICY_COUNT                               \
+        );                                                              \
+        if (_kr != KERN_SUCCESS) {                                      \
+                MachError(_kr, "thread_policy_set");                    \
+        }                                                               \
+} while (0)
+
+#define TGET(f, p) do {                                                 \
+        mach_msg_type_number_t _n    = THREAD_##f##_POLICY_COUNT;       \
+        boolean_t              _dflt = FALSE;                           \
+        kern_return_t _kr = thread_policy_get(                          \
+                pthread_mach_thread_np(pthread_self()),                 \
+                THREAD_##f##_POLICY,                                    \
+                (thread_policy_t)&(p),                                  \
+                &_n,                                                    \
+                &_dflt                                                  \
+        );                                                              \
+        if (_kr != KERN_SUCCESS) {                                      \
+                MachError(_kr, "thread_policy_get");                    \
+        }                                                               \
+} while (0)
+
+// os.thread_set_affinity(tag: Int) -> nil
+TY_BUILTIN(os_thread_set_affinity)
+{
+        thread_affinity_policy_data_t p = { .affinity_tag = tag };
+        TSET(AFFINITY, p);
+        return NIL;
+}
+
+// os.thread_get_affinity() -> Int
+TY_BUILTIN(os_thread_get_affinity)
+{
+        thread_affinity_policy_data_t p;
+        TGET(AFFINITY, p);
+        return INTEGER(p.affinity_tag);
+}
+
+// os.thread_set_precedence(importance: Int) -> nil
+TY_BUILTIN(os_thread_set_precedence)
+{
+        thread_precedence_policy_data_t p = { .importance = importance };
+        TSET(PRECEDENCE, p);
+        return NIL;
+}
+
+// os.thread_get_precedence() -> Int
+TY_BUILTIN(os_thread_get_precedence)
+{
+        thread_precedence_policy_data_t p;
+        TGET(PRECEDENCE, p);
+        return INTEGER(p.importance);
+}
+
+// os.thread_set_timeshare(timeshare: Bool) -> nil
+TY_BUILTIN(os_thread_set_timeshare)
+{
+        thread_extended_policy_data_t p = { .timeshare = timeshare };
+        TSET(EXTENDED, p);
+        return NIL;
+}
+
+// os.thread_get_timeshare() -> Bool
+TY_BUILTIN(os_thread_get_timeshare)
+{
+        thread_extended_policy_data_t p;
+        TGET(EXTENDED, p);
+        return BOOLEAN(p.timeshare);
+}
+
+// os.thread_set_time_constraint(
+//     period: Float,
+//     computation: Float,
+//     constraint: Float,
+//     preemptible: Bool = true
+// ) -> nil
+TY_BUILTIN(os_thread_set_time_constraint)
+{
+        double k = mtscale();
+        thread_time_constraint_policy_data_t p = {
+                .period      = (u32)(period      * k),
+                .computation = (u32)(computation * k),
+                .constraint  = (u32)(constraint  * k),
+                .preemptible = preemptible
+        };
+        TSET(TIME_CONSTRAINT, p);
+        return NIL;
+}
+
+// os.thread_get_time_constraint() -> {
+//     period: Float,
+//     computation: Float,
+//     constraint: Float,
+//     preemptible: Bool
+// }
+TY_BUILTIN(os_thread_get_time_constraint)
+{
+        double k = mtscale();
+        thread_time_constraint_policy_data_t p;
+        TGET(TIME_CONSTRAINT, p);
+        return vTn(
+                "period",      REAL(p.period      / k),
+                "computation", REAL(p.computation / k),
+                "constraint",  REAL(p.constraint  / k),
+                "preemptible", BOOLEAN(p.preemptible)
+        );
+}
+
+#undef TGET
+#undef TSET
+
+// os.task_set_role(role: Int) -> nil
+TY_BUILTIN(os_task_set_role)
+{
+        task_category_policy_data_t p = { .role = (task_role_t)role };
+        kern_return_t kr = task_policy_set(
+                mach_task_self(),
+                TASK_CATEGORY_POLICY,
+                (task_policy_t)&p,
+                TASK_CATEGORY_POLICY_COUNT
+        );
+        if (kr != KERN_SUCCESS) {
+                MachError(kr, "task_policy_set");
+        }
+        return NIL;
+}
+
+// os.task_get_role() -> Int
+TY_BUILTIN(os_task_get_role)
+{
+        task_category_policy_data_t p;
+        mach_msg_type_number_t n    = TASK_CATEGORY_POLICY_COUNT;
+        boolean_t              dflt = FALSE;
+        kern_return_t kr = task_policy_get(
+                mach_task_self(),
+                TASK_CATEGORY_POLICY,
+                (task_policy_t)&p,
+                &n,
+                &dflt
+        );
+        if (kr != KERN_SUCCESS) {
+                MachError(kr, "task_policy_get");
+        }
+        return INTEGER(p.role);
+}
+
+#undef MachError
+#endif
+
+#undef xT
+#undef xE
+#endif
 
 #ifdef _WIN32
 #define WAITMACRO(name) { NOT_ON_WINDOWS("os." #name); }

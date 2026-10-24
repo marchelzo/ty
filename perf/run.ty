@@ -14,6 +14,7 @@ import lib (
     Result,
     BenchRecord,
 )
+import sched (elevate, SCHED_ENV)
 import history (
     DEFAULT_DATABASE,
     record-run,
@@ -55,6 +56,12 @@ clap! RunOptions v1 {
 
     /// Number of timed rounds
     rounds: Int, short: 'n', default: 5, check: 1..100
+
+    /// CPU to pin benchmark processes to (Linux; default: fastest available)
+    cpu: Int, short: None, check: 0..65536
+
+    /// Don't pin benchmark processes or raise their scheduling priority
+    noPin: Bool, short: 'P'
 }
 
 /** Browse available benchmarks and their tags. */
@@ -237,10 +244,14 @@ fn run-suite(opts: RunOptions, database: String) {
         os.exit(1)
     }
 
+    unsetenv(SCHED_ENV)
+    let settings = opts.noPin ? [] : elevate(opts.cpu)
+
     let mode = ty.jit ? 'jit' : 'interpreter'
     print(chalk"[bold bright cyan]Ty performance suite[/]  {mode-label(mode)}")
     print(chalk"[cyan]{#running} benchmark(s)[/] [dim]· {opts.rounds} rounds · "
                "{opts.warmup} warmup[/]")
+    print(chalk"[dim]{settings.join(' · ') || 'default scheduling'}[/]")
     print()
 
     let started = now()

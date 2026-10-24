@@ -1,0 +1,98 @@
+import os
+
+pub const SCHED_ENV = 'TY_PERF_SCHED'
+
+fn ok?(f: () -> Any) -> Bool {
+    try {
+        f()
+        true
+    } catch _: OSError {
+        false
+    }
+}
+
+fn renice() -> String | nil {
+    for prio in os.PRIO_MIN..os.getpriority(os.PRIO_PROCESS, 0) {
+        if ok?(-> os.setpriority(os.PRIO_PROCESS, 0, prio)) {
+            return "nice {prio}"
+        }
+    }
+}
+
+#|if __linux__
+fn cpu-list(text: String) -> Array[Int] {
+    let cpus: Array[Int] = []
+    for match text.trim().split(',') {
+        /^(\d+)-(\d+)$/ => cpus.push(*(Int($1)...Int($2))),
+        /^(\d+)$/       => cpus.push(Int($1)),
+        _               => nil,
+    }
+    cpus
+}
+
+fn cpu-capacity(cpu: Int) -> Int {
+    let base = "/sys/devices/system/cpu/cpu{cpu}"
+    let text = slurp("{base}/cpu_capacity")
+            ?? slurp("{base}/acpi_cppc/highest_perf")
+            ?? slurp("{base}/cpufreq/cpuinfo_max_freq")
+            ?? ''
+    int(text.trim()) ?? 0
+}
+
+fn ranked-cpus() -> Array[Int] {
+    let allowed  = os.sched_getaffinity(0)
+    let isolated = cpu-list(slurp('/sys/devices/system/cpu/isolated') ?? '')
+    let capacity = %{c: cpu-capacity(c) for c in [*isolated, *allowed]}
+    let rank     = c -> (-(capacity[c] ?? 0), -c)
+    [*isolated.sort(by: rank), *allowed.sort(by: rank)].nub()
+}
+
+fn pin(cpu: Int | nil) -> Int | nil {
+    for c in (cpu == nil) ? ranked-cpus() : [cpu] {
+        if ok?(-> os.sched_setaffinity(0, [c])) {
+            return c
+        }
+    }
+}
+
+fn realtime() -> String | nil {
+    let top      = os.sched_get_priority_max(os.SCHED_FIFO)
+    let (cap, _) = os.getrlimit(os.RLIMIT_RTPRIO)
+    for prio in [top, min(top, cap)].nub() {
+        if prio > 0 && ok?(-> os.sched_setscheduler(0, os.SCHED_FIFO, prio)) {
+            return "SCHED_FIFO {prio}"
+        }
+    }
+}
+#|else if __apple__
+fn pin(cpu: Int | nil) -> Int | nil {
+    nil
+}
+
+fn realtime() -> String | nil {
+    let top = os.sched_get_priority_max(os.SCHED_RR)
+    ok?(-> os.pthread_setschedparam(os.SCHED_RR, top)) ? "SCHED_RR {top}" : nil
+}
+#|else
+fn pin(cpu: Int | nil) -> Int | nil {
+    nil
+}
+
+fn realtime() -> String | nil {
+    nil
+}
+#|]
+
+pub fn elevate(cpu: Int | nil = nil) -> Array[String] {
+    let pinned   = pin(cpu)
+    let settings = [renice(), realtime(), (pinned != nil) ? "CPU {pinned}" : nil]
+    setenv(SCHED_ENV, "{pinned ?? -1}")
+    settings.compact()
+}
+
+pub fn inherit-elevation() {
+    if let $spec = getenv(SCHED_ENV) {
+        let cpu = int(spec) ?? -1
+        elevate((cpu >= 0) ? cpu : nil)
+    }
+}

@@ -71,6 +71,11 @@
 #include <netinet/ip_mroute.h>
 #endif
 
+#if defined(__APPLE__)
+#include <mach/task_policy.h>
+#include <sys/qos.h>
+#endif
+
 #include "alloc.h"
 #include "array.h"
 #include "blob.h"

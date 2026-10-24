@@ -140,6 +140,52 @@ pub fn rlimit-roundtrip() {
     }
 }
 
+pub fn priority-roundtrip() {
+    if not __windows__ {
+        let prio = getpriority(PRIO_PROCESS, 0)
+        setpriority(PRIO_PROCESS, 0, prio)
+        assert(getpriority(PRIO_PROCESS, 0) == prio)
+        assert(sched_get_priority_min(SCHED_RR) <= sched_get_priority_max(SCHED_RR))
+        let (policy, sp) = pthread_getschedparam()
+        let after = Thread(fn () {
+            pthread_setschedparam(policy, sp)
+            pthread_getschedparam()
+        }).join()
+        assert(after == (policy, sp))
+        assert(gettid() > 0)
+    }
+}
+
+#|if __linux__
+pub fn affinity-roundtrip() {
+    let cpus = sched_getaffinity()
+    defer sched_setaffinity(0, cpus)
+    sched_setaffinity(0, [cpus[0]])
+    assert(sched_getaffinity(0) == [cpus[0]])
+    assert(sched_getcpu() == cpus[0])
+    assert(errno-of(-> sched_setaffinity(0, [])) == EINVAL)
+    assert(errno-of(-> sched_get_priority_max(-12345)) == EINVAL)
+    let policy = sched_getscheduler()
+    sched_setscheduler(0, policy, sched_getparam())
+    assert(sched_getscheduler(0) == policy)
+}
+#|else if __apple__
+pub fn qos-roundtrip() {
+    let qos = Thread(fn () {
+        pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, -1)
+        pthread_get_qos_class_np()
+    }).join()
+    assert(qos == (QOS_CLASS_UTILITY, -1))
+    let fixed = Thread(fn () {
+        thread_set_timeshare(false)
+        (thread_get_timeshare(), pthread_get_qos_class_np())
+    }).join()
+    assert(fixed == (false, (QOS_CLASS_UNSPECIFIED, 0)))
+    assert(task_get_role() >= TASK_RENICED)
+    assert(thread_get_precedence() >= 0)
+}
+#|]
+
 fn sh-output(script: String, %opts) -> String {
     output(spawn(['sh', '-c', script], stdout: SPAWN_PIPE, **opts))
 }
