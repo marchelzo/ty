@@ -7,37 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#ifdef _WIN32
-#  define UNLIKELY(x)  (x)
-#  define LIKELY(x)    (x)
-#  define EXPECT(x, y) (x)
-#  ifndef TY_RELEASE
-#    define UNREACHABLE(msg) assert(! "" msg)
-#  else
-#    define UNREACHABLE(msg) __assume(0)
-#  endif
-#else
-#  define UNLIKELY(x)  __builtin_expect((x), 0)
-#  define LIKELY(x)    __builtin_expect((x), 1)
-#  define EXPECT(x, y) __builtin_expect((x), (y))
-#  ifndef TY_RELEASE
-#    define UNREACHABLE(msg) assert(! "" msg)
-#  else
-#    define UNREACHABLE(msg) __builtin_unreachable()
-#  endif
-#endif
-
 #include "vec.h"
-
-#define CAT(a, b) a ## b
-
-#define countof(x) (sizeof (x) / sizeof ((x)[0]))
-
-#define VA_COUNT_INNER(_1, _2, _3, _4, _5, _6, _7, _8, COUNT, ...) COUNT
-#define VA_COUNT(...) VA_COUNT_INNER(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
-
-#define VA_SELECT_INNER(f, i) CAT(f##_, i)
-#define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
 #if defined(TY_RELEASE) && !defined(TY_SYSMALLOC)
  #include <mimalloc.h>
@@ -168,7 +138,6 @@ typedef struct statement        Stmt;
 typedef struct module           Module;
 typedef struct symbol           Symbol;
 typedef struct scope            Scope;
-typedef struct frame            Frame;
 typedef struct target           Target;
 typedef struct type_bound       TypeBound;
 typedef struct type_hint        TypeHint;
@@ -178,21 +147,21 @@ typedef struct class            Class;
 typedef struct class_definition ClassDefinition;
 typedef struct diag_sink        DiagSink;
 
-typedef vec(char)           byte_vector;
-typedef vec(bool)           BoolVector;
-typedef svec(int)           int_vector;
-typedef svec(i32)           i32Vector;
-typedef vec(i16)            i16Vector;
-typedef vec(u16)            u16Vector;
-typedef vec(u32)            U32Vector;
-typedef vec(u64)            u64Vector;
-typedef svec(char *)        StringVector;
-typedef svec(char const *)  ConstStringVector;
-typedef svec(Expr *)        ExprVec;
-typedef svec(Stmt *)        StmtVec;
-typedef svec(TypeBound)     TypeBoundVector;
-typedef svec(TypeHint)      TypeHintVector;
-typedef vec(Module *)       ModuleVector;
+typedef vec(char)               byte_vector;
+typedef vec(bool)               BoolVector;
+typedef small_vec(int)          int_vector;
+typedef small_vec(i32)          i32Vector;
+typedef vec(i16)                i16Vector;
+typedef vec(u16)                u16Vector;
+typedef vec(u32)                U32Vector;
+typedef vec(u64)                u64Vector;
+typedef small_vec(char *)       StringVector;
+typedef small_vec(char const *) ConstStringVector;
+typedef small_vec(Expr *)       ExprVec;
+typedef small_vec(Stmt *)       StmtVec;
+typedef small_vec(TypeBound)    TypeBoundVector;
+typedef small_vec(TypeHint)     TypeHintVector;
+typedef vec(Module *)           ModuleVector;
 
 #define m0(x) memset(&(x), 0, sizeof (x))
 

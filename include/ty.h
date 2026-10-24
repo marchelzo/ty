@@ -53,7 +53,7 @@ typedef vec(struct try *)   TryStack;
 typedef vec(Value)          ValueVector;
 typedef vec(Value)          ValueStack;
 typedef vec(Class *)        ClassVector;
-typedef svec(Symbol *)      symbol_vector;
+typedef small_vec(Symbol *) symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
 enum { INTERN_TABLE_SIZE = 256 };

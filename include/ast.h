@@ -43,7 +43,7 @@ typedef struct {
         Location end;
 } MethodAlias;
 
-typedef svec(MethodAlias) MethodAliasVec;
+typedef small_vec(MethodAlias) MethodAliasVec;
 
 struct class_definition {
         int symbol;
@@ -90,7 +90,7 @@ struct condpart {
         Location end;
 };
 
-typedef svec(struct condpart *) condpart_vector;
+typedef small_vec(struct condpart *) condpart_vector;
 
 typedef struct {
         Expr *pattern;
@@ -100,7 +100,7 @@ typedef struct {
         Stmt *where;
 } ComprPart;
 
-typedef svec(ComprPart) Comprehension;
+typedef small_vec(ComprPart) Comprehension;
 
 
 #define TY_STATEMENT_TYPES        \
@@ -380,13 +380,13 @@ typedef struct {
 } TemplateX;
 
 typedef struct {
-        svec(bool)    optional;
-        Comprehension compr;
+        small_vec(bool) optional;
+        Comprehension   compr;
 } ListX;
 
 typedef struct {
-        svec(bool) required;
-        ExprVec   tconds;
+        small_vec(bool) required;
+        ExprVec         tconds;
 } TupleX;
 
 typedef struct {
@@ -499,7 +499,7 @@ struct expression {
                                 Expr *lang;
                                 char const *re_flags;
                         };
-                        svec(Bytes) strings;
+                        small_vec(Bytes) strings;
                         ExprVec expressions;
                         FmtX *fmx;
                 };
@@ -610,8 +610,8 @@ struct statement {
                 };
                 StmtVec statements;
                 Expr *ret;
-                svec(char *) exports;
-                svec(Symbol *) drop;
+                small_vec(char *) exports;
+                small_vec(Symbol *) drop;
                 struct {
                         char *module;
                         char *as;

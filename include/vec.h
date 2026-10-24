@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#include "pp.h"
+
 typedef size_t vec_z;
 
 inline static vec_z
@@ -15,14 +17,15 @@ fit2(vec_z cap, vec_z min)
         return cap;
 }
 
-#define intrusive_vec(T) \
-        T *items;        \
-        vec_z count;     \
-        vec_z capacity
+#define intrusive_vec_2(I, T) \
+        T *items;             \
+        I count;              \
+        I capacity
+#define intrusive_vec_1(T) intrusive_vec_2(size_t, T)
+#define intrusive_vec(...) VA_SELECT(intrusive_vec, __VA_ARGS__)
 
-#define vec(T) struct { intrusive_vec(T); }
-
-#define svec(T) struct { T *items; i32 count; i32 capacity; }
+#define vec(...) struct { intrusive_vec(__VA_ARGS__); }
+#define small_vec(T) vec(u32, T)
 
 #define vec_init(v, ...) (                      \
         ((v).items    = NULL),                  \

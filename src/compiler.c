@@ -20608,20 +20608,6 @@ CompilationDepth(Ty *ty)
         return n;
 }
 
-inline static int
-ExpressionTypeWidth(Expr const *e)
-{
-        if (
-                (e == NULL)
-             && (e->type == EXPRESSION_STATEMENT)
-             && (e->type == STATEMENT_EXPRESSION)
-        ) {
-                return 0;
-        }
-
-        return strlen(ExpressionTypeName(e));
-}
-
 int
 WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
 {
@@ -20640,12 +20626,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         int col = LocCol(e->start);
 
         if (e->type == EXPRESSION_CTX_INFO) {
-                return dump(
-                        out,
-                        "%43s%s\n",
-                        "",
-                        e->message
-                );
+                return dump(out, "%43s%s\n", "", e->message);
         }
 
         int etw = 0;
@@ -21973,7 +21954,6 @@ DumpProgram(
         bool b = false;
         double x;
         int n, nkw = 0, i, j, tag;
-        Value f;
 
         bool DebugScan = false;
         u32 limit = UINT32_MAX;
