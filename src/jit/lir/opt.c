@@ -1042,7 +1042,7 @@ covers(Cell const *c, i64 lo, i64 hi)
 }
 
 static void
-splice(Cell *c, i64 lo, u32 size, u64 bits)
+xsplice(Cell *c, i64 lo, u32 size, u64 bits)
 {
         u32 shift = 8 * (lo - c->off);
         u64 mask  = (size == 8) ? UINT64_MAX : ((1ULL << (8 * size)) - 1);
@@ -1060,7 +1060,7 @@ clobber(Fwd *f, LirReg root, i64 lo, i64 hi, Cell const *merge)
                         forget(f, k);
                 } else if (c->off < hi && lo < c->off + c->size) {
                         if (merge != NULL && c->known && covers(c, lo, hi)) {
-                                splice(c, lo, merge->size, merge->bits);
+                                xsplice(c, lo, merge->size, merge->bits);
                         } else {
                                 forget(f, k);
                         }
