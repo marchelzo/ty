@@ -2227,7 +2227,7 @@ T2Type
 find_type_hint(TypeHintVector const *hints, iptr off)
 {
         isize lo = 0;
-        isize hi = vN(*hints) - 1;
+        isize hi = (isize)vN(*hints) - 1;
 
         while (lo <= hi) {
                 isize m = (lo + hi) / 2;

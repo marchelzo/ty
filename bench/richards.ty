@@ -407,7 +407,7 @@ fn main() {
 
     print("======= Richards Benchmark ({n} iterations) =======")
     print("Warming up...")
-    for ..250 {
+    for ..125 {
         richards_run()
     }
     print("Running benchmark...")
