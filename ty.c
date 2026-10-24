@@ -713,6 +713,9 @@ ProcessArgs(char *argv[], bool first)
                                 "%s version %s (%s)\n"
                                 "Compiler: %s %s\n"
                                 "Platform: %s-%s\n"
+#if defined(TY_HAVE_GIT_STATUS)
+                                "Commit:   %s%s\n"
+#endif
                                 "PGO:      %s\n"
                                 "BOLT:     %s (relocs: %s)\n"
                                 "CFLAGS:   %s\n"
@@ -728,6 +731,10 @@ ProcessArgs(char *argv[], bool first)
                                 VersionInfo_CompilerVersion,
                                 VersionInfo_Architecture,
                                 VersionInfo_BuildType,
+#if defined(TY_HAVE_GIT_STATUS)
+                                VersionInfo_GitCommitHash,
+                                VersionInfo_GitUncommittedChanges ? " (dirty)" : "",
+#endif
                                 TY_BUILD_PGO,
                                 isbolted() ? "yes" : "no",
                                 TY_BUILD_BOLT_RELOCS,

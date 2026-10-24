@@ -25,9 +25,15 @@ CREATE TABLE IF NOT EXISTS runs (
     eligibility_reason  TEXT NOT NULL,
     manual_eligible     INTEGER CHECK (manual_eligible IN (0, 1)),
     manual_reason       TEXT,
-    baseline_reset      INTEGER NOT NULL DEFAULT 0 CHECK (baseline_reset IN (0, 1)),
     note                TEXT,
-    command             TEXT
+    command             TEXT,
+    compiler            TEXT,
+    platform            TEXT,
+    pgo                 TEXT,
+    bolt                TEXT,
+    cflags              TEXT,
+    ldflags             TEXT,
+    version_text        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS measurements (
@@ -46,11 +52,6 @@ CREATE TABLE IF NOT EXISTS measurements (
     validity_reason     TEXT,
     manual_valid        INTEGER CHECK (manual_valid IN (0, 1)),
     manual_reason       TEXT,
-    baseline_seconds    REAL,
-    baseline_mad        REAL,
-    baseline_run_count  INTEGER NOT NULL DEFAULT 0,
-    change_ratio        REAL,
-    significance_ratio  REAL,
     verdict             TEXT NOT NULL,
     UNIQUE (run_id, benchmark)
 );

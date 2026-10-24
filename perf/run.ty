@@ -19,6 +19,7 @@ import history (
     record-run,
     print-run,
     print-history,
+    print-goats,
     latest-run-id,
     compare-runs,
     print-trend,
@@ -49,12 +50,6 @@ clap! RunOptions v1 {
     /// Attach a note to this historical run
     note: String, short: None
 
-    /// Number of recent eligible runs in a robust baseline
-    historyWindow: Int, short: None, default: 5, check: 1..100
-
-    /// Minimum percentage change reported as a regression
-    regressionThreshold: Float, short: None, default: 5.0, check: 0..100
-
     /// Number of warmup iterations
     warmup: Int, short: 'w', default: 3, check: 0..100
 
@@ -73,7 +68,7 @@ clap! HistoryOptions v1 {
     /// Maximum number of runs to show
     limit: Int, short: 'n', default: 20, check: 1..1000
 
-    /// Only show baseline-eligible runs
+    /// Only show eligible runs
     eligible: Bool, short: 'e'
 
     /// Only show runs containing a matching benchmark
@@ -86,12 +81,12 @@ clap! ShowOptions v1 {
     runId: Int, pos: true
 }
 
-/** Compare one run with its baseline or another run. */
+/** Compare one run with the best recorded times or another run. */
 clap! CompareOptions v1 {
     /// Run ID (default: latest)
     runId: Int, pos: true
 
-    /// Other run ID (default: the first run's robust baseline)
+    /// Other run ID (default: best time from any other run)
     against: Int, pos: true
 }
 
@@ -107,7 +102,7 @@ clap! TrendOptions v1 {
     all: Bool, short: 'a'
 }
 
-/** Exit nonzero when a run contains regressions or anomalies. */
+/** Exit nonzero when a run is slower than the best recorded times or has anomalies. */
 clap! CheckOptions v1 {
     /// Run ID (default: latest)
     runId: Int, pos: true
@@ -116,7 +111,7 @@ clap! CheckOptions v1 {
     threshold: Float, short: 't', default: 5.0, check: 0..100
 }
 
-/** Include or exclude a run from future baselines. */
+/** Mark a run as eligible or excluded. */
 clap! StatusOptions v1 {
     /// Run ID
     runId: Int, pos: true, required: true
@@ -126,6 +121,12 @@ clap! StatusOptions v1 {
 
     /// Explain the manual decision
     reason: String, short: 'r'
+}
+
+/** Show the record holder for each benchmark and its lead over the runner-up. */
+clap! GoatsOptions v1 {
+    /// Only show benchmarks matching this name filter
+    filter: String, pos: true
 }
 
 /** Ty performance suite — benchmark, inspect history, and catch regressions. */
@@ -145,7 +146,7 @@ clap! Perf v1 {
     /// View one recorded run
     cmd show: ShowOptions
 
-    /// Compare runs or compare a run with its baseline
+    /// Compare runs or compare a run with the best recorded times
     cmd compare: CompareOptions
 
     /// Visualize a benchmark over time
@@ -154,11 +155,14 @@ clap! Perf v1 {
     /// Check a run for regressions
     cmd check: CheckOptions
 
-    /// Override a run's baseline eligibility
+    /// Override a run's eligibility
     cmd status: StatusOptions
+
+    /// Show the best run for each benchmark
+    cmd goats: GoatsOptions
 }
 
-let COMMANDS = ['run', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status']
+let COMMANDS = ['run', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status', 'goats']
 
 fn normalized-argv() -> [String] {
     let args = argv
@@ -270,9 +274,7 @@ fn run-suite(opts: RunOptions, database: String) {
 
     let run-id = record-run(
         database, results, mode, opts.warmup, opts.rounds, opts.filter,
-        #all, now() - started, opts.note,
-        window=opts.historyWindow,
-        threshold=opts.regressionThreshold / 100.0
+        #all, now() - started, opts.note
     )
     save-results(RESULTS_FILE, results)
     print()
@@ -311,6 +313,7 @@ fn main() {
         status: StatusOptions => set-status(
             opts.database, status.runId, status.status, status.reason
         ),
+        goats: GoatsOptions => print-goats(opts.database, goats.filter),
         _ => nil
     }
 }

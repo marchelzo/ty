@@ -4,8 +4,10 @@ import date (utc-now)
 import hash (sha256)
 import json
 import os
+import math
 import chalk (chalk)
-import sh (sh, Success)
+import sh (sh, run, Success)
+import ty
 
 import lib (Result, fmt-time, fmt-delta)
 
@@ -13,11 +15,7 @@ let PERF_DIR = Path(__file__).parent
 let ROOT_DIR = PERF_DIR.parent
 
 pub DEFAULT_DATABASE = "{PERF_DIR}/history.sqlite3"
-let BASELINE_WINDOW = 5
-let MIN_CHANGE = 0.05
 let MAX_CV = 0.25
-let MIN_PLAUSIBLE_RATIO = 0.20
-let MAX_PLAUSIBLE_RATIO = 5.0
 
 use Metadata = {
     commit: String,
@@ -27,22 +25,18 @@ use Metadata = {
     machineJson: String,
     machineId: String,
     build: String,
+    buildInfo: BuildInfo,
     suite: String,
 }
 
-use Baseline = {
-    median: Float,
-    mad: Float,
-    n: Int,
-}
-
-use Classification = {
-    valid: Bool,
-    reason: String | nil,
-    ratio: Float | nil,
-    significance: Float,
-    verdict: String,
-    cv: Float,
+use BuildInfo = {
+    compiler: String | nil,
+    platform: String | nil,
+    pgo: String | nil,
+    bolt: String | nil,
+    cflags: String | nil,
+    ldflags: String | nil,
+    version: String,
 }
 
 @table
@@ -73,9 +67,15 @@ class Run {
     eligibility_reason:  String
     manual_eligible:     Int | nil
     manual_reason:       String | nil
-    baseline_reset:      Int = 0
     note:                String | nil
     command:             String | nil
+    compiler:            String | nil
+    platform:            String | nil
+    pgo:                 String | nil
+    bolt:                String | nil
+    cflags:              String | nil
+    ldflags:             String | nil
+    version_text:        String | nil
 }
 
 @table
@@ -97,11 +97,6 @@ class Measurement {
     validity_reason:     String | nil
     manual_valid:        Int | nil
     manual_reason:       String | nil
-    baseline_seconds:    Float | nil
-    baseline_mad:        Float | nil
-    baseline_run_count:  Int = 0
-    change_ratio:        Float | nil
-    significance_ratio:  Float | nil
     verdict:             String
 }
 
@@ -124,19 +119,6 @@ fn command(cmd: String) -> String {
     }
 }
 
-fn median(xs: [Float]) -> Float {
-    let ys = xs.sort()
-    if #ys % 2 == 0 {
-        (ys[#ys / 2 - 1] + ys[#ys / 2]) / 2.0
-    } else {
-        ys[#ys / 2]
-    }
-}
-
-fn mad(xs: [Float], center: Float) -> Float {
-    median(xs.map(x -> (x - center).abs))
-}
-
 fn suite-hash() -> String {
     let h = sha256()
     let files = [PERF_DIR / 'lib.ty', *(PERF_DIR / 'benchmarks').glob('*.ty').sort(by: \_.name)]
@@ -148,9 +130,32 @@ fn suite-hash() -> String {
     h.hexdigest().slice(0, 20)
 }
 
+fn version-info() -> (String, Bool, BuildInfo) {
+    let result = run([ty.executable, '--version'])
+    let text = match result.fate {
+        Success => result.stdout,
+        fate    => throw RuntimeError("`{ty.executable} --version` failed: {fate}\n{result.stderr}")
+    }
+    let fields = %{}
+    for match text.lines() {
+        /^(\w+):\s*(.*)$/ => fields[$1.lower()] = $2.trim(),
+        _                  => ()
+    }
+    let [commit, *flags] = (fields['commit'] ?? 'unknown').split(/\s+/)
+    (commit, '(dirty)' in flags, {
+        compiler: fields['compiler'],
+        platform: fields['platform'],
+        pgo: fields['pgo'],
+        bolt: fields['bolt'],
+        cflags: fields['cflags'],
+        ldflags: fields['ldflags'],
+        version: text,
+    })
+}
+
 fn metadata() -> Metadata {
+    let (commit, dirty, info) = version-info()
     let dirty-text = command('git status --porcelain=v1 --untracked-files=no')
-    let dirty-files = dirty-text ? dirty-text.lines() : []
     let machine = %{
         'hostname': command('hostname'),
         'system': command('uname -s'),
@@ -159,16 +164,16 @@ fn metadata() -> Metadata {
         'cpu': command("sysctl -n machdep.cpu.brand_string 2>/dev/null || sed -n 's/^model name[^:]*: //p' /proc/cpuinfo 2>/dev/null | head -1"),
     }
     let machine-json = json.encode(machine)
-    let build-config = 'unknown-build'
-    try { build-config = (ROOT_DIR / 'obj/.build_sig').read-text().trim() } catch _ {}
+    let build = [info.compiler, info.platform, info.pgo, info.bolt, info.cflags, info.ldflags]
     return {
-        commit: command('git rev-parse HEAD'),
+        commit: commit,
         branch: command('git branch --show-current'),
-        dirty: #dirty-files > 0,
-        dirtyFiles: dirty-files,
+        dirty: dirty,
+        dirtyFiles: dirty-text ? dirty-text.lines() : [],
         machineJson: machine-json,
         machineId: sha256(machine-json).hexdigest().slice(0, 16),
-        build: build-config,
+        build: sha256(build.map(\_ ?? '').join('\0')).hexdigest().slice(0, 16),
+        buildInfo: info,
         suite: suite-hash(),
     }
 }
@@ -178,87 +183,12 @@ pub fn open-history(path: String = DEFAULT_DATABASE) {
         path,
         full-mutex=false,
         schema=(PERF_DIR / 'history.sql').read-text(),
-        sync=false
+        sync=true
     )
 }
 
 fn close-history() {
     disconnect()
-}
-
-fn baseline(
-    meta: Metadata,
-    mode: String,
-    benchmark: String,
-    window: Int,
-) -> Baseline | nil {
-    let rows = sql-rows(
-        """
-        SELECT m.median_seconds
-          FROM measurements AS m
-          JOIN runs AS r ON r.id = m.run_id
-         WHERE m.benchmark = ?
-           AND r.runner = 'ty' AND r.mode = ? AND r.branch = ?
-           AND r.build_config = ? AND r.machine_id = ? AND r.suite_hash = ?
-           AND COALESCE(r.manual_eligible, r.auto_eligible) = 1
-           AND COALESCE(m.manual_valid, m.auto_valid) = 1
-           AND r.id >= COALESCE((
-                SELECT max(r2.id) FROM runs AS r2
-                 WHERE r2.runner = 'ty' AND r2.mode = ? AND r2.branch = ?
-                   AND r2.build_config = ? AND r2.machine_id = ?
-                   AND r2.suite_hash = ? AND r2.baseline_reset = 1
-                   AND COALESCE(r2.manual_eligible, r2.auto_eligible) = 1
-           ), 0)
-         ORDER BY r.id DESC LIMIT ?
-        """,
-        benchmark,
-        mode, meta.branch, meta.build, meta.machineId, meta.suite,
-        mode, meta.branch, meta.build, meta.machineId, meta.suite,
-        window
-    )
-    let values: [Float] = rows.map(row -> Float(row['median_seconds']))
-    if #values == 0 { return nil }
-    let center = median(values)
-    return {
-        median: center,
-        mad: mad(values, center),
-        n: #values
-    }
-}
-
-fn classify(
-    r: Result,
-    base: Baseline | nil,
-    threshold: Float,
-) -> Classification {
-    let cv = r.mean > 0 ? r.sd / r.mean : 1.0 / 0.0
-    let valid = r.med > 0 && cv <= MAX_CV
-    let reason: String | nil = nil
-    if r.med <= 0 {
-        reason = 'non-positive timing value'
-    } else if cv > MAX_CV {
-        reason = "within-run CV {cv * 100:.1}% exceeds {MAX_CV * 100:.0}%"
-    }
-
-    let ratio: Float | nil = base ? r.med / base.median : nil
-    if valid && ratio != nil
-    && (ratio < MIN_PLAUSIBLE_RATIO || ratio > MAX_PLAUSIBLE_RATIO) {
-        valid = false
-        reason = "implausible {ratio:.3}x jump from robust baseline"
-    }
-
-    let significance = base
-        ? max(threshold, 3.0 * 1.4826 * base.mad / base.median)
-        : threshold
-    let verdict = if !valid { 'anomaly' }
-        else if ratio == nil { 'no-baseline' }
-        else if ratio > 1.0 + significance { 'regression' }
-        else if ratio < 1.0 - significance { 'improvement' }
-        else { 'stable' }
-    return {
-        valid, reason, ratio,
-        significance, verdict, cv
-    }
 }
 
 pub fn record-run(
@@ -271,8 +201,6 @@ pub fn record-run(
     expected-count: Int,
     duration: Float,
     note: String | nil,
-    window: Int = BASELINE_WINDOW,
-    threshold: Float = MIN_CHANGE,
 ) -> Int {
     open-history(path)
     let meta = metadata()
@@ -282,7 +210,6 @@ pub fn record-run(
         else if !full-suite { 'partial/filtered suite' }
         else if rounds < 3 { 'fewer than 3 timed rounds' }
         else { 'clean, complete suite' }
-    let bases = %{r.name: baseline(meta, mode, r.name, window) for r in results}
 
     let run-id = 0
     let dirty-value = Int(meta.dirty)
@@ -300,6 +227,13 @@ pub fn record-run(
                 runner='ty',
                 mode=mode,
                 build_config=meta.build,
+                compiler=meta.buildInfo.compiler,
+                platform=meta.buildInfo.platform,
+                pgo=meta.buildInfo.pgo,
+                bolt=meta.buildInfo.bolt,
+                cflags=meta.buildInfo.cflags,
+                ldflags=meta.buildInfo.ldflags,
+                version_text=meta.buildInfo.version,
                 commit_hash=meta.commit,
                 branch=meta.branch,
                 dirty=dirty-value,
@@ -323,11 +257,10 @@ pub fn record-run(
 
             for r in results {
                 phase = "measurement '{r.name}'"
-                let base = bases[r.name]
-                let c = classify(r, base, threshold)
-                let base-median = base ? base.median : nil
-                let base-mad = base ? base.mad : nil
-                let base-count = base ? base.n : 0
+                let cv = r.mean > 0 ? r.sd / r.mean : 1.0 / 0.0
+                let reason = r.med <= 0  ? 'non-positive timing value'
+                           : cv > MAX_CV ? "within-run CV {cv * 100:.1}% exceeds {MAX_CV * 100:.0}%"
+                           :               nil
                 let $stddev = r.sd
                     or throw RuntimeError("'{r.name}' has no timing samples")
                 let measurement = Measurement(
@@ -340,15 +273,10 @@ pub fn record-run(
                     min_seconds=r.best,
                     max_seconds=r.worst,
                     stddev_seconds=stddev,
-                    cv=c.cv,
-                    auto_valid=c.valid ? 1 : 0,
-                    validity_reason=c.reason,
-                    baseline_seconds=base-median,
-                    baseline_mad=base-mad,
-                    baseline_run_count=base-count,
-                    change_ratio=c.ratio,
-                    significance_ratio=c.significance,
-                    verdict=c.verdict
+                    cv=cv,
+                    auto_valid=Int(reason == nil),
+                    validity_reason=reason,
+                    verdict=reason == nil ? 'valid' : 'anomaly'
                 ).insert()
                 let $measurement-id = measurement.id
                     or throw RuntimeError('measurement insert did not return an id')
@@ -376,12 +304,24 @@ pub fn record-run(
     run-id
 }
 
-fn status-label(row) {
-    if row['manual_eligible'] == 0 { chalk"[red]excluded[/]" }
-    else if row['manual_eligible'] == 1 { chalk"[bright green]accepted[/]" }
-    else if row['auto_eligible'] == 1 { chalk"[green]eligible[/]" }
-    else if row['dirty'] == 1 { chalk"[yellow]dirty[/]" }
-    else { chalk"[dim]partial[/]" }
+fn status-label(row, width: Int = 0) {
+    let (text, style) = row['manual_eligible'] == 0 ? ('excluded', 'red')
+                      : row['manual_eligible'] == 1 ? ('accepted', 'bright green')
+                      : row['auto_eligible']   == 1 ? ('eligible', 'green')
+                      : row['dirty']           == 1 ? ('dirty',    'yellow')
+                      :                               ('partial',  'dim')
+    chalk"[{style}]{text:<{width}}[/]"
+}
+
+pub fn build-label(row, width: Int = 0) {
+    let pgo? = row['pgo'] == 'use'
+    let bolt? = (row['bolt'] ?? '').starts?('yes')
+    let (text, style) = row['pgo'] == nil && row['bolt'] == nil ? ('?',    'dim')
+                      : pgo? && bolt?                         ? ('opt',  'bright magenta bold')
+                      : pgo?                                  ? ('pgo',  'magenta')
+                      : bolt?                                 ? ('bolt', 'magenta')
+                      :                                         ('—',    'dim')
+    chalk"[{style}]{text:<{width}}[/]"
 }
 
 fn display-time(value: Float | nil) -> String {
@@ -478,32 +418,70 @@ pub fn verdict-label(verdict) {
     chalk"[{style}]{value}[/]"
 }
 
+fn best-times(excluding: Int | nil = nil) -> String {
+    let skip = excluding == nil ? '' : "AND run_id != {excluding}"
+    """
+    SELECT benchmark, MIN(median_seconds) AS best, run_id AS best_run
+      FROM measurements WHERE median_seconds > 0 {skip}
+     GROUP BY benchmark
+    """
+}
+
 pub fn print-run(path: String, run-id: Int) {
     open-history(path)
     let $stored-run = Run.get(run-id)
         or throw ValueError("no performance run #{run-id}")
     let run = stored-run.to-dict()
-    let rows: [_] = Measurement.where('run_id = ?', run-id)
-        .order('benchmark')
-        .all()
-        .map(\_.to-dict())
+    let rows: [_] = sql-rows(
+        """
+        SELECT m.benchmark, m.median_seconds AS current, b.best, b.best_run
+          FROM measurements AS m JOIN ({best-times()}) AS b ON b.benchmark = m.benchmark
+         WHERE m.run_id = ?
+         ORDER BY m.benchmark
+        """, run-id
+    )
     print(chalk"[bold bright cyan]Run[/] {run-label(run-id)}  {timestamp-label(run['recorded_at'])}  "
-               "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}")
+               "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}  {build-label(run)}")
     print(chalk"{revision-label(run['commit_hash'], 12)}  {branch-label(run['branch'])}  "
                "[dim]machine=[/]{machine-label(run['machine_id'])}")
     if run['note'] { print(chalk"[italic dim]Note:[/] [italic]{run['note']}[/]") }
     print()
     let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
-    print(chalk"[bold]  {'Benchmark':{width}} {'Current':>10}  {'Baseline':>10}  {'Change':>8}  Verdict[/]")
-    print(chalk"[dim]  {'─'.repeat(width + 45)}[/]")
+    print(chalk"[bold]  {'Benchmark':{width}} {'Current':>10}  {'Best':>10}  {'vs Best':>8}  Best run[/]")
+    print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
     for row in rows {
-        let verdict = String(row['verdict'])
         print(chalk"  {benchmark-label(row['benchmark'], width)}"
-                   " {duration-label(row['median_seconds'], verdict=verdict, width=10)}  "
-                   "{duration-label(row['baseline_seconds'], role='baseline', width=10)}  "
-                   "{delta-label(row['change_ratio'], 8)}  {verdict-label(verdict)}")
+                   " {duration-label(row['current'], width=10)}  "
+                   "{duration-label(row['best'], role='baseline', width=10)}  "
+                   "{delta-label(row['current'] / row['best'], 8)}  {run-label(row['best_run'], 4)}")
     }
+    print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
+    print(chalk"  {'Geomean':>{width}} {' ':>10}  {' ':>10}   {geomean-label(run-geomeans()[run-id])}")
     close-history()
+}
+
+fn run-geomeans() -> Dict {
+    let ratios = sql-rows(
+        """
+        SELECT m.run_id, m.median_seconds / b.best AS ratio
+          FROM measurements AS m JOIN ({best-times()}) AS b ON b.benchmark = m.benchmark
+         WHERE m.median_seconds > 0
+         ORDER BY m.run_id
+        """
+    )
+    let geomeans = %{}
+    for rs in ratios.group-by(&['run_id']) {
+        geomeans[rs[0]['run_id']] = math.exp(rs.map(\math.log(_['ratio'])).sum()! / #rs)
+    }
+    geomeans
+}
+
+fn geomean-label(g: Float | nil) {
+    if g == nil {
+        return chalk"[dim]{'—':>7}[/]"
+    }
+    let color = g <= 1.05 ? 'bright green' : g <= 1.25 ? 'yellow' : 'red'
+    chalk"[{color}]{g:>7.2f}[/]"
 }
 
 pub fn print-history(
@@ -528,21 +506,71 @@ pub fn print-history(
             '? OR COALESCE(manual_eligible, auto_eligible) = 1', Int(all)
         ).order('id DESC').limit(limit).all().map(\_.to-dict())
     }
+    let geomeans = run-geomeans()
     print(chalk"[bold bright cyan]Performance history[/]  [dim]{#rows} run(s)[/]")
     print()
-    print(chalk"[bold]  {'Run':>5}  {'Timestamp (UTC)':19}  {'Mode':11}  {'Commit':10}  {'State':10}  {'Benches':>7}  Note[/]")
-    print(chalk"[dim]  {'─'.repeat(88)}[/]")
+    print(chalk"[bold]  {'Run':>5}  {'Timestamp (UTC)':<19}  {'Mode':>11}  {'Build':<5}  {'Commit':<10}  {'State':<10}  {'Benches':>7}  {'Geomean':>7}  Note[/]")
+    print(chalk"[dim]  {'─'.repeat(104)}[/]")
     for row in rows {
         let note = row['note'] ?? ''
         print(chalk"  {run-label(row['id'], 4)}  {timestamp-label(row['recorded_at'])}  "
-                   "{mode-label(row['mode'], 11)}  {revision-label(row['commit_hash'])}  "
-                   "{status-label(row):10}  [cyan]{row['benchmark_count']:>7}[/]  "
-                   "[italic dim]{note}[/]")
+                   "{mode-label(row['mode'], 11)}  {build-label(row, 5)}  {revision-label(row['commit_hash'])}  "
+                   "{status-label(row, 10)}  [cyan]{row['benchmark_count']:>7}[/]  "
+                   "{geomean-label(geomeans[row['id']])}  [italic dim]{note}[/]")
     }
     if #rows == 0 {
         print(chalk"[dim]  No matching runs. Use --all to include dirty and partial runs.[/]")
     }
     close-history()
+}
+
+pub fn print-goats(path: String, filter: String | nil = nil) {
+    open-history(path)
+    let rows: [_] = sql-rows(
+        """
+        WITH ranked AS (
+            SELECT m.benchmark, m.median_seconds, m.run_id, r.commit_hash, r.pgo, r.bolt,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY m.benchmark ORDER BY m.median_seconds
+                   ) AS place
+              FROM measurements AS m JOIN runs AS r ON r.id = m.run_id
+             WHERE m.median_seconds > 0 AND m.benchmark LIKE ?
+        )
+        SELECT g.benchmark, g.median_seconds AS best, g.run_id, g.commit_hash, g.pgo, g.bolt,
+               n.median_seconds AS next, n.run_id AS next_run,
+               n.pgo AS next_pgo, n.bolt AS next_bolt
+          FROM ranked AS g LEFT JOIN ranked AS n
+            ON n.benchmark = g.benchmark AND n.place = 2
+         WHERE g.place = 1
+         ORDER BY g.benchmark
+        """, "%{filter ?? ''}%"
+    )
+    let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 9) + 2
+    print(chalk"[bold bright cyan]GOATs[/]  [dim]{#rows} benchmark(s)[/]")
+    print()
+    print(chalk"[bold]  {'Benchmark':>{width}} {'Best':>10}  {'Run':>5}       {'Commit':<10}  {'Next':>10}  {'Run':>5}       {'Lead':>8}[/]")
+    print(chalk"[dim]  {'─'.repeat(width + 71)}[/]")
+    for row in rows {
+        let lead = row['next'] ? row['next'] / row['best'] : nil
+        let next-run = row['next_run']
+            ? chalk"{run-label(row['next_run'], 4)} {build-label(%{'pgo': row['next_pgo'], 'bolt': row['next_bolt']}, 4)}"
+            : chalk"[dim]{'—':>5}[/]     "
+        print(chalk"  {benchmark-label(row['benchmark'], width)}"
+                   " {duration-label(row['best'], width=10)}  {run-label(row['run_id'], 4)} {build-label(row, 4)}  "
+                   "{revision-label(row['commit_hash'])}  "
+                   "{duration-label(row['next'], role='baseline', width=10)}  {next-run}  "
+                   "{lead-label(lead, 8)}")
+    }
+    close-history()
+}
+
+fn lead-label(ratio: Float | nil, width: Int) {
+    if ratio == nil {
+        return chalk"[dim]{'—':>{width}}[/]"
+    }
+    let text = "{(ratio - 1.0) * 100:.1f}%"
+    let color = ratio >= 1.05 ? 'bright green bold' : ratio >= 1.01 ? 'green' : 'dim'
+    chalk"[{color}]{text:>{width}}[/]"
 }
 
 pub fn latest-run-id(path: String) -> Int | nil {
@@ -564,19 +592,19 @@ pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
             """, against, run-id
         )
     } else {
-        Measurement.where('run_id = ?', run-id)
-            .order('benchmark')
-            .all()
-            .map(measurement -> %{
-                'benchmark': measurement.benchmark,
-                'current': measurement.median_seconds,
-                'baseline': measurement.baseline_seconds,
-            })
+        sql-rows(
+            """
+            SELECT m.benchmark, m.median_seconds AS current, b.best AS baseline
+              FROM measurements AS m LEFT JOIN ({best-times(excluding=run-id)}) AS b
+                ON b.benchmark = m.benchmark
+             WHERE m.run_id = ? ORDER BY m.benchmark
+            """, run-id
+        )
     }
     let reference-label = if against != nil {
         run-label(against)
     } else {
-        chalk"[magenta]robust baseline[/]"
+        chalk"[magenta]best of other runs[/]"
     }
     print(chalk"[bold bright cyan]Compare[/]  {run-label(run-id)} "
                "[dim]vs[/] {reference-label}")
@@ -599,7 +627,7 @@ pub fn print-trend(path: String, benchmark: String, limit: Int = 20, all: Bool =
     open-history(path)
     let rows: [_] = sql-rows(
         """
-        SELECT r.id, r.recorded_at, r.commit_hash, r.dirty, m.median_seconds
+        SELECT r.id, r.recorded_at, r.commit_hash, r.dirty, r.pgo, r.bolt, m.median_seconds
           FROM measurements AS m JOIN runs AS r ON r.id = m.run_id
          WHERE m.benchmark LIKE ?
            AND (? OR (COALESCE(r.manual_eligible, r.auto_eligible) = 1
@@ -634,21 +662,24 @@ pub fn print-trend(path: String, benchmark: String, limit: Int = 20, all: Bool =
         let dirty = row['dirty'] ? chalk" [yellow]dirty[/]" : ''
         print(chalk"  {run-label(row['id'], 4)} {timestamp-label(row['recorded_at'], date-only=true)}  "
                    "{duration-label(row['median_seconds'], width=10)}  "
-                   "{revision-label(row['commit_hash'])}{dirty}")
+                   "{build-label(row, 4)}  {revision-label(row['commit_hash'])}{dirty}")
     }
     close-history()
 }
 
 pub fn check-run(path: String, run-id: Int, threshold: Float) -> Bool {
     open-history(path)
-    let rows: [_] = Measurement.where('run_id = ?', run-id)
-        .order('benchmark')
-        .all()
-        .map(\_.to-dict())
+    let rows: [_] = sql-rows(
+        """
+        SELECT m.benchmark, m.verdict, m.median_seconds / b.best AS ratio
+          FROM measurements AS m LEFT JOIN ({best-times(excluding=run-id)}) AS b
+            ON b.benchmark = m.benchmark
+         WHERE m.run_id = ? ORDER BY m.benchmark
+        """, run-id
+    )
     let failures = rows.filter(row -> (
         row['verdict'] == 'anomaly'
-        || (row['change_ratio'] != nil
-            && row['change_ratio'] > 1.0 + max(threshold, row['significance_ratio']))
+        || (row['ratio'] != nil && row['ratio'] > 1.0 + threshold)
     ))
     if #failures == 0 {
         print(chalk"[bright green bold]PASS[/] {run-label(run-id)}[dim]: no regressions above[/] "
@@ -658,7 +689,7 @@ pub fn check-run(path: String, run-id: Int, threshold: Float) -> Bool {
                    "[red bold]{#failures} performance problem(s)[/]")
         for row in failures {
             print(chalk"  {benchmark-label(row['benchmark'])}  {verdict-label(row['verdict'])}  "
-                       "{delta-label(row['change_ratio'])}")
+                       "{delta-label(row['ratio'])}")
         }
     }
     close-history()
@@ -676,14 +707,12 @@ pub fn set-status(path: String, run-id: Int, status: String, reason: String | ni
             'manual_eligible = ?, manual_reason = ?', value, reason
         )
         if status == 'eligible' {
-            Run.where('id = ?', run-id).update-all!('baseline_reset = 1')
             Measurement.where(
                 'run_id = ? AND auto_valid = 0', run-id
             ).update-all!(
                 'manual_valid = 1, manual_reason = ?', reason ?? 'manually validated'
             )
         } else if status == 'auto' {
-            Run.where('id = ?', run-id).update-all!('baseline_reset = 0')
             Measurement.where('run_id = ?', run-id).update-all!(
                 'manual_valid = NULL, manual_reason = NULL'
             )
@@ -692,6 +721,6 @@ pub fn set-status(path: String, run-id: Int, status: String, reason: String | ni
     let label = status == 'eligible' ? chalk"[bright green bold]{status}[/]"
               : status == 'excluded' ? chalk"[red bold]{status}[/]"
               :                        chalk"[dim]{status}[/]"
-    print(chalk"{run-label(run-id)} [dim]baseline status →[/] {label}")
+    print(chalk"{run-label(run-id)} [dim]status →[/] {label}")
     close-history()
 }
