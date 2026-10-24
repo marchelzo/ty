@@ -1359,8 +1359,15 @@ reusable(Lir const *L, Cell const *c, LirInst const *in, LirType type)
                 return c->type == type;
         }
 
+        LirClass cls = rcls(L, c->reg);
+
         return (c->type == type)
-            && ((type == LT_I64) || (type == LT_F64) || (type == LT_F32) || (type == LT_I32));
+            && (
+                       (type == LT_I64 && (cls == LIR_I64 || isptr(cls)))
+                    || (type == LT_I32 && cls == LIR_I32)
+                    || (type == LT_F64 && cls == LIR_F64)
+                    || (type == LT_F32 && cls == LIR_F32)
+               );
 }
 
 static bool
