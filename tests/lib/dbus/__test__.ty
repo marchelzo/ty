@@ -1,0 +1,6 @@
+import ffi as c
+import ty.test.config (skip-dir)
+
+if c.open('systemd', [0]) == nil {
+    skip-dir('libsystemd is not installed')
+}

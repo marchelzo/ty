@@ -132,21 +132,77 @@ foldst(LirInst const *in)
 }
 #else
 static bool
+bitmask(u64 v, bool narrow)
+{
+        if (narrow) {
+                v = (u32)v | ((u64)(u32)v << 32);
+        }
+
+        if (v == 0 || v == UINT64_MAX) {
+                return false;
+        }
+
+        u32 w = 64;
+
+        while (w > 2 && ((v ^ (v >> (w / 2))) & ((1ULL << (w / 2)) - 1)) == 0) {
+                w /= 2;
+        }
+
+        u64 mask = (w == 64) ? UINT64_MAX : (1ULL << w) - 1;
+        u64 e    = v & mask;
+
+        if (e & 1) {
+                e = ~e & mask;
+        }
+
+        u64 t = e + (e & -e);
+
+        return (t & (t - 1)) == 0;
+}
+
+static bool
 foldbin(LirInst const *in, LirClass cls)
 {
-        return false;
+        i64 n = in->args[1].imm;
+
+        if (in->args[1].kind != LO_IMM || in->args[0].kind != LO_REG) {
+                return false;
+        }
+
+        switch (in->op) {
+        case LIR_AND:
+        case LIR_OR:
+        case LIR_XOR:
+                return bitmask((u64)n, cls == LIR_I32);
+
+        case LIR_SHL:
+        case LIR_SHR:
+        case LIR_SAR:
+        case LIR_ROTR:
+                return (n >= 0) && (n < ((cls == LIR_I32) ? 32 : 64));
+
+        default:
+                return false;
+        }
 }
 
 static bool
 foldcmp(LirInst const *in, bool fp)
 {
-        return false;
+        LirOpnd b = in->args[2];
+
+        return !fp
+            && (in->args[1].kind == LO_REG)
+            && (b.kind == LO_IMM)
+            && (b.imm >= -4095)
+            && (b.imm <= 4095);
 }
 
 static bool
 foldst(LirInst const *in)
 {
-        return false;
+        LirClass cls = lir_type_class(LirOps[in->op].type);
+        return (in->args[1].kind == LO_IMM) && (in->args[1].imm == 0) && !isfloat(cls);
 }
 #endif
 

@@ -697,7 +697,7 @@ cmpz(dasm_State **Dst, u8 a, LirClass cls)
 }
 
 static void
-branch(dasm_State **Dst, LirCC cc, u32 label)
+branch(dasm_State **Dst, LirCC cc, u32 label, bool far)
 {
         switch (cc) {
         case LIR_EQ:
@@ -838,7 +838,7 @@ choose(dasm_State **Dst, u8 d, u8 a, u8 b, LirCC cc, LirClass cls)
 static void
 setcc(dasm_State **Dst, u8 d, LirCC cc, u32 yes, u32 end)
 {
-        branch(Dst, cc, yes);
+        branch(Dst, cc, yes, false);
         li(Dst, d, 0);
         jump(Dst, end);
         label(Dst, yes);
@@ -847,7 +847,7 @@ setcc(dasm_State **Dst, u8 d, LirCC cc, u32 yes, u32 end)
 }
 
 static void
-brz(dasm_State **Dst, u8 a, bool nonzero, bool narrow, u32 label)
+brz(dasm_State **Dst, u8 a, bool nonzero, bool narrow, u32 label, bool far)
 {
         | WR test, a, a
         if (nonzero) {
@@ -979,7 +979,7 @@ checked(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
 }
 
 static void
-overflow(dasm_State **Dst, LirOp op, u32 label)
+overflow(dasm_State **Dst, LirOp op, u32 label, bool far)
 {
         | jo =>label
 }

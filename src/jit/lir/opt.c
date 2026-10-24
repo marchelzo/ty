@@ -501,10 +501,21 @@ idle(Lir const *L, LirInst const *in, u32 const *reads)
                 return false;
         }
 
-        switch (in->op) {
-        case LIR_LI:
-        case LIR_FLI:
-        case LIR_MOV:
+        switch (LirOps[in->op].form) {
+        case LF_LI:
+        case LF_FLI:
+        case LF_MOV:
+        case LF_LEA:
+        case LF_IBINARY:
+        case LF_IUNARY:
+        case LF_FBINARY:
+        case LF_FUNARY:
+        case LF_I2F:
+        case LF_BITCAST:
+        case LF_SETCC:
+        case LF_FSETCC:
+        case LF_SELECT:
+        case LF_FSELECT:
                 return true;
 
         default:
@@ -542,6 +553,23 @@ sweep(Ty *ty, Lir *L, bool *drop, u32 n)
                 }
         }
 
+}
+
+static void
+tidy(Ty *ty, Lir *L)
+{
+        u32   n    = vN(L->insts);
+        bool *drop = stA0(bool, n);
+        u32  *at   = stA(u32, n + 1);
+
+        sweep(ty, L, drop, n);
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                if (drop[pc]) {
+                        rebuild(L, drop, n, at);
+                        return;
+                }
+        }
 }
 
 static void
@@ -776,12 +804,9 @@ ends(LirInst const *in)
             || (in->flags & LIR_NORETURN);
 }
 
-static bool
-prune_once(Lir const *L, bool *drop, bool *wanted, u32 n)
+static void
+referenced(Lir const *L, bool const *drop, bool *wanted, u32 n)
 {
-        bool changed = false;
-        bool dead    = false;
-
         memset(wanted, 0, (n + 1) * sizeof *wanted);
 
         for (u32 i = 0; i < vN(L->labels); ++i) {
@@ -792,7 +817,7 @@ prune_once(Lir const *L, bool *drop, bool *wanted, u32 n)
 
         for (u32 pc = 0; pc < n; ++pc) {
                 LirInst const *in = v_(L->insts, pc);
-                if (drop[pc] || !jumps(in)) {
+                if ((drop != NULL && drop[pc]) || !jumps(in)) {
                         continue;
                 }
                 wanted[v__(L->labels, in->args[in->nargs - 1].label).pos] = true;
@@ -800,6 +825,15 @@ prune_once(Lir const *L, bool *drop, bool *wanted, u32 n)
                         wanted[v__(L->labels, in->targets[j]).pos] = true;
                 }
         }
+}
+
+static bool
+prune_once(Lir const *L, bool *drop, bool *wanted, u32 n)
+{
+        bool changed = false;
+        bool dead    = false;
+
+        referenced(L, drop, wanted, n);
 
         for (u32 pc = 0; pc < n; ++pc) {
                 dead = dead && !wanted[pc];
@@ -856,6 +890,768 @@ prune(Ty *ty, Lir *L)
                 rebuild(L, drop, n, at);
         }
 
+}
+
+enum { CELLS = 64 };
+
+typedef struct {
+        LirReg  root;
+        i64     off;
+        u32     size;
+        LirType type;
+        bool    load;
+        bool    known;
+        u64     bits;
+        LirReg  reg;
+} Cell;
+
+typedef struct {
+        Lir const *L;
+        u32 const *defs;
+        LirReg    *root;
+        i64       *off;
+        u16       *refs;
+        Cell       cells[CELLS];
+        u32        n;
+} Fwd;
+
+static void
+anchor(Ty *ty, Lir const *L, LirReg *root, i64 *off)
+{
+        u32  nregs = vN(L->regs);
+        u32  n     = vN(L->insts);
+        u32 *count = stA0(u32, nregs + 1);
+
+        for (u32 r = 0; r < nregs; ++r) {
+                count[r] = (v__(L->regs, r).param != LIR_NONE);
+                root[r]  = r;
+                off[r]   = 0;
+        }
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                each_write(v_(L->insts, pc), r) {
+                        count[r] += 1;
+                }
+        }
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                LirInst const *in = v_(L->insts, pc);
+                LirOpnd const *a  = in->args;
+                LirReg         r  = in->dst;
+                LirReg         b  = LIR_NONE;
+                i64            d  = 0;
+
+                if (r == LIR_NONE || count[r] != 1) {
+                        continue;
+                }
+
+                if (in->op == LIR_LEA && a[0].mem.index == LIR_NONE && a[0].mem.base != LIR_NONE) {
+                        b = a[0].mem.base;
+                        d = a[0].mem.disp;
+                } else if (in->op == LIR_MOV && a[0].kind == LO_REG) {
+                        b = a[0].reg;
+                } else if (in->op == LIR_ADD && a[0].kind == LO_REG && a[1].kind == LO_IMM) {
+                        b = a[0].reg;
+                        d = a[1].imm;
+                }
+
+                if (
+                        (b == LIR_NONE)
+                     || (b == r)
+                     || (count[root[b]] != 1)
+                     || (v__(L->regs, root[b]).param == LIR_NONE)
+                ) {
+                        continue;
+                }
+
+                root[r] = root[b];
+                off[r]  = off[b] + d;
+        }
+}
+
+static bool
+place(Fwd const *f, LirOpnd a, LirReg *root, i64 *off)
+{
+        if (a.kind != LO_MEM || a.mem.index != LIR_NONE || a.mem.base == LIR_NONE) {
+                return false;
+        }
+
+        *root = f->root[a.mem.base];
+        *off  = f->off[a.mem.base] + a.mem.disp;
+
+        return true;
+}
+
+static void
+forget(Fwd *f, u32 k)
+{
+        Cell const *c = &f->cells[k];
+
+        f->refs[c->root] -= 1;
+
+        if (!c->known) {
+                f->refs[c->reg] -= 1;
+        }
+
+        f->cells[k] = f->cells[--f->n];
+}
+
+static void
+remember(Fwd *f, Cell c)
+{
+        if (f->n == CELLS) {
+                forget(f, 0);
+        }
+
+        f->refs[c.root] += 1;
+
+        if (!c.known) {
+                f->refs[c.reg] += 1;
+        }
+
+        f->cells[f->n++] = c;
+}
+
+static void
+wipe(Fwd *f)
+{
+        while (f->n != 0) {
+                forget(f, f->n - 1);
+        }
+}
+
+static void
+written(Fwd *f, LirReg r)
+{
+        if (f->refs[r] == 0) {
+                return;
+        }
+
+        for (u32 k = f->n; k-- > 0;) {
+                Cell const *c = &f->cells[k];
+                if (c->root == r || (!c->known && c->reg == r)) {
+                        forget(f, k);
+                }
+        }
+}
+
+inline static bool
+covers(Cell const *c, i64 lo, i64 hi)
+{
+        return (c->off <= lo) && (hi <= c->off + c->size);
+}
+
+static void
+splice(Cell *c, i64 lo, u32 size, u64 bits)
+{
+        u32 shift = 8 * (lo - c->off);
+        u64 mask  = (size == 8) ? UINT64_MAX : ((1ULL << (8 * size)) - 1);
+
+        c->bits = (c->bits & ~(mask << shift)) | ((bits & mask) << shift);
+}
+
+static void
+clobber(Fwd *f, LirReg root, i64 lo, i64 hi, Cell const *merge)
+{
+        for (u32 k = f->n; k-- > 0;) {
+                Cell *c = &f->cells[k];
+
+                if (c->root != root) {
+                        forget(f, k);
+                } else if (c->off < hi && lo < c->off + c->size) {
+                        if (merge != NULL && c->known && covers(c, lo, hi)) {
+                                splice(c, lo, merge->size, merge->bits);
+                        } else {
+                                forget(f, k);
+                        }
+                }
+        }
+}
+
+static bool
+literal(Fwd const *f, LirOpnd a, LirType type, u64 *bits)
+{
+        double d;
+
+        if (a.kind == LO_IMM) {
+                *bits = (u64)a.imm;
+                return true;
+        }
+
+        if (a.kind == LO_FIMM && type == LT_F64) {
+                memcpy(bits, &a.fimm, sizeof *bits);
+                return true;
+        }
+
+        if (a.kind != LO_REG) {
+                return false;
+        }
+
+        if (isint(rcls(f->L, a.reg))) {
+                return constant(f->L, f->defs, a, rcls(f->L, a.reg), bits);
+        }
+
+        if (type == LT_F64 && fconstant(f->L, f->defs, a, &d)) {
+                memcpy(bits, &d, sizeof *bits);
+                return true;
+        }
+
+        return false;
+}
+
+static void
+store(Fwd *f, LirInst const *in)
+{
+        LirType type = LirOps[in->op].type;
+        u32     size = lir_type_size(type);
+        LirReg  root;
+        i64     lo;
+
+        if (!place(f, in->args[0], &root, &lo)) {
+                wipe(f);
+                return;
+        }
+
+        Cell c = {
+                .root = root,
+                .off  = lo,
+                .size = size,
+                .type = type,
+                .reg  = (in->args[1].kind == LO_REG) ? in->args[1].reg : LIR_NONE
+        };
+
+        c.known = literal(f, in->args[1], type, &c.bits);
+
+        if (c.known && size < 8) {
+                c.bits &= (1ULL << (8 * size)) - 1;
+        }
+
+        clobber(f, root, lo, lo + size, c.known ? &c : NULL);
+
+        if (c.known || c.reg != LIR_NONE) {
+                remember(f, c);
+        }
+}
+
+static bool
+unpack(Fwd const *f, LirInst const *in, LirReg root, i64 lo, LirInst out[static 4])
+{
+        LirMem m = in->args[0].mem;
+
+        for (u32 k = 0; k < 4; ++k) {
+                Cell const *hit = NULL;
+
+                for (u32 j = 0; j < f->n && hit == NULL; ++j) {
+                        Cell const *c = &f->cells[j];
+                        if (c->root == root && c->off == lo + 8 * k && c->size == 8) {
+                                hit = c;
+                        }
+                }
+
+                if (hit == NULL) {
+                        return false;
+                }
+
+                LirClass cls = hit->known ? LIR_I64 : rcls(f->L, hit->reg);
+
+                if (!isint(cls) && !isptr(cls) && cls != LIR_F64) {
+                        return false;
+                }
+
+                out[k] = (LirInst) {
+                        .op     = (cls == LIR_F64) ? LIR_ST_F64 : LIR_ST64,
+                        .dst    = LIR_NONE,
+                        .args   = {
+                                lir_m(m.base, LIR_NONE, 1, m.disp + 8 * k),
+                                hit->known ? lir_i((i64)hit->bits) : lir_r(hit->reg)
+                        },
+                        .nargs  = 2,
+                        .tag    = in->tag,
+                        .origin = in->origin,
+                        .span   = in->span
+                };
+        }
+
+        return true;
+}
+
+static bool
+copy(Fwd *f, LirInst const *in, LirInst out[static 4])
+{
+        LirReg droot;
+        LirReg sroot;
+        i64    dlo;
+        i64    slo;
+        Cell   moved[CELLS];
+        u32    nmoved = 0;
+
+        if (!place(f, in->args[0], &droot, &dlo)) {
+                wipe(f);
+                return false;
+        }
+
+        bool src  = place(f, in->args[1], &sroot, &slo)
+                 && !(sroot == droot && slo < dlo + 32 && dlo < slo + 32);
+        bool flat = src && unpack(f, in, sroot, slo, out);
+
+        for (u32 k = 0; src && k < f->n; ++k) {
+                Cell c = f->cells[k];
+                if (c.root == sroot && slo <= c.off && c.off + c.size <= slo + 32) {
+                        c.root = droot;
+                        c.off  = c.off - slo + dlo;
+                        moved[nmoved++] = c;
+                }
+        }
+
+        clobber(f, droot, dlo, dlo + 32, NULL);
+
+        for (u32 k = 0; k < nmoved; ++k) {
+                remember(f, moved[k]);
+        }
+
+        return flat;
+}
+
+static bool
+reusable(Lir const *L, Cell const *c, LirInst const *in, LirType type)
+{
+        if (c->known || rcls(L, c->reg) != rcls(L, in->dst)) {
+                return false;
+        }
+
+        if (c->load) {
+                return c->type == type;
+        }
+
+        return (c->type == type)
+            && ((type == LT_I64) || (type == LT_F64) || (type == LT_F32) || (type == LT_I32));
+}
+
+static bool
+extend(u64 bits, LirType type, u64 *out)
+{
+        switch (type) {
+        case LT_I8:  *out = (u64)(i64)(i8)bits;  return true;
+        case LT_U8:  *out = (u8)bits;            return true;
+        case LT_I16: *out = (u64)(i64)(i16)bits; return true;
+        case LT_U16: *out = (u16)bits;           return true;
+        case LT_I32: *out = (u64)(i64)(i32)bits; return true;
+        case LT_U32: *out = (u32)bits;           return true;
+        case LT_I64: *out = bits;                return true;
+        case LT_F64: *out = bits;                return true;
+        default:                                 return false;
+        }
+}
+
+static bool
+load(Fwd *f, LirInst *in)
+{
+        Lir const *L    = f->L;
+        LirType    type = LirOps[in->op].type;
+        u32        size = lir_type_size(type);
+        LirClass   cls  = rcls(L, in->dst);
+        LirReg     root;
+        i64        lo;
+        u64        v;
+        double     d;
+
+        if (in->flags != 0 || !place(f, in->args[0], &root, &lo)) {
+                return false;
+        }
+
+        for (u32 k = 0; k < f->n; ++k) {
+                Cell const *c = &f->cells[k];
+
+                if (c->root != root) {
+                        continue;
+                }
+
+                if (
+                        c->known
+                     && covers(c, lo, lo + size)
+                     && extend(c->bits >> (8 * (lo - c->off)), type, &v)
+                ) {
+                        if (type == LT_F64 && cls == LIR_F64) {
+                                memcpy(&d, &v, sizeof d);
+                                become(in, LIR_FLI, lir_f(d));
+                                return true;
+                        }
+                        if (type != LT_F64 && (isint(cls) || cls == LIR_PTR)) {
+                                become(in, LIR_LI, lir_i((i64)v));
+                                return true;
+                        }
+                }
+
+                if (c->off == lo && c->size == size && reusable(L, c, in, type)) {
+                        become(in, LIR_MOV, lir_r(c->reg));
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+opaque(LirInst const *in)
+{
+        switch (LirOps[in->op].form) {
+        case LF_CAS:
+        case LF_ATOMIC:
+        case LF_CALL:
+        case LF_TAILCALL:
+        case LF_POLL:
+        case LF_RAW:
+        case LF_FENCE:
+        case LF_ENTRY:
+        case LF_JMP:
+        case LF_SWITCH:
+        case LF_RET:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+static bool
+forward(Ty *ty, Lir *L, LirReg *root, i64 *off)
+{
+        u32   n      = vN(L->insts);
+        u32  *defs   = stA(u32, vN(L->regs) + 1);
+        bool *wanted = stA(bool, n + 1);
+        Fwd  *f      = stA(Fwd, 1);
+        bool  any    = false;
+
+        f->L    = L;
+        f->defs = defs;
+        f->root = root;
+        f->off  = off;
+        f->refs = stA0(u16, vN(L->regs) + 1);
+        f->n    = 0;
+
+        u32      ncopy = 0;
+        u32      nflat = 0;
+        u32     *flat  = stA(u32, n + 1);
+        LirInst *parts;
+
+        memset(defs, 0xff, vN(L->regs) * sizeof *defs);
+        memset(flat, 0xff, (n + 1) * sizeof *flat);
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                each_write(v_(L->insts, pc), reg) {
+                        defs[reg] = (defs[reg] == LIR_NONE) ? pc : n;
+                }
+                ncopy += (v__(L->insts, pc).op == LIR_COPY32);
+        }
+
+        parts = stA(LirInst, 4 * ncopy + 1);
+
+        referenced(L, NULL, wanted, n);
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                LirInst *in   = v_(L->insts, pc);
+                LirForm  form = LirOps[in->op].form;
+                bool     hit  = false;
+
+                if (wanted[pc]) {
+                        wipe(f);
+                }
+
+                switch (form) {
+                case LF_LD:   hit = load(f, in);  break;
+                case LF_ST:   store(f, in);       break;
+                case LF_COPY:
+                        if (copy(f, in, &parts[4 * nflat])) {
+                                flat[pc] = nflat++;
+                        }
+                        break;
+                default:
+                        if (opaque(in)) {
+                                wipe(f);
+                        }
+                        break;
+                }
+
+                any |= hit;
+
+                each_write(in, r) {
+                        written(f, r);
+                }
+
+                LirReg root;
+                i64    lo;
+
+                if (
+                        (form == LF_LD)
+                     && !hit
+                     && place(f, in->args[0], &root, &lo)
+                     && (root != in->dst)
+                ) {
+                        remember(f, (Cell) {
+                                .root = root,
+                                .off  = lo,
+                                .size = lir_type_size(LirOps[in->op].type),
+                                .type = LirOps[in->op].type,
+                                .load = true,
+                                .reg  = in->dst
+                        });
+                }
+        }
+
+        if (nflat == 0) {
+                return any;
+        }
+
+        LirInst *old = lir_swap(L);
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                flat[pc] = (flat[pc] == LIR_NONE) ? LIR_NONE : 4 * flat[pc];
+                u32 here = vN(L->insts);
+                if (flat[pc] == LIR_NONE) {
+                        lir_emit_owned(L, &old[pc]);
+                }
+                for (u32 k = 0; flat[pc] != LIR_NONE && k < 4; ++k) {
+                        lir_emit(L, &parts[flat[pc] + k]);
+                }
+                flat[pc] = here;
+        }
+
+        flat[n] = vN(L->insts);
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                v_(L->labels, i)->pos = flat[v__(L->labels, i).pos];
+        }
+
+        return true;
+}
+
+typedef struct {
+        LirReg root;
+        i64    lo;
+        i64    hi;
+} Span;
+
+typedef struct {
+        Lir const *L;
+        LirReg    *root;
+        i64       *off;
+        Span      *keep;
+        u32        nkeep;
+        u16       *refs;
+        Span       dead[CELLS];
+        u32        n;
+} Dse;
+
+inline static bool
+stacky(Lir const *L, LirReg r)
+{
+        u32 pin = v__(L->regs, r).pin;
+        return (pin < 8) && ((L->stack_pins >> pin) & 1);
+}
+
+static bool
+spot(Dse const *s, LirOpnd a, Span *out)
+{
+        if (a.kind != LO_MEM || a.mem.index != LIR_NONE || a.mem.base == LIR_NONE) {
+                return false;
+        }
+
+        out->root = s->root[a.mem.base];
+        out->lo   = s->off[a.mem.base] + a.mem.disp;
+
+        return true;
+}
+
+static void
+unbury(Dse *s, u32 k)
+{
+        s->refs[s->dead[k].root] -= 1;
+        s->dead[k] = s->dead[--s->n];
+}
+
+static void
+exhume(Dse *s)
+{
+        while (s->n != 0) {
+                unbury(s, s->n - 1);
+        }
+}
+
+static void
+revive(Dse *s, Span x)
+{
+        for (u32 k = s->n; k-- > 0;) {
+                Span const *d = &s->dead[k];
+                if (d->root != x.root || (d->lo < x.hi && x.lo < d->hi)) {
+                        unbury(s, k);
+                }
+        }
+}
+
+static bool
+buried(Dse const *s, Span x)
+{
+        for (i64 b = x.lo; b < x.hi; ++b) {
+                bool hit = false;
+                for (u32 k = 0; k < s->n && !hit; ++k) {
+                        Span const *d = &s->dead[k];
+                        hit = (d->root == x.root) && (d->lo <= b) && (b < d->hi);
+                }
+                if (!hit) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static bool
+kept(Dse const *s, Span x)
+{
+        for (u32 k = 0; k < s->nkeep; ++k) {
+                Span const *p = &s->keep[k];
+                if (p->root == LIR_NONE || p->root != x.root || (p->lo < x.hi && x.lo < p->hi)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+inter(Dse *s, Span x)
+{
+        if (s->n == CELLS) {
+                unbury(s, 0);
+        }
+
+        s->refs[x.root] += 1;
+        s->dead[s->n++] = x;
+}
+
+static bool
+inert(LirInst const *in)
+{
+        switch (LirOps[in->op].form) {
+        case LF_MOV:
+                return in->args[0].kind != LO_VSLOT;
+
+        case LF_LI:
+        case LF_FLI:
+        case LF_LEA:
+        case LF_IBINARY:
+        case LF_IUNARY:
+        case LF_FBINARY:
+        case LF_FUNARY:
+        case LF_FMA:
+        case LF_I2F:
+        case LF_F2I:
+        case LF_FEXT:
+        case LF_FTRUNC:
+        case LF_BITCAST:
+        case LF_SETCC:
+        case LF_FSETCC:
+        case LF_SELECT:
+        case LF_FSELECT:
+                return in->flags == 0;
+
+        default:
+                return false;
+        }
+}
+
+static bool
+bury(Ty *ty, Lir *L, LirReg *root, i64 *off)
+{
+        u32   n    = vN(L->insts);
+        bool *drop = stA0(bool, n);
+        u32  *at   = stA(u32, n + 1);
+        Dse  *s    = stA(Dse, 1);
+        bool  any  = false;
+        Span  x;
+
+        s->L     = L;
+        s->root  = root;
+        s->off   = off;
+        s->keep  = stA(Span, n + 1);
+        s->nkeep = 0;
+        s->refs  = stA0(u16, vN(L->regs) + 1);
+        s->n     = 0;
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                LirInst const *in = v_(L->insts, pc);
+
+                if (LirOps[in->op].form != LF_LD || in->flags == 0) {
+                        continue;
+                }
+
+                if (!spot(s, in->args[0], &x)) {
+                        if (stacky(L, in->args[0].mem.base)) {
+                                s->keep[s->nkeep++] = (Span) { LIR_NONE, 0, 0 };
+                        }
+                } else if (stacky(L, x.root)) {
+                        x.hi = x.lo + lir_type_size(LirOps[in->op].type);
+                        s->keep[s->nkeep++] = x;
+                }
+        }
+
+        for (u32 pc = n; pc-- > 0;) {
+                LirInst const *in   = v_(L->insts, pc);
+                LirForm        form = LirOps[in->op].form;
+
+                each_write(in, r) {
+                        for (u32 k = s->n; s->refs[r] != 0 && k-- > 0;) {
+                                if (s->dead[k].root == r) {
+                                        unbury(s, k);
+                                }
+                        }
+                }
+
+                switch (form) {
+                case LF_ST:
+                case LF_COPY:
+                        if (!spot(s, in->args[0], &x)) {
+                                break;
+                        }
+                        x.hi = x.lo + ((form == LF_COPY) ? 32 : lir_type_size(LirOps[in->op].type));
+                        if (in->flags == 0 && stacky(L, x.root) && buried(s, x) && !kept(s, x)) {
+                                drop[pc] = true;
+                                any      = true;
+                                break;
+                        }
+                        inter(s, x);
+                        if (form == LF_COPY) {
+                                if (spot(s, in->args[1], &x)) {
+                                        x.hi = x.lo + 32;
+                                        revive(s, x);
+                                } else {
+                                        exhume(s);
+                                }
+                        }
+                        break;
+
+                case LF_LD:
+                        if (spot(s, in->args[0], &x)) {
+                                x.hi = x.lo + lir_type_size(LirOps[in->op].type);
+                                revive(s, x);
+                        } else {
+                                exhume(s);
+                        }
+                        break;
+
+                default:
+                        if (!inert(in)) {
+                                exhume(s);
+                        }
+                        break;
+                }
+        }
+
+        if (any) {
+                rebuild(L, drop, n, at);
+        }
+
+        return any;
 }
 
 static u32
@@ -1200,6 +1996,25 @@ lir_optimize(Ty *ty, Lir *L)
         prune(ty, L);
         diamonds(ty, L);
         fold(ty, L);
+
+        bool    fwd  = (getenv("TY_LIR_NO_FORWARD") == NULL);
+        bool    dse  = (getenv("TY_LIR_NO_DSE") == NULL);
+        LirReg *root = stA(LirReg, vN(L->regs) + 1);
+        i64    *off  = stA(i64, vN(L->regs) + 1);
+
+        if (fwd || dse) {
+                anchor(ty, L, root, off);
+        }
+
+        for (u32 round = 0; fwd && round < 32 && forward(ty, L, root, off); ++round) {
+                fold(ty, L);
+                prune(ty, L);
+        }
+
+        if (dse && bury(ty, L, root, off)) {
+                tidy(ty, L);
+        }
+
         number(ty, L);
 
         u32 n = vN(L->insts);

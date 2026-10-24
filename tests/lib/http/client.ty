@@ -872,17 +872,24 @@ pub fn proxy-environment() {
 }
 
 class Canned {
-    fd:   Int
-    port: Int
+    fd:     Int
+    port:   Int
+    done?:  Bool
+    worker: Thread
 
     init(reply: String | Blob, close?: Bool = true) {
-        fd   = net.listen('tcp', '127.0.0.1:0')
-        port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        fd    = net.listen('tcp', '127.0.0.1:0')
+        port  = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        done? = false
         let me = self
-        Thread(fn () {
+        worker = Thread(fn () {
             while true {
                 let (c, _) = os.accept(me.fd)
                 if c < 0 {
+                    return
+                }
+                if me.done? {
+                    os.close(c)
                     return
                 }
                 read-head(c)
@@ -891,7 +898,7 @@ class Canned {
                     os.close(c)
                 }
             }
-        }).detach()
+        })
     }
 
     url -> String {
@@ -899,6 +906,9 @@ class Canned {
     }
 
     close() {
+        done? = true
+        os.close(net.dial('tcp', "127.0.0.1:{port}"))
+        worker.join()
         os.close(fd)
     }
 }

@@ -45,10 +45,15 @@ class Capstone {
         defer c.free(out)
         let lines = []
         let offset = 0
+        let unit = arm64?() ? 4 : 1
         while offset < size {
             if __decode(handle[0], p + offset, size - offset,
                         base + offset, 1, out) == 0 {
-                return nil
+                let n = min(unit, size - offset)
+                let word = [c.load(c.u8, p + offset + it) << (8 * it) for ..n].sum()
+                lines.push((offset, (n == 4) ? ".word {word:#010x}" : ".byte {word:#04x}"))
+                offset += n
+                continue
             }
             let insn = out[0]
             let (n, text) = instruction(insn, __version)

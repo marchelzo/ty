@@ -1184,7 +1184,7 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
 
         li(Dst, TMP0, (uptr)rt->interrupt);
         mem(Dst, false, TMP0, TMP0, 0, 4, false, false);
-        brz(Dst, TMP0, false, true, fast);
+        brz(Dst, TMP0, false, true, fast, e->islands);
         bounds(e, pc);
 
         if (!phase(e, pc, LIR_MOVE_BEFORE, LIR_NONE, MV_SLOW)) {
@@ -1227,7 +1227,7 @@ safepoint(Emit *e, LirInst const *in, u32 pc, u32 fast, u32 end)
 
         rebase(e, pc);
         ld(Dst, TMP0, FRAME, e->result);
-        brz(Dst, TMP0, true, true, dest(e, pc, in->args[in->nargs - 1].label));
+        brz(Dst, TMP0, true, true, dest(e, pc, in->args[in->nargs - 1].label), e->islands);
         label(Dst, fast);
         label(Dst, end);
 
@@ -1290,10 +1290,12 @@ memop(Emit *e, LirInst const *in, u32 pc, u8 d, u8 const *a)
         }
 #endif
 
+        u8 src = (in->args[1].kind == LO_IMM) ? 31 : a[1];
+
         mem(
                 Dst,
                 form == LF_ST,
-                (form == LF_ST) ? a[1] : d,
+                (form == LF_ST) ? src : d,
                 base,
                 disp,
                 size,
@@ -1307,12 +1309,10 @@ test(Emit *e, LirInst const *in, u8 const *a)
 {
         LirClass cls = rcls(e, in->args[1].reg);
 
-#if defined(__x86_64__)
         if (in->args[2].kind == LO_IMM) {
                 cmpi(Dst, a[1], in->args[2].imm, cls);
                 return;
         }
-#endif
 
         compare(Dst, a[1], a[2], cls);
 }
@@ -1374,7 +1374,7 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                overflow(Dst, in->op, dest(e, pc, x[2].label));
+                overflow(Dst, in->op, dest(e, pc, x[2].label), e->islands);
                 return true;
 
         case LF_FBINARY:
@@ -1411,9 +1411,11 @@ insn(Emit *e, u32 pc)
                         choose(Dst, d, a[3], a[4], x[0].cc, cls);
                         break;
                 }
-#endif
-                branch(Dst, x[0].cc, yes);
+                branch(Dst, x[0].cc, yes, e->islands);
                 pick(Dst, d, a[3], a[4], cls, yes, end);
+#else
+                choose(Dst, d, a[3], a[4], x[0].cc, cls);
+#endif
                 break;
 
         case LF_BR:
@@ -1422,7 +1424,7 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                branch(Dst, x[0].cc, dest(e, pc, x[3].label));
+                branch(Dst, x[0].cc, dest(e, pc, x[3].label), e->islands);
                 return true;
 
         case LF_BRZ:
@@ -1430,7 +1432,12 @@ insn(Emit *e, u32 pc)
                 if (!after(e, pc)) {
                         return false;
                 }
-                branch(Dst, (in->op == LIR_BRNZ) ? LIR_NE : LIR_EQ, dest(e, pc, x[1].label));
+                branch(
+                        Dst,
+                        (in->op == LIR_BRNZ) ? LIR_NE : LIR_EQ,
+                        dest(e, pc, x[1].label),
+                        e->islands
+                );
                 return true;
 
         case LF_JMP:
@@ -1761,6 +1768,8 @@ assemble(Emit *e)
         dasm_growpc(Dst, vN(L->labels) + (L->detail ? 8 : 6) * n + 4 + e->alloc->nstubs);
         dasm_setup(Dst, lir_actions);
 
+        locate(e->target, &L->sig, e->arguments);
+
         prologue(Dst, e->frame, e->alloc->frame_align, e->origin);
         saveregs(e, true);
 
@@ -2014,7 +2023,7 @@ publish(Emit *e, usize size)
         code->body       = rx;
         code->size       = size;
 
-        for (u32 pc = 0; pc < n; ++pc) {
+        for (u32 pc = 0; pc < n && !e->islands; ++pc) {
                 LirOp op = v__(L->insts, pc).op;
                 if (op == LIR_FLI || op == LIR_SWITCH) {
                         u32 at = dasm_getpclabel(Dst, e->literals + pc);

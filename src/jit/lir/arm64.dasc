@@ -42,6 +42,14 @@
 || }
 |.endmacro
 |
+|.macro WL, ins, x, label
+|| if (narrow) {
+|  ins Rw(x), =>label
+|| } else {
+|  ins Rx(x), =>label
+|| }
+|.endmacro
+|
 |.macro F2, ins, x, y
 || if (narrow) {
 |  ins Rs(x), Rs(y)
@@ -65,6 +73,23 @@
 |  ins Rd(x), Rd(y), Rd(z), Rd(w)
 || }
 |.endmacro
+|
+|.macro HW, ins, d, h, i
+|| switch (i) {
+|| case 0:
+|  ins Rx(d), #h
+|| break;
+|| case 1:
+|  ins Rx(d), #h, lsl #16
+|| break;
+|| case 2:
+|  ins Rx(d), #h, lsl #32
+|| break;
+|| default:
+|  ins Rx(d), #h, lsl #48
+|| break;
+|| }
+|.endmacro
 
 static void
 label(dasm_State **Dst, u32 label)
@@ -81,15 +106,35 @@ jump(dasm_State **Dst, u32 label)
 static void
 li(dasm_State **Dst, u8 d, u64 bits)
 {
-        | movz Rx(d), #(bits & 0xffff)
-        if ((bits >> 16) & 0xffff) {
-                | movk Rx(d), #((bits >> 16) & 0xffff), lsl #16
+        u32  ones  = 0;
+        u32  zeros = 0;
+        bool first = true;
+
+        for (u32 i = 0; i < 4; ++i) {
+                u32 h = (bits >> (16 * i)) & 0xffff;
+                ones  += (h == 0xffff);
+                zeros += (h == 0);
         }
-        if ((bits >> 32) & 0xffff) {
-                | movk Rx(d), #((bits >> 32) & 0xffff), lsl #32
-        }
-        if ((bits >> 48) & 0xffff) {
-                | movk Rx(d), #((bits >> 48) & 0xffff), lsl #48
+
+        u32 fill = (ones > zeros) ? 0xffff : 0;
+
+        for (u32 i = 0; i < 4; ++i) {
+                u32 h = (bits >> (16 * i)) & 0xffff;
+                u32 n = ~h & 0xffff;
+
+                if (h == fill && !(first && i == 3)) {
+                        continue;
+                }
+
+                if (!first) {
+                        | HW movk, d, h, i
+                } else if (fill != 0) {
+                        | HW movn, d, n, i
+                } else {
+                        | HW movz, d, h, i
+                }
+
+                first = false;
         }
 }
 
@@ -373,6 +418,24 @@ alui(dasm_State **Dst, LirOp op, u8 d, u8 a, u64 imm, bool narrow)
         case LIR_SHL:
                 | WI lsl, d, a, n
                 break;
+        case LIR_SHR:
+                | WI lsr, d, a, n
+                break;
+        case LIR_SAR:
+                | WI asr, d, a, n
+                break;
+        case LIR_ROTR:
+                | WI ror, d, a, n
+                break;
+        case LIR_AND:
+                | WI and, d, a, imm
+                break;
+        case LIR_OR:
+                | WI orr, d, a, imm
+                break;
+        case LIR_XOR:
+                | WI eor, d, a, imm
+                break;
         default:
                 | WI sub, d, a, n
                 break;
@@ -572,8 +635,72 @@ cmpz(dasm_State **Dst, u8 a, LirClass cls)
 }
 
 static void
-branch(dasm_State **Dst, LirCC cc, u32 label)
+cmpi(dasm_State **Dst, u8 a, i64 imm, LirClass cls)
 {
+        bool narrow = (cls == LIR_I32);
+        i32  n      = (imm < 0) ? -imm : imm;
+
+        if (narrow && imm < 0) {
+                | cmn Rw(a), #n
+        } else if (narrow) {
+                | cmp Rw(a), #n
+        } else if (imm < 0) {
+                | cmn Rx(a), #n
+        } else {
+                | cmp Rx(a), #n
+        }
+}
+
+static void
+branch(dasm_State **Dst, LirCC cc, u32 label, bool far)
+{
+        if (!far) {
+                switch (cc) {
+                case LIR_EQ:
+                case LIR_FEQ:
+                        | beq =>label
+                        break;
+                case LIR_NE:
+                case LIR_FNE:
+                        | bne =>label
+                        break;
+                case LIR_LT:
+                        | blt =>label
+                        break;
+                case LIR_LE:
+                        | ble =>label
+                        break;
+                case LIR_GT:
+                case LIR_FGT:
+                        | bgt =>label
+                        break;
+                case LIR_GE:
+                case LIR_FGE:
+                        | bge =>label
+                        break;
+                case LIR_ULT:
+                        | blo =>label
+                        break;
+                case LIR_ULE:
+                case LIR_FLE:
+                        | bls =>label
+                        break;
+                case LIR_UGT:
+                        | bhi =>label
+                        break;
+                case LIR_UGE:
+                        | bhs =>label
+                        break;
+                case LIR_FLT:
+                        | bmi =>label
+                        break;
+                case LIR_FUN:
+                        | bvs =>label
+                        break;
+                }
+                return;
+        }
+
         switch (cc) {
         case LIR_EQ:
         case LIR_FEQ:
@@ -621,14 +748,64 @@ branch(dasm_State **Dst, LirCC cc, u32 label)
         |1:
 }
 
+|.macro SEL, c
+|| if (cls == LIR_F64) {
+|  fcsel Rd(d), Rd(a), Rd(b), c
+|| } else if (cls == LIR_F32) {
+|  fcsel Rs(d), Rs(a), Rs(b), c
+|| } else if (cls == LIR_I32) {
+|  csel Rw(d), Rw(a), Rw(b), c
+|| } else {
+|  csel Rx(d), Rx(a), Rx(b), c
+|| }
+|.endmacro
+
 static void
-pick(dasm_State **Dst, u8 d, u8 a, u8 b, LirClass cls, u32 yes, u32 end)
+choose(dasm_State **Dst, u8 d, u8 a, u8 b, LirCC cc, LirClass cls)
 {
-        mov(Dst, d, b, cls, false, false);
-        jump(Dst, end);
-        label(Dst, yes);
-        mov(Dst, d, a, cls, false, false);
-        label(Dst, end);
+        switch (cc) {
+        case LIR_EQ:
+        case LIR_FEQ:
+                | SEL eq
+                break;
+        case LIR_NE:
+        case LIR_FNE:
+                | SEL ne
+                break;
+        case LIR_LT:
+                | SEL lt
+                break;
+        case LIR_LE:
+                | SEL le
+                break;
+        case LIR_GT:
+        case LIR_FGT:
+                | SEL gt
+                break;
+        case LIR_GE:
+        case LIR_FGE:
+                | SEL ge
+                break;
+        case LIR_ULT:
+                | SEL lo
+                break;
+        case LIR_ULE:
+        case LIR_FLE:
+                | SEL ls
+                break;
+        case LIR_UGT:
+                | SEL hi
+                break;
+        case LIR_UGE:
+                | SEL hs
+                break;
+        case LIR_FLT:
+                | SEL mi
+                break;
+        case LIR_FUN:
+                | SEL vs
+                break;
+        }
 }
 
 static void
@@ -680,8 +857,18 @@ setcc(dasm_State **Dst, u8 d, LirCC cc, u32 yes, u32 end)
 }
 
 static void
-brz(dasm_State **Dst, u8 a, bool nonzero, bool narrow, u32 label)
+brz(dasm_State **Dst, u8 a, bool nonzero, bool narrow, u32 label, bool far)
 {
+        if (!far && nonzero) {
+                | WL cbnz, a, label
+                return;
+        }
+
+        if (!far) {
+                | WL cbz, a, label
+                return;
+        }
+
         if (nonzero) {
                 | WZ cbz, a
         } else {
@@ -823,8 +1010,18 @@ checked(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
 }
 
 static void
-overflow(dasm_State **Dst, LirOp op, u32 label)
+overflow(dasm_State **Dst, LirOp op, u32 label, bool far)
 {
+        if (!far && op == LIR_MULO) {
+                | bne =>label
+                return;
+        }
+
+        if (!far) {
+                | bvs =>label
+                return;
+        }
+
         if (op == LIR_MULO) {
                 | beq >1
         } else {
