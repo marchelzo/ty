@@ -3573,6 +3573,9 @@ typedef struct {
         u32             *next;
         u32             *in;
         bool            *seen;
+        u32             *st;
+        u32             *alt;
+        u32             *tmp;
 } Check;
 
 inline static u32 *
@@ -3916,11 +3919,10 @@ join(Check *k, u32 b, u32 const *st, u32 *work, u32 *nwork, bool *queued)
 static bool
 flow(Check *k, u32 pb, u32 const *st, u32 const *slow, u32 *work, u32 *nwork, bool *queued)
 {
-        Ty             *ty  = k->ty;
         LirCFG const   *cfg = k->cfg;
         LirBlock const *P   = &cfg->blocks[pb];
         LirInst const  *in  = v_(k->L->insts, P->end - 1);
-        u32            *tmp = new(u32, k->width);
+        u32            *tmp = k->tmp;
         u32             nt  = isbranch(in) ? ((in->op == LIR_SWITCH) ? in->ntargets + 1 : 1) : 0;
 
         for (u32 j = 0; j < nt; ++j) {
@@ -3961,10 +3963,9 @@ flow(Check *k, u32 pb, u32 const *st, u32 const *slow, u32 *work, u32 *nwork, bo
 static bool
 walk(Check *k, u32 b, u32 *work, u32 *nwork, bool *queued)
 {
-        Ty             *ty  = k->ty;
         LirBlock const *B   = &k->cfg->blocks[b];
-        u32            *st  = new(u32, k->width);
-        u32            *alt = new(u32, k->width);
+        u32            *st  = k->st;
+        u32            *alt = k->alt;
 
         memcpy(st, &k->in[(usize)b * k->width], k->width * sizeof *st);
         memcpy(alt, st, k->width * sizeof *st);
@@ -4044,7 +4045,7 @@ lir_check_alloc(
 
         u32   n      = vN(L->insts);
         u32   nb     = cfg->nblocks;
-        u32  *work   = new(u32, nb + 1);
+        u32  *work   = new(u32, 2 * nb + 2);
         bool *queued = new0(bool, nb + 1);
         u32   nwork  = 0;
 
@@ -4053,6 +4054,9 @@ lir_check_alloc(
         k.next  = nones(alloc->nmoves + 1);
         k.in    = nones((usize)nb * k.width + 1);
         k.seen  = new0(bool, nb + 1);
+        k.st    = new(u32, k.width);
+        k.alt   = new(u32, k.width);
+        k.tmp   = new(u32, k.width);
 
         for (u32 i = alloc->nmoves; i-- > 0;) {
                 u32 op = alloc->moves[i].op;
@@ -4082,9 +4086,13 @@ lir_check_alloc(
         }
 
         while (ok && nwork != 0) {
-                u32 b = work[--nwork];
-                queued[b] = false;
-                ok = walk(&k, b, work, &nwork, queued);
+                nwork = 0;
+                for (u32 b = 0; ok && b < nb; ++b) {
+                        if (queued[b]) {
+                                queued[b] = false;
+                                ok        = walk(&k, b, work, &nwork, queued);
+                        }
+                }
         }
 
         return ok;

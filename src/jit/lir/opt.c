@@ -370,6 +370,68 @@ immediate(LirOpnd *a, u64 v)
         return true;
 }
 
+static LirCC
+mirror(LirCC cc)
+{
+        switch (cc) {
+        case LIR_LT:  return LIR_GT;
+        case LIR_GT:  return LIR_LT;
+        case LIR_LE:  return LIR_GE;
+        case LIR_GE:  return LIR_LE;
+        case LIR_ULT: return LIR_UGT;
+        case LIR_UGT: return LIR_ULT;
+        case LIR_ULE: return LIR_UGE;
+        case LIR_UGE: return LIR_ULE;
+        default:      return cc;
+        }
+}
+
+static bool
+fold_address(Lir const *L, u32 const *defs, LirInst *in)
+{
+        bool any = false;
+        u64  c;
+
+        for (u32 k = 0; k < in->nargs; ++k) {
+                LirMem *m = &in->args[k].mem;
+
+                if (
+                        (in->args[k].kind != LO_MEM)
+                     || (m->base == LIR_NONE)
+                     || (m->index == LIR_NONE)
+                     || (rcls(L, m->index) != LIR_I64)
+                     || !constant(L, defs, lir_r(m->index), LIR_I64, &c)
+                     || ((i64)c < -(1 << 24) || (i64)c > (1 << 24))
+                ) {
+                        continue;
+                }
+
+                i64 disp = (i64)m->disp + (i64)c * m->scale;
+
+                if (disp >= INT32_MIN && disp <= INT32_MAX) {
+                        m->disp  = (i32)disp;
+                        m->index = LIR_NONE;
+                        m->scale = 1;
+                        any      = true;
+                }
+        }
+
+        LirMem m = in->args[0].mem;
+
+        if (
+                (in->op == LIR_LEA)
+             && (m.base != LIR_NONE)
+             && (m.index == LIR_NONE)
+             && (m.disp == 0)
+             && (rcls(L, m.base) == rcls(L, in->dst))
+        ) {
+                become(in, LIR_MOV, lir_r(m.base));
+                any = true;
+        }
+
+        return any;
+}
+
 static bool
 fold_inst(Lir const *L, u32 const *defs, LirInst *in, bool *drop)
 {
@@ -437,6 +499,20 @@ fold_inst(Lir const *L, u32 const *defs, LirInst *in, bool *drop)
         bool  known = real
                     ? (fconstant(L, defs, in->args[1], &f) && fconstant(L, defs, in->args[2], &g))
                     : (constant(L, defs, in->args[1], LIR_I64, &x) && constant(L, defs, in->args[2], LIR_I64, &y));
+
+        if (
+                !known
+             && !real
+             && (in->args[2].kind == LO_REG)
+             && (rcls(L, in->args[2].reg) == LIR_I64)
+             && constant(L, defs, in->args[1], LIR_I64, &x)
+             && ((i64)x >= INT32_MIN && (i64)x <= INT32_MAX)
+        ) {
+                in->args[0] = lir_cc(mirror(cc));
+                in->args[1] = in->args[2];
+                in->args[2] = lir_i((i64)x);
+                return true;
+        }
 
         if (
                 !known
@@ -598,7 +674,11 @@ fold(Ty *ty, Lir *L)
                 bool changed = false;
 
                 for (u32 pc = 0; pc < n; ++pc) {
-                        if (!drop[pc] && fold_inst(L, defs, v_(L->insts, pc), &drop[pc])) {
+                        if (drop[pc]) {
+                                continue;
+                        }
+                        bool moved = fold_address(L, defs, v_(L->insts, pc));
+                        if (fold_inst(L, defs, v_(L->insts, pc), &drop[pc]) || moved) {
                                 changed = true;
                         }
                 }
@@ -893,7 +973,7 @@ prune(Ty *ty, Lir *L)
 
 }
 
-enum { CELLS = 64, FACTS = 16, REACH = 128 };
+enum { CELLS = 64, FACTS = 16, REACH = 64 };
 
 typedef struct {
         LirReg  root;
