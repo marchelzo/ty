@@ -118,9 +118,24 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
         int jump_count = 0;
         int branch_index = -1;
         int jump_index = -1;
+        int logic_count = 0;
+        int pending = 0;
+        struct { int target; u8 op; } joins[TY_INLINE_MAX_INSNS];
 
         while (ip < end) {
                 int offset = (int)(ip - code);
+
+                while (pending > 0 && joins[pending - 1].target == offset) {
+                        offsets[plan->count] = offset;
+                        if (!push_insn(plan, (TyInlineInsn) { .op = joins[--pending].op })) {
+                                return false;
+                        }
+                }
+
+                if (pending > 0 && joins[pending - 1].target < offset) {
+                        return false;
+                }
+
                 u8 op = (u8)*ip++;
                 TyInlineInsn insn = {0};
                 int before = plan->count;
@@ -301,6 +316,25 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         break;
                 }
 
+                case INSTR_JUMP_AND:
+                case INSTR_JUMP_OR:
+                {
+                        i32 relative;
+                        if (
+                                !read_bytes(&ip, end, &relative, sizeof relative)
+                             || (relative <= 0)
+                             || (pending == TY_INLINE_MAX_INSNS)
+                             || (pending > 0 && joins[pending - 1].target < (int)(ip - code) + relative)
+                        ) {
+                                return false;
+                        }
+                        joins[pending].target = (int)(ip - code) + relative;
+                        joins[pending].op     = (op == INSTR_JUMP_AND) ? TY_INLINE_AND : TY_INLINE_OR;
+                        pending              += 1;
+                        logic_count          += 1;
+                        break;
+                }
+
                 case INSTR_JUMP:
                 {
                         i32 relative;
@@ -336,11 +370,14 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 }
         }
 
-        if (return_offset < 0 || plan->count == 0) {
+        if (return_offset < 0 || plan->count == 0 || pending != 0) {
                 return false;
         }
         if ((branch_count != 0 || jump_count != 0)
             && (branch_count != 1 || jump_count != 1)) {
+                return false;
+        }
+        if (logic_count != 0 && branch_count != 0) {
                 return false;
         }
 
@@ -429,6 +466,8 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case TY_INLINE_GT:
                 case TY_INLINE_LE:
                 case TY_INLINE_GE:
+                case TY_INLINE_AND:
+                case TY_INLINE_OR:
                         if (depth < 2) {
                                 return false;
                         }

@@ -129,6 +129,19 @@ analyze(Plan *p, Value const *callee, TyInlineKind kind, i32 argc)
             && (p->plan.depths[p->plan.count] == 1);
 }
 
+static bool
+logical(Plan const *p)
+{
+        for (i32 i = 0; i < p->plan.count; ++i) {
+                u8 op = p->plan.insns[i].op;
+                if (op == TY_INLINE_AND || op == TY_INLINE_OR) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static void
 nonzero_bits(BcLir *c, LirReg f, LirLabel slow)
 {
@@ -351,6 +364,7 @@ try_plan(
 
         if (
                 !analyze(&p, callee, kind, argc)
+             || logical(&p)
              || (c->sp + p.plan.max_stack + 1 > c->max_sp + 200)
              || !plan_fields(c, &p)
         ) {

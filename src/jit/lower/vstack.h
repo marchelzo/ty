@@ -1951,6 +1951,7 @@ vs_string_byte(BcLir *c, BcLirNode const *node)
 
 typedef struct {
         bool    real;
+        bool    flag;
         LirOpnd v;
 } Lane;
 
@@ -1982,18 +1983,18 @@ lane_arg(BcLir *c, i32 pos, i32 class, LirLabel failed)
         bool real = (class == CLASS_FLOAT);
 
         if (intish(c->vs[pos].kind)) {
-                return (Lane) { false, iopnd(c, pos) };
+                return (Lane) { .real = false, .v = iopnd(c, pos) };
         }
 
         if (realish(c->vs[pos].kind)) {
-                return (Lane) { true, lir_r(vreg(c, pos)) };
+                return (Lane) { .real = true, .v = lir_r(vreg(c, pos)) };
         }
 
         Spot s = spot(c, pos);
 
         typecheck(c, s, numtag(real), failed);
 
-        return (Lane) { real, lir_r(unbox(c, s, real)) };
+        return (Lane) { .real = real, .v = lir_r(unbox(c, s, real)) };
 }
 
 static LirOpnd
@@ -2015,7 +2016,7 @@ lane_arith(BcLir *c, u8 op, Lane *a, Lane b, bool emit, LirLabel failed)
 {
         bool real = a->real || b.real;
 
-        if (op == TY_INLINE_DIV && !real) {
+        if ((op == TY_INLINE_DIV && !real) || a->flag || b.flag) {
                 return false;
         }
 
@@ -2043,6 +2044,41 @@ lane_arith(BcLir *c, u8 op, Lane *a, Lane b, bool emit, LirLabel failed)
 }
 
 static bool
+lane_compare(BcLir *c, u8 op, Lane *a, Lane b, bool emit)
+{
+        bool real = a->real || b.real;
+
+        if (a->flag || b.flag) {
+                return false;
+        }
+
+        if (emit && real) {
+                a->v = lir_r(vop(c, LIR_FSETCC, LIR_I64, lir_cc(Arith[op].fcc), widen(c, *a), widen(c, b)));
+        } else if (emit) {
+                a->v = lir_r(vop(c, LIR_SETCC, LIR_I64, lir_cc(Arith[op].icc), a->v, b.v));
+        }
+
+        a->real = false;
+        a->flag = true;
+
+        return true;
+}
+
+static bool
+lane_logic(BcLir *c, u8 op, Lane *a, Lane b, bool emit)
+{
+        if (!a->flag || !b.flag) {
+                return false;
+        }
+
+        if (emit) {
+                a->v = lir_r(vop(c, (op == TY_INLINE_AND) ? LIR_AND : LIR_OR, LIR_I64, a->v, b.v));
+        }
+
+        return true;
+}
+
+static bool
 lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool emit, LirLabel failed)
 {
         TyInlinePlan const *plan = &p->plan;
@@ -2064,16 +2100,20 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                         }
                         st[d] = emit
                               ? lane_arg(c, first + insn->local, kinds[insn->local], failed)
-                              : (Lane) { kinds[insn->local] == CLASS_FLOAT };
+                              : (Lane) { .real = (kinds[insn->local] == CLASS_FLOAT) };
                         break;
 
                 case TY_INLINE_INTEGER:
-                        st[d] = (Lane) { false, lir_i(insn->integer) };
+                        st[d] = (Lane) { .real = false, .v = lir_i(insn->integer) };
                         break;
 
                 case TY_INLINE_REAL:
                         memcpy(&bits, &insn->real, sizeof bits);
-                        st[d] = (Lane) { true, emit ? lir_r(fval(c, insn->real)) : lir_i((i64)bits) };
+                        st[d] = (Lane) { .real = true, .v = emit ? lir_r(fval(c, insn->real)) : lir_i((i64)bits) };
+                        break;
+
+                case TY_INLINE_BOOLEAN:
+                        st[d] = (Lane) { .flag = true, .v = lir_i(insn->integer != 0) };
                         break;
 
                 case TY_INLINE_POP:
@@ -2084,6 +2124,24 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                 case TY_INLINE_MUL:
                 case TY_INLINE_DIV:
                         if (d < 2 || !lane_arith(c, insn->op, &st[d - 2], st[d - 1], emit, failed)) {
+                                return false;
+                        }
+                        break;
+
+                case TY_INLINE_EQ:
+                case TY_INLINE_NE:
+                case TY_INLINE_LT:
+                case TY_INLINE_GT:
+                case TY_INLINE_LE:
+                case TY_INLINE_GE:
+                        if (d < 2 || !lane_compare(c, insn->op, &st[d - 2], st[d - 1], emit)) {
+                                return false;
+                        }
+                        break;
+
+                case TY_INLINE_AND:
+                case TY_INLINE_OR:
+                        if (d < 2 || !lane_logic(c, insn->op, &st[d - 2], st[d - 1], emit)) {
                                 return false;
                         }
                         break;
@@ -2144,10 +2202,12 @@ vs_call_global(BcLir *c, BcLirNode const *node)
         vs_seal(c, failed);
         vs_pop(c, argc);
 
+        u8 kind = r.flag ? VS_BOOL : numkind(r.real);
+
         if (r.v.kind == LO_IMM) {
-                vs_push(c, VS_CINT, LIR_NONE, (u64)r.v.imm);
+                vs_push(c, r.flag ? VS_CBOOL : VS_CINT, LIR_NONE, (u64)r.v.imm);
         } else {
-                vs_push(c, numkind(r.real), r.v.reg, 0);
+                vs_push(c, kind, r.v.reg, 0);
         }
 
         return true;
@@ -2549,6 +2609,18 @@ vs_join_wtf(BcLir *c, BcLirNode const *node)
 }
 
 static bool
+vs_captured(BcLir *c, char const *ip)
+{
+        if (getenv("TY_JIT_NO_CELLS") != NULL) {
+                return false;
+        }
+
+        vs_push(c, VS_CELL, captured(c, load_i32(ip + 1)), 0);
+
+        return true;
+}
+
+static bool
 vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
 {
         u8 op = node->op;
@@ -2569,6 +2641,7 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_FALSE:              return vs_const(c, VS_CBOOL, 0);
         case INSTR_NIL:                return vs_const(c, VS_CNIL, 0);
         case INSTR_LOAD_LOCAL:         return vs_load_local(c, node, load_i32(ip + 1));
+        case INSTR_LOAD_CAPTURED:      return vs_captured(c, ip);
         case INSTR_ASSIGN_LOCAL:       return vs_assign_local(c, load_i32(ip + 1));
         case INSTR_TARGET_LOCAL:       return vs_mutate(c, node, ip);
         case INSTR_SUBSCRIPT:          return vs_subscript(c, node);

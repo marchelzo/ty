@@ -893,7 +893,7 @@ prune(Ty *ty, Lir *L)
 
 }
 
-enum { CELLS = 64, FACTS = 16 };
+enum { CELLS = 64, FACTS = 16, REACH = 128 };
 
 typedef struct {
         LirReg  root;
@@ -904,6 +904,7 @@ typedef struct {
         bool    known;
         u64     bits;
         LirReg  reg;
+        u32     born;
 } Cell;
 
 typedef struct {
@@ -933,6 +934,7 @@ typedef struct {
         LirReg    *root;
         i64       *off;
         u16       *refs;
+        u32        pc;
         State      s;
 } Fwd;
 
@@ -1170,7 +1172,8 @@ store(Fwd *f, LirInst const *in)
                 .off  = lo,
                 .size = size,
                 .type = type,
-                .reg  = (in->args[1].kind == LO_REG) ? in->args[1].reg : LIR_NONE
+                .reg  = (in->args[1].kind == LO_REG) ? in->args[1].reg : LIR_NONE,
+                .born = f->pc
         };
 
         c.known = literal(f, in->args[1], type, &c.bits);
@@ -1296,6 +1299,17 @@ extend(u64 bits, LirType type, u64 *out)
         }
 }
 
+static void
+alias(Fwd *f, LirReg d, LirReg s)
+{
+        u32 n = vN(f->L->insts);
+
+        if (f->defs[d] < n && f->defs[s] < n && f->root[s] != d) {
+                f->root[d] = f->root[s];
+                f->off[d]  = f->off[s];
+        }
+}
+
 static bool
 load(Fwd *f, LirInst *in)
 {
@@ -1335,7 +1349,13 @@ load(Fwd *f, LirInst *in)
                         }
                 }
 
-                if (c->off == lo && c->size == size && reusable(L, c, in, type)) {
+                if (
+                        (c->off == lo)
+                     && (c->size == size)
+                     && (f->pc - c->born <= REACH)
+                     && reusable(L, c, in, type)
+                ) {
+                        alias(f, in->dst, c->reg);
                         become(in, LIR_MOV, lir_r(c->reg));
                         return true;
                 }
@@ -1586,15 +1606,21 @@ retain(Fwd *f, LirInst const *in)
 }
 
 static bool
-same_cell(Cell const *a, Cell const *b)
+same_cell(Cell *a, Cell const *b)
 {
-        return (a->root == b->root)
-            && (a->off == b->off)
-            && (a->size == b->size)
-            && (a->type == b->type)
-            && (a->load == b->load)
-            && (a->known == b->known)
-            && (a->known ? (a->bits == b->bits) : (a->reg == b->reg));
+        bool same = (a->root == b->root)
+                 && (a->off == b->off)
+                 && (a->size == b->size)
+                 && (a->type == b->type)
+                 && (a->load == b->load)
+                 && (a->known == b->known)
+                 && (a->known ? (a->bits == b->bits) : (a->reg == b->reg));
+
+        if (same) {
+                a->born = min(a->born, b->born);
+        }
+
+        return same;
 }
 
 static void
@@ -2020,6 +2046,8 @@ forward(Ty *ty, Lir *L, LirReg *root, i64 *off)
                         cut = cut || !taken;
                 }
 
+                f->pc = pc;
+
                 switch (form) {
                 case LF_LD:   hit = load(f, in);  break;
                 case LF_ST:   store(f, in);       break;
@@ -2060,7 +2088,8 @@ forward(Ty *ty, Lir *L, LirReg *root, i64 *off)
                                 .size = lir_type_size(LirOps[in->op].type),
                                 .type = LirOps[in->op].type,
                                 .load = true,
-                                .reg  = in->dst
+                                .reg  = in->dst,
+                                .born = pc
                         });
                 }
 

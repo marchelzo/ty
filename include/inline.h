@@ -37,6 +37,8 @@ typedef enum {
         TY_INLINE_GE,
         TY_INLINE_BRANCH_TRUE,
         TY_INLINE_JUMP,
+        TY_INLINE_AND,
+        TY_INLINE_OR,
 } TyInlineOp;
 
 typedef struct {

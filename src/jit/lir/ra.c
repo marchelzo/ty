@@ -1649,7 +1649,7 @@ split(Scan *s, u32 c, u32 b)
 
         Iv t = {
                 .rep   = x->rep,
-                .r     = new(LirRange, x->nr - k),
+                .r     = x->r + k,
                 .nr    = x->nr - k,
                 .u     = x->u + m,
                 .nu    = x->nu - m,
@@ -1660,15 +1660,17 @@ split(Scan *s, u32 c, u32 b)
                 .calm  = x->calm
         };
 
-        memcpy(t.r, x->r + k, t.nr * sizeof *t.r);
-        t.r[0].start = most(t.r[0].start, b);
-
         if (x->r[k].start < b) {
-                x->r[k].end = b;
+                LirRange *head = new(LirRange, k + 1);
+                memcpy(head, x->r, (k + 1) * sizeof *head);
+                head[k].end = b;
+                x->r        = head;
                 x->nr       = k + 1;
         } else {
                 x->nr = k;
         }
+
+        t.r[0].start = most(t.r[0].start, b);
 
         x->nu = m;
 
