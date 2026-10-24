@@ -30,6 +30,7 @@ MERGE_FDATA   ?= merge-fdata
 BOLT_FLAGS    ?= -reorder-blocks=ext-tsp -reorder-functions=cdsort \
                  -split-functions -split-all-cold -split-eh -icf=1 \
                  -use-gnu-stack -dyno-stats
+BOLT_SKIP     ?= (trampoline_code_table|ffi_call_(unix64|win64|SYSV)|ffi_(go_)?closure_(unix64|win64|SYSV)(_sse|_V)?(_alt)?|ffi_plan_(fast_call|gp[0-6]))(/.*)?
 
 ifeq ($(shell uname -s),Linux)
 	BOLT ?= 1
@@ -101,10 +102,13 @@ $(BUILD)/ty.bolt: $(BUILD)/ty
 	@mkdir -p $(BUILD)/bolt
 	$(LLVM_BOLT) $< -instrument -o $(BUILD)/ty.inst \
 		--instrumentation-file=$(abspath $(BUILD))/bolt/ty.fdata \
-		--instrumentation-file-append-pid
+		--instrumentation-file-append-pid '-skip-funcs=$(BOLT_SKIP)'
+	scripts/bolt-ffi-tramp.sh $< $(BUILD)/ty.inst
 	$(call pgo-train,$(BUILD)/ty.inst,$(BUILD)/bolt)
 	$(MERGE_FDATA) $(BUILD)/bolt/*.fdata >$(BUILD)/ty.fdata
-	$(LLVM_BOLT) $< -o $@ -data=$(BUILD)/ty.fdata $(BOLT_FLAGS)
+	$(LLVM_BOLT) $< -o $@.tmp -data=$(BUILD)/ty.fdata $(BOLT_FLAGS) '-skip-funcs=$(BOLT_SKIP)'
+	scripts/bolt-ffi-tramp.sh $< $@.tmp
+	@mv $@.tmp $@
 endif
 
 test: all

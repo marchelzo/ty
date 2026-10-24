@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "pre.h"
 #include "vec.h"
 
 #if defined(TY_RELEASE) && !defined(TY_SYSMALLOC)
@@ -107,22 +108,6 @@ enum {
 };
 
 enum { VALUE_TABLE_SIZE = 16 };
-
-typedef uint8_t   u8;
-typedef uint16_t  u16;
-typedef uint32_t  u32;
-typedef uint64_t  u64;
-typedef size_t    usize;
-typedef uintmax_t umax;
-typedef uintptr_t uptr;
-
-typedef int8_t   i8;
-typedef int16_t  i16;
-typedef int32_t  i32;
-typedef int64_t  i64;
-typedef int64_t  isize;
-typedef intmax_t imax;
-typedef intptr_t iptr;
 
 typedef struct bytes {
         char const *data;

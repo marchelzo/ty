@@ -1,5 +1,29 @@
-#ifndef PP_H_INCLUDED
-#define PP_H_INCLUDED
+#ifndef PRE_H_INCLUDED
+#define PRE_H_INCLUDED
+
+#include <stdint.h>
+#include <stddef.h>
+
+typedef unsigned char  uchar;
+typedef unsigned short ushort;
+typedef unsigned int   uint;
+typedef unsigned long  ulong;
+
+typedef uint8_t   u8;
+typedef uint16_t  u16;
+typedef uint32_t  u32;
+typedef uint64_t  u64;
+typedef size_t    usize;
+typedef uintmax_t umax;
+typedef uintptr_t uptr;
+
+typedef int8_t   i8;
+typedef int16_t  i16;
+typedef int32_t  i32;
+typedef int64_t  i64;
+typedef int64_t  isize;
+typedef intmax_t imax;
+typedef intptr_t iptr;
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)

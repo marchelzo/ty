@@ -3,12 +3,11 @@
 
 #include <stddef.h>
 
-#include "pp.h"
+#include "pre.h"
 
-typedef size_t vec_z;
-
-inline static vec_z
-fit2(vec_z cap, vec_z min)
+[[gnu::always_inline]]
+inline static usize
+fit2(usize cap, usize min)
 {
         while (cap < min) {
                 cap <<= 1;
@@ -21,7 +20,7 @@ fit2(vec_z cap, vec_z min)
         T *items;             \
         I count;              \
         I capacity
-#define intrusive_vec_1(T) intrusive_vec_2(size_t, T)
+#define intrusive_vec_1(T) intrusive_vec_2(usize, T)
 #define intrusive_vec(...) VA_SELECT(intrusive_vec, __VA_ARGS__)
 
 #define vec(...) struct { intrusive_vec(__VA_ARGS__); }
