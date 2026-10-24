@@ -497,6 +497,20 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
 }
 
 static bool
+breaks(BcLir const *c, BcLoop const *loop, BcLirNode const *n, i32 hs)
+{
+        if (n->op != INSTR_POP2 || n->sp != hs || n->next >= c->size) {
+                return false;
+        }
+
+        BcLirNode const *jump = next_of(c, n);
+
+        return (jump->op == INSTR_JUMP)
+            && (jump->label == LIR_NONE)
+            && !inside(loop, jump->target);
+}
+
+static bool
 counted(BcLir const *c, BcLoop const *loop)
 {
         BcLirNode const *head = &c->nodes[loop->head];
@@ -512,6 +526,11 @@ counted(BcLir const *c, BcLoop const *loop)
                 BcLirNode const *n = &c->nodes[off];
 
                 if (dead(n)) {
+                        continue;
+                }
+
+                if (breaks(c, loop, n, hs)) {
+                        off = n->next;
                         continue;
                 }
 

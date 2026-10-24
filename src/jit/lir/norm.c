@@ -589,15 +589,34 @@ shape(Lir *L, LirInst *in, u8 *use, LirClass *cls)
 }
 
 static bool
-polled(Lir const *L, u32 pc, bool leader)
+quiet(LirInst const *in)
 {
-        return !leader
-            && (vN(L->insts) != 0)
-            && (v_(L->insts, vN(L->insts) - 1)->op == LIR_POLL);
+        switch (LirOps[in->op].form) {
+        case LF_MOV:
+                return (in->args[0].kind != LO_VSLOT) && (in->flags == 0);
+
+        case LF_LI:
+        case LF_FLI:
+        case LF_LEA:
+        case LF_IUNARY:
+        case LF_SETCC:
+        case LF_FSETCC:
+                return in->flags == 0;
+
+        case LF_IBINARY:
+                return (in->flags == 0)
+                    && (in->op != LIR_SDIV)
+                    && (in->op != LIR_UDIV)
+                    && (in->op != LIR_SREM)
+                    && (in->op != LIR_UREM);
+
+        default:
+                return false;
+        }
 }
 
 static bool
-rewrite(Lir *L, LirInst *src, u32 pc, bool leader, LirError *err)
+rewrite(Lir *L, LirInst *src, u32 pc, bool polls, LirError *err)
 {
         LirInst  in  = *src;
         LirClass d   = (in.dst == LIR_NONE) ? LIR_I64 : v__(L->regs, in.dst).cls;
@@ -607,7 +626,7 @@ rewrite(Lir *L, LirInst *src, u32 pc, bool leader, LirError *err)
         if (
                 (L->resolved_mode == LIR_MODE_ATTACHED)
              && backedge(L, &in, pc)
-             && !polled(L, pc, leader)
+             && !polls
         ) {
                 LirLabel next = lir_label(L);
                 bool     ok   = one(L, LIR_POLL, LIR_NONE, lir_l(next), in.span);
@@ -677,6 +696,7 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
 
         u32  *at     = smA((n + 1) * sizeof *at);
         bool *leader = smA0(n + 1);
+        bool  armed  = false;
 
         for (u32 i = 0; i < nlabels; ++i) {
                 u32 pos = v__(L->labels, i).pos;
@@ -688,8 +708,13 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
         lir_swap(L);
 
         for (u32 pc = 0; ok && pc < n; ++pc) {
+                bool poll = (old[pc].op == LIR_POLL);
+                bool calm = quiet(&old[pc]);
+
+                armed  = armed && !leader[pc];
                 at[pc] = vN(L->insts);
-                ok = rewrite(L, &old[pc], pc, leader[pc], err);
+                ok     = rewrite(L, &old[pc], pc, armed, err);
+                armed  = poll || (armed && calm);
         }
 
         if (ok) {

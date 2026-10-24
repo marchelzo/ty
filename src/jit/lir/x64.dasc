@@ -838,12 +838,65 @@ choose(dasm_State **Dst, u8 d, u8 a, u8 b, LirCC cc, LirClass cls)
 static void
 setcc(dasm_State **Dst, u8 d, LirCC cc, u32 yes, u32 end)
 {
-        branch(Dst, cc, yes, false);
-        li(Dst, d, 0);
-        jump(Dst, end);
-        label(Dst, yes);
-        li(Dst, d, 1);
-        label(Dst, end);
+        switch (cc) {
+        case LIR_EQ:
+                | sete Rb(d)
+                break;
+        case LIR_NE:
+                | setne Rb(d)
+                break;
+        case LIR_LT:
+                | setl Rb(d)
+                break;
+        case LIR_LE:
+                | setle Rb(d)
+                break;
+        case LIR_GT:
+                | setg Rb(d)
+                break;
+        case LIR_GE:
+                | setge Rb(d)
+                break;
+        case LIR_ULT:
+                | setb Rb(d)
+                break;
+        case LIR_ULE:
+                | setbe Rb(d)
+                break;
+        case LIR_UGT:
+        case LIR_FGT:
+                | seta Rb(d)
+                break;
+        case LIR_UGE:
+        case LIR_FGE:
+                | setae Rb(d)
+                break;
+        case LIR_FUN:
+                | setp Rb(d)
+                break;
+        case LIR_FEQ:
+                | sete Rb(d)
+                | setnp r11b
+                | and Rb(d), r11b
+                break;
+        case LIR_FLT:
+                | setb Rb(d)
+                | setnp r11b
+                | and Rb(d), r11b
+                break;
+        case LIR_FLE:
+                | setbe Rb(d)
+                | setnp r11b
+                | and Rb(d), r11b
+                break;
+        case LIR_FNE:
+                | setne Rb(d)
+                | setp r11b
+                | or Rb(d), r11b
+                break;
+        }
+
+        | movzx Rd(d), Rb(d)
 }
 
 static void

@@ -1,0 +1,83 @@
+import lib (bench)
+
+// Early-exit scans: counted loops left through `break`, `while` loops whose
+// condition is an `&&` chain, and binary search with branches that rejoin.
+
+let HAYSTACK = [(i * 7919) % 1009 for i in ..4096]
+let SORTED   = HAYSTACK.sort()
+let NEEDLES  = [(i * 31) % 1100 for i in ..256]
+let PATTERN  = HAYSTACK[1500;8]
+
+fn first-index(xs: [Int], x: Int) -> Int {
+    let found = -1
+    for i in ..#xs {
+        if xs[i] == x {
+            found = i
+            break
+        }
+    }
+    found
+}
+
+fn bounded-scan(xs: [Int], x: Int, limit: Int) -> Int {
+    let i = 0
+    while i < #xs && i < limit && xs[i] != x {
+        i += 1
+    }
+    i
+}
+
+fn lower-bound(xs: [Int], x: Int) -> Int {
+    let lo = 0
+    let hi = #xs
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if xs[mid] < x {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    lo
+}
+
+fn occurs(xs: [Int], pat: [Int]) -> Int {
+    let hits = 0
+    for start in ..#xs - #pat + 1 {
+        let ok = true
+        for k in ..#pat {
+            if xs[start + k] != pat[k] || xs[start] < 0 {
+                ok = false
+                break
+            }
+        }
+        if ok {
+            hits += 1
+        }
+    }
+    hits
+}
+
+fn window-ok(xs: [Int], lo: Int, hi: Int) -> Bool {
+    for x in xs {
+        if x < lo || x > hi || (x % 97 == 0 && x != 0) {
+            return false
+        }
+    }
+    true
+}
+
+@bench('loop branch break array integer search')
+fn search(n: Int) {
+    for ..n {
+        let total = 0
+        for x in NEEDLES {
+            total += first-index(HAYSTACK, x)
+            total += bounded-scan(HAYSTACK, x, 3000)
+            total += lower-bound(SORTED, x)
+        }
+        total += occurs(HAYSTACK, PATTERN)
+        total += window-ok(HAYSTACK[;64], 0, 2000) ? 1 : 0
+        assert(total == 858805)
+    }
+}

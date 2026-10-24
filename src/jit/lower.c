@@ -1226,6 +1226,58 @@ decode(BcLir *c, Value const *f)
         return true;
 }
 
+static i32
+settle(BcLir const *c, i32 to, bool truth)
+{
+        for (i32 hops = 0; hops < 16; ++hops) {
+                if (to <= 0 || to >= c->size || !decoded(&c->nodes[to])) {
+                        return -1;
+                }
+
+                BcLirNode const *t = &c->nodes[to];
+
+                switch (t->op) {
+                case INSTR_JUMP_IF:     return truth ? t->target : t->next;
+                case INSTR_JUMP_IF_NOT: return truth ? t->next   : t->target;
+
+                case INSTR_JUMP_OR:
+                case INSTR_JUMP_AND:
+                        if (truth != (t->op == INSTR_JUMP_OR)) {
+                                return t->next;
+                        }
+                        to = t->target;
+                        break;
+
+                default:
+                        return -1;
+                }
+        }
+
+        return -1;
+}
+
+static void
+thread(BcLir *c)
+{
+        if (c->dynamic || getenv("TY_JIT_NO_THREAD") != NULL) {
+                return;
+        }
+
+        for (i32 off = 0; off < c->size; off = c->nodes[off].next) {
+                BcLirNode *node  = &c->nodes[off];
+                bool       truth = (node->op == INSTR_JUMP_OR);
+                i32        to;
+
+                if (
+                        (truth || node->op == INSTR_JUMP_AND)
+                     && ((to = settle(c, node->target, truth)) > 0)
+                ) {
+                        node->op     = truth ? INSTR_JUMP_IF : INSTR_JUMP_IF_NOT;
+                        node->target = to;
+                }
+        }
+}
+
 static bool
 arm_at(BcLir const *c, BcLirNode const *node, i32 i, i32 *target)
 {
@@ -1621,7 +1673,13 @@ graph(BcLir *c, Value const *f)
 
         BcQueue q = { .at = smA((c->size + 1) * sizeof *q.at) };
 
-        return decode(c, f) && flow(c, &q);
+        if (!decode(c, f)) {
+                return false;
+        }
+
+        thread(c);
+
+        return flow(c, &q);
 }
 
 static LirReg
@@ -3123,8 +3181,10 @@ reset_slots(BcLir *c, BcLirNode const *node, i32 off)
         }
 
         for (i32 i = node->sp; i < c->max_sp + 8; ++i) {
-                c->vs[i].kind = VS_MEM;
-                c->vs[i].hint = T2_TYPE_INVALID;
+                if (!loop_pinned(c, i)) {
+                        c->vs[i].kind = VS_MEM;
+                        c->vs[i].hint = T2_TYPE_INVALID;
+                }
         }
 
         if (c->hints != NULL && node->sp > 0) {
