@@ -1,0 +1,72 @@
+import lib (bench)
+
+// A byte-at-a-time tokenizer: character classes built from `&&` / `||`
+// chains, `while` loops with compound conditions, `??` defaults and early
+// exits.
+
+fn source(n: Int) -> String {
+    let parts = []
+    for i in ..n {
+        parts.push("let value_{i} = (x{i % 7} + {i * 13}) * 0x{i % 255:x} - 3.25e{i % 4};\n")
+        parts.push("if value_{i} >= limit && !done || flag_{i % 3} then total <= value_{i} != 0\n")
+    }
+    parts.join('')
+}
+
+let TEXT = source(400)
+
+fn at(s: String, i: Int) -> Int {
+    s.byte(i) ?? 0
+}
+
+fn digit?(c: Int) -> Bool {
+    c >= 48 && c <= 57
+}
+
+fn alpha?(c: Int) -> Bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn space?(c: Int) -> Bool {
+    c == 32 || c == 10 || c == 9 || c == 13
+}
+
+fn tokenize(s: String) -> [Int] {
+    let counts = [0, 0, 0, 0, 0]
+    let n = #s
+    let i = 0
+    while i < n {
+        let c = at(s, i)
+        if space?(c) {
+            i += 1
+        } else if alpha?(c) {
+            while i < n && (alpha?(at(s, i)) || digit?(at(s, i))) {
+                i += 1
+            }
+            counts[0] += 1
+        } else if digit?(c) {
+            while i < n && (digit?(at(s, i)) || at(s, i) == 46 || at(s, i) == 101 || at(s, i) == 120) {
+                i += 1
+            }
+            counts[1] += 1
+        } else if (c == 62 || c == 60 || c == 61 || c == 33) && i + 1 < n && at(s, i + 1) == 61 {
+            i += 2
+            counts[2] += 1
+        } else if (c == 38 && i + 1 < n && at(s, i + 1) == 38) || (c == 124 && i + 1 < n && at(s, i + 1) == 124) {
+            i += 2
+            counts[3] += 1
+        } else {
+            i += 1
+            counts[4] += 1
+        }
+    }
+    counts
+}
+
+@bench('string loop branch integer parsing')
+fn lexer(n: Int) {
+    for ..n {
+        let counts = tokenize(TEXT)
+        assert(counts == [4579, 1600, 1200, 800, 3200])
+    }
+}

@@ -1,0 +1,73 @@
+import lib (bench)
+
+// Code the JIT cannot fully specialize: arrays mixing Int and Float, optional
+// values that are sometimes nil, and a call site that sees two classes. This
+// keeps the generic slow paths, `??` joins and guard fallbacks on the clock.
+
+class Square {
+    side: Float
+
+    init(side: Float) { self.side = side }
+
+    area() -> Float { side * side }
+}
+
+class Circle {
+    r: Float
+
+    init(r: Float) { self.r = r }
+
+    area() -> Float { 3.0 * r * r }
+}
+
+let NUMBERS = [(i % 3 == 0) ? (i.float / 4.0) : i for i in ..3000]
+let MAYBE   = [(i % 5 == 0) ? nil : i for i in ..3000]
+let SHAPES  = [(i % 2 == 0) ? Square((i % 7).float) : Circle((i % 5).float) for i in ..600]
+
+fn total(xs: [Int | Float]) -> Int | Float {
+    let sum = 0
+    for x in xs {
+        sum += x
+    }
+    sum
+}
+
+fn extremes(xs: [Int | Float]) -> Int | Float {
+    let lo = xs[0]
+    let hi = xs[0]
+    for x in xs {
+        if x < lo {
+            lo = x
+        } else if x > hi {
+            hi = x
+        }
+    }
+    hi - lo
+}
+
+fn defaults(xs: [Int | nil]) -> Int {
+    let sum = 0
+    for x in xs {
+        sum += (x ?? -1) * 2
+    }
+    sum
+}
+
+fn areas(shapes: [Square | Circle]) -> Float {
+    let sum = 0.0
+    for s in shapes {
+        sum += s.area()
+    }
+    sum
+}
+
+@bench('generic polymorphic float integer nil fallback')
+fn mixed(n: Int) {
+    for ..n {
+        let a = total(NUMBERS)
+        let b = extremes(NUMBERS)
+        let c = defaults(MAYBE)
+        let d = areas(SHAPES)
+        assert(int(a + b + c + d) == 10585712)
+    }
+}
