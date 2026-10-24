@@ -1,0 +1,7 @@
+import os
+
+const k = os.getpid()
+
+ns k {
+    pub const Z = 1
+}
