@@ -30,6 +30,15 @@ x_x_x(u8 const *s, isize sz, isize ncp)
         isize count = 0;
 
         while (off < sz && count < ncp) {
+                isize run = ascii_run(s + off, min(sz - off, ncp - count));
+
+                off   += run;
+                count += run;
+
+                if (off == sz || count == ncp) {
+                        break;
+                }
+
                 i32 rune;
                 isize bytes = utf8proc_iterate(s + off, sz - off, &rune);
                 if (bytes <= 0) {
@@ -1586,9 +1595,9 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         i32 cp;
-        isize j = i;
-        isize offset = 0;
-        isize n = utf8proc_iterate(ss(*string), sN(*string), &cp);
+        isize offset = ascii_run(ss(*string), min(i, sN(*string)));
+        isize j = i - offset;
+        isize n = utf8proc_iterate(ss(*string) + offset, sN(*string) - offset, &cp);
 
         while (offset < sN(*string) && n > 0 && j --> 0) {
                 offset += max(1, n);
@@ -1599,7 +1608,7 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
                 return NIL;
         }
 
-        return STRING_VIEW(*string, offset, n);
+        return STRING_VIEW(*string, offset, (n > 0) ? n : 1);
 }
 
 static Value

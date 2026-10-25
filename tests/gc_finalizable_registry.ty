@@ -1,0 +1,132 @@
+import ty
+import json
+
+let counts = [0, 0, 0, 0]
+let revived = []
+
+class Counted {
+    __slot: Int
+
+    init(slot: Int) { __slot = slot }
+
+    __free__() { counts[__slot] += 1 }
+}
+
+class Stubborn {
+    __id: Int
+
+    init(id: Int) { __id = id }
+
+    id -> Int { __id }
+
+    __free__() {
+        counts[2] += 1
+        revived.push(self)
+    }
+}
+
+class Decoded {
+    x: Int
+    y: Int
+
+    __free__() { counts[3] += 1 }
+}
+
+fn settle() {
+    for _ in ..6 {
+        ty.gc()
+    }
+}
+
+fn churn(slot: Int, n: Int) {
+    for i in ..n {
+        let keep = [Counted(slot) for _ in ..(i % 7)]
+        assert(#keep == i % 7)
+    }
+}
+
+pub fn finalizers-run-exactly-once-under-churn() {
+    let before = counts[0]
+    let made = do {
+        let total = 0
+        for i in ..3000 { total += i % 7 }
+        total
+    }
+    churn(0, 3000)
+    settle()
+    assert(counts[0] - before == made)
+    settle()
+    assert(counts[0] - before == made)
+}
+
+pub fn resurrected-objects-are-finalized-once() {
+    let before = counts[2]
+    for i in ..500 {
+        Stubborn(i)
+    }
+    settle()
+    assert(counts[2] - before == 500)
+    assert(#revived >= 500)
+    let noise = [[i, i + 1] for i in ..20000]
+    assert(#noise == 20000)
+    assert(revived.map(&.id).sum() == 499 * 500 / 2)
+    revived.clear()
+    settle()
+    assert(counts[2] - before == 500)
+}
+
+pub fn objects-made-on-exited-threads() {
+    let before = counts[1]
+    let threads = [Thread(churn, 1, 200) for ..4]
+    for t in threads {
+        t.join()
+    }
+    let made = do {
+        let total = 0
+        for i in ..200 { total += i % 7 }
+        4 * total
+    }
+    settle()
+    assert(counts[1] - before == made)
+}
+
+fn decode-many(n: Int) {
+    for i in ..n {
+        let p = json.parse(Decoded, "\{\"x\": {i}, \"y\": 2\}")
+        assert(p.x == i)
+    }
+}
+
+pub fn decoded-objects-are-finalized() {
+    let before = counts[3]
+    decode-many(300)
+    decode-many(1)
+    settle()
+    assert(counts[3] - before >= 300)
+}
+
+fn stubborn-batch(start: Int, n: Int) {
+    for i in start..(start + n) {
+        Stubborn(i)
+    }
+}
+
+pub fn resurrection-of-objects-from-exited-threads() {
+    let before = counts[2]
+    revived.clear()
+    let threads = [Thread(stubborn-batch, 1000 * k, 200) for k in ..3]
+    for t in threads {
+        t.join()
+    }
+    settle()
+    assert(counts[2] - before == 600)
+    let noise = [[i, i + 1] for i in ..20000]
+    assert(#noise == 20000)
+    let want = do {
+        let total = 0
+        for k in ..3 { for i in (1000 * k)..(1000 * k + 200) { total += i } }
+        total
+    }
+    assert(revived.map(&.id).sum() == want)
+    revived.clear()
+}

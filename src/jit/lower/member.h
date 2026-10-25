@@ -237,9 +237,20 @@ known_getter(
                 return false;
         }
 
-        guard_receiver(c, value, class, slow);
+        LirLabel other = extended(class) ? newlabel(c) : slow;
+        LirLabel call  = newlabel(c);
+
+        guard_receiver(c, value, class, other);
         try_plan(c, getter, TY_INLINE_METHOD, 0, out, value, class, NULL, out, done);
+
+        bind(c, call);
         inline_call(c, konst(c, getter), getter, out, 0, value, slow, done);
+
+        if (other != slow) {
+                bind(c, other);
+                same_member(c, value, member, true, getter, slow);
+                jump(c, call);
+        }
 
         return true;
 }
@@ -335,13 +346,22 @@ fast_member(
                 return;
         }
 
-        LirReg slot = known_field_slot(c, value, class, member, false, slow);
+        bool     field = extended(class) && (offset_of(class, member, false, OFF_FIELD) != OFF_NOT_FOUND);
+        LirLabel other = field ? newlabel(c) : slow;
+        LirReg   slot  = known_field_slot(c, value, class, member, false, other);
 
         if (slot == LIR_NONE) {
                 if (known_getter(c, value, class, member, c->sp - !self, slow, done)) {
                         return;
                 }
                 slot = any_field_slot(c, value, class, member, false, slow);
+        } else if (other != slow) {
+                copy(c, out, 0, slot, 0);
+                count_fast(c, SITE_MEMBER);
+                jump(c, done);
+
+                bind(c, other);
+                slot = field_slot(c, value, member, false, slow);
         }
 
         copy(c, out, 0, slot, 0);

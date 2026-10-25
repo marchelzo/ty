@@ -1,0 +1,203 @@
+import lib (bench)
+
+// A tree-walking interpreter for a small expression language: a regex
+// tokenizer, a recursive-descent parser building tagged AST nodes, and an
+// evaluator driven by `match` over closures and chained dictionary
+// environments.  Config languages, template engines, query filters and most
+// DSLs written in Ty have this shape.
+
+tag Num, Var, Bin, Cond, Bind, Lambda, Apply, Closure;
+tag ParseError;
+
+const PROGRAM = '
+    let square  = fn (x) x * x in
+    let fib     = fn (n) if n < 2 then n else fib(n - 1) + fib(n - 2) in
+    let sum     = fn (i, acc) if i == 0 then acc else sum(i - 1, acc + square(i) % 7) in
+    let compose = fn (f, g) fn (x) f(g(x)) in
+    let inc     = fn (x) x + 1 in
+    let twice   = fn (f) compose(f, f) in
+    fib(13) + sum(150, 0) + compose(square, inc)(9) + twice(twice(inc))(0)
+'
+
+const PREC = %{
+    '==': 1, '!=': 1,
+    '<':  2, '>':  2, '<=': 2, '>=': 2,
+    '+':  3, '-':  3,
+    '*':  4, '/':  4, '%':  4
+}
+
+class Env {
+    vars: Dict[String, _]
+    parent: Env | nil
+
+    init(parent: Env | nil = nil) {
+        vars = %{}
+        self.parent = parent
+    }
+
+    lookup(name: String) {
+        if let $v = vars[name] {
+            return v
+        }
+        match parent {
+            nil => throw ParseError("unbound `{name}`"),
+            up  => up.lookup(name)
+        }
+    }
+}
+
+class Parser {
+    tokens: Array[String]
+    pos: Int
+
+    init(source: String) {
+        tokens = source.matches(/\d+|[A-Za-z_]+|[=!<>]=|[-+*\/%<>(),=]/)
+        pos = 0
+    }
+
+    peek -> String {
+        (pos < #tokens) ? tokens[pos] : ''
+    }
+
+    next() -> String {
+        pos += 1
+        tokens[pos - 1]
+    }
+
+    expect(want: String) {
+        if next() != want {
+            throw ParseError("expected `{want}` at token {pos}")
+        }
+    }
+
+    expr() {
+        match peek {
+            'let' => self.binding(),
+            'if'  => self.conditional(),
+            'fn'  => self.lambda(),
+            _     => self.binary(1)
+        }
+    }
+
+    binding() {
+        self.expect('let')
+        let name = self.next()
+        self.expect('=')
+        let value = self.expr()
+        self.expect('in')
+        Bind(name, value, self.expr())
+    }
+
+    conditional() {
+        self.expect('if')
+        let test = self.expr()
+        self.expect('then')
+        let yes = self.expr()
+        self.expect('else')
+        Cond(test, yes, self.expr())
+    }
+
+    lambda() {
+        self.expect('fn')
+        self.expect('(')
+        let params = []
+        while peek != ')' {
+            params.push(self.next())
+            if peek == ',' {
+                self.next()
+            }
+        }
+        self.expect(')')
+        Lambda(params, self.expr())
+    }
+
+    binary(min: Int) {
+        let lhs = self.postfix()
+        while let $prec = PREC[peek] and prec >= min {
+            let op = self.next()
+            lhs = Bin(op, lhs, self.binary(prec + 1))
+        }
+        lhs
+    }
+
+    postfix() {
+        let node = self.atom()
+        while peek == '(' {
+            self.next()
+            let args = []
+            while peek != ')' {
+                args.push(self.expr())
+                if peek == ',' {
+                    self.next()
+                }
+            }
+            self.expect(')')
+            node = Apply(node, args)
+        }
+        node
+    }
+
+    atom() {
+        let token = self.next()
+        match token {
+            '(' => do {
+                let inner = self.expr()
+                self.expect(')')
+                inner
+            },
+            /^\d/ => Num(int(token)),
+            _     => Var(token)
+        }
+    }
+}
+
+fn arith(op: String, a: Int, b: Int) -> Int {
+    match op {
+        '+'  => a + b,
+        '-'  => a - b,
+        '*'  => a * b,
+        '/'  => a / b,
+        '%'  => a % b,
+        '<'  => (a < b) ? 1 : 0,
+        '>'  => (a > b) ? 1 : 0,
+        '<=' => (a <= b) ? 1 : 0,
+        '>=' => (a >= b) ? 1 : 0,
+        '==' => (a == b) ? 1 : 0,
+        '!=' => (a != b) ? 1 : 0
+    }
+}
+
+fn eval(node, env: Env) {
+    match node {
+        Num(n)                  => n,
+        Var(name)               => env.lookup(name),
+        Bin(op, a, b)           => arith(op, eval(a, env), eval(b, env)),
+        Cond(test, yes, no)     => (eval(test, env) != 0) ? eval(yes, env) : eval(no, env),
+        Lambda(params, body)    => Closure(params, body, env),
+        Bind(name, value, body) => do {
+            let scope = Env(env)
+            scope.vars[name] = eval(value, scope)
+            eval(body, scope)
+        },
+        Apply(f, args) => do {
+            let Closure(params, body, scope) = eval(f, env)
+            let frame = Env(scope)
+            for i in ..#params {
+                frame.vars[params[i]] = eval(args[i], env)
+            }
+            eval(body, frame)
+        }
+    }
+}
+
+@bench('tag match recursion closure dict string regex class')
+fn interp(n: Int) {
+    for ..n {
+        let ast = Parser(PROGRAM).expr()
+        assert(eval(ast, Env()) == 233 + 301 + 100 + 4)
+    }
+}
+
+if __module__ == 'main' {
+    print(eval(Parser(PROGRAM).expr(), Env()))
+}

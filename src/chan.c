@@ -365,6 +365,9 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
                 TyObject *obj = uAo0(size, GC_OBJECT);
                 obj->class = class_get(ty, e.class);
                 obj->nslot = nslot;
+                if (UNLIKELY(obj->class->finalizer.type != VALUE_NONE)) {
+                        GCTrackFinalizable(ty, obj);
+                }
                 Value r = OBJECT(obj, e.class);
                 r.type = e.type;
                 r.tags = e.tags;

@@ -519,6 +519,118 @@ inline_call(
         jump(c, done);
 }
 
+inline static bool
+extended(Class const *class)
+{
+        return (class != NULL) && (class->i > CLASS_PRIMITIVE) && class->extended;
+}
+
+static void
+same_member(BcLir *c, LirReg value, i32 member, bool getter, Value const *fn, LirLabel miss)
+{
+        expect(c, value, 0, VALUE_OBJECT, miss);
+
+        LirReg object = ldp(c, value, VOFF(object));
+        LirReg class  = ldp(c, object, offsetof(TyObject, class));
+
+        jcc(c, LIR_UGE, lir_i(member), lir_r(ldq(c, class, offsetof(Class, offsets_r.count))), miss);
+
+        LirReg offsets = ldp(c, class, offsetof(Class, offsets_r.items));
+        LirReg entry   = ldx(c, LIR_LD_U16, LIR_I64, offsets, member * sizeof (u16));
+        LirReg kind    = binop(c, LIR_SHR, LIR_I64, lir_r(entry), lir_i(OFF_SHIFT));
+        LirReg index   = binop(c, LIR_AND, LIR_I64, lir_r(entry), lir_i(OFF_MASK));
+
+        i32    table   = getter ? offsetof(Class, getters.values.items) : offsetof(Class, methods.values.items);
+
+        unless(c, kind, getter ? OFF_GETTER : OFF_METHOD, miss);
+
+        LirReg target = elem(c, ldp(c, class, table), index, 0);
+
+        expect(c, target, 0, fn->type, miss);
+        same_ptr(c, ldp(c, target, VOFF(info)), fn->info, miss);
+}
+
+static i32
+union_classes(BcLir *c, i32 offset, Class **out, i32 max)
+{
+        Expr const *expr = expr_of(c->function);
+        T2Universe *u    = t2_global_universe();
+
+        if (expr == NULL) {
+                return 0;
+        }
+
+        T2Type type = find_type_hint(&expr->fn->type_hints, offset);
+
+        if (type == T2_TYPE_INVALID || t2_type_kind(u, t2_type_scheme_body(u, type)) != T2_TYPE_UNION) {
+                return 0;
+        }
+
+        type = t2_type_scheme_body(u, type);
+
+        i32 n = 0;
+
+        for (usize i = 0; i < t2_type_arity(u, type); ++i) {
+                T2Type arm   = t2_type_child(u, type, i);
+                Class *class = expected_class_of(c->ctx, arm);
+
+                if (t2_type_kind(u, arm) == T2_TYPE_NIL) {
+                        continue;
+                }
+
+                if (class == NULL || class->i <= CLASS_PRIMITIVE || n == max) {
+                        return 0;
+                }
+
+                out[n++] = class;
+        }
+
+        return n;
+}
+
+static void
+method_arm(
+        BcLir *c,
+        BcLirNode const *node,
+        Class *class,
+        Value const *method,
+        i32 first,
+        LirReg self,
+        bool fallback,
+        LirLabel next,
+        LirLabel miss,
+        LirLabel done
+)
+{
+        LirLabel other = (fallback && extended(class)) ? newlabel(c) : next;
+        LirLabel call  = newlabel(c);
+
+        guard_class(c, self, class->i, other);
+        guard_epoch(c, other);
+
+        try_plan(
+                c,
+                method,
+                TY_INLINE_METHOD,
+                node->argc,
+                first,
+                self,
+                class,
+                NULL,
+                first,
+                done
+        );
+
+        bind(c, call);
+        inline_call(c, konst(c, method), method, first, node->argc, self, miss, done);
+
+        if (other != next) {
+                bind(c, other);
+                same_member(c, self, node->member, false, method, next);
+                jump(c, call);
+        }
+}
+
 static bool
 inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
 {
@@ -534,15 +646,30 @@ inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
                 return false;
         }
 
-        Class *class = explicit ? hint_class(c, node - c->nodes) : self_class(c);
+        Class       *classes[4];
+        Value const *methods[4];
+        Class       *class = explicit ? hint_class(c, node - c->nodes) : self_class(c);
+        i32          n     = (class != NULL)
+                           ? 1
+                           : (explicit ? union_classes(c, node - c->nodes, classes, countof(classes)) : 0);
 
-        if (class == NULL || class->i < CLASS_PRIMITIVE) {
-                return false;
+        if (class != NULL) {
+                classes[0] = class;
         }
 
-        Value const *method = method_of(class, node->member);
+        for (i32 i = 0; i < n; ++i) {
+                if (classes[i]->i < CLASS_PRIMITIVE) {
+                        return false;
+                }
 
-        if (method == NULL || !roomy(method, node->argc)) {
+                methods[i] = method_of(classes[i], node->member);
+
+                if (methods[i] == NULL || !roomy(methods[i], node->argc)) {
+                        return false;
+                }
+        }
+
+        if (n == 0) {
                 return false;
         }
 
@@ -552,27 +679,17 @@ inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
                        ? slot_of(c, c->sp - 1)
                        : addr(c, c->locals, vat(c->self_index));
 
-        guard_class(c, self, class->i, miss);
-        guard_epoch(c, miss);
-
-        LirReg fn = konst(c, method);
-
         *done = newlabel(c);
-        i32 argc = node->argc;
 
-        try_plan(
-                c,
-                method,
-                TY_INLINE_METHOD,
-                argc,
-                first,
-                self,
-                class,
-                NULL,
-                first,
-                *done
-        );
-        inline_call(c, fn, method, first, argc, self, miss, *done);
+        for (i32 i = 0; i < n; ++i) {
+                LirLabel next = (i + 1 < n) ? newlabel(c) : miss;
+
+                method_arm(c, node, classes[i], methods[i], first, self, n == 1, next, miss, *done);
+
+                if (next != miss) {
+                        bind(c, next);
+                }
+        }
 
         bind(c, miss);
 

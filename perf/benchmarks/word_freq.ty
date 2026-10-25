@@ -1,0 +1,73 @@
+import lib (bench)
+
+// Word statistics over generated prose: line and word splitting, stripping
+// and case folding, counting in defaulted dictionaries, ranking with
+// `sort(by=)` and per-letter grouping.  Report generators, log summarizers
+// and most text-munging scripts are built from these pieces.
+
+const VOCABULARY = [
+    'The', 'quick', 'brown', 'fox', 'jumps', 'over', 'lazy', 'dog', 'lorem',
+    'ipsum', 'dolor', 'sit', 'amet', 'consectetur', 'adipiscing', 'elit',
+    'sed', 'eiusmod', 'tempor', 'incididunt', 'labore', 'magna', 'aliqua',
+    'enim', 'minim', 'veniam', 'quis', 'nostrud', 'exercitation', 'ullamco',
+    'laboris', 'nisi', 'aliquip', 'commodo', 'consequat', 'Duis', 'aute',
+    'irure', 'reprehenderit', 'voluptate', 'velit', 'esse', 'cillum', 'fugiat'
+]
+
+fn prose(lines: Int) -> String {
+    let seed = 2463534242
+    let out = []
+    for i in ..lines {
+        let words = []
+        for j in ..(6 + i % 11) {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            let w = VOCABULARY[(seed >> 8) % #VOCABULARY]
+            words.push((j % 4 == 3) ? "{w}," : w)
+        }
+        out.push("{words.join(' ')}.")
+    }
+    out.join('\n')
+}
+
+let TEXT = prose(1200)
+
+fn statistics(text: String) -> (Int, String, Int, Int) {
+    let counts  = %{*: 0}
+    let letters = %{*: 0}
+    let longest = ''
+    let total   = 0
+
+    for line in text.lines() {
+        for raw in line.split(' ') {
+            let word = raw.sub(/[,.]/, '').lower()
+            if #word == 0 {
+                continue
+            }
+            counts[word] += 1
+            letters[word[0]] += 1
+            total += 1
+            if #word > #longest {
+                longest = word
+            }
+        }
+    }
+
+    let ranked = counts.items().sort(by=\-_[1])
+    let top    = ranked.take(10).map(\_[0])
+    let common = [w for (w, n) in ranked if n * #counts > total]
+
+    (total, top.join(','), #common, letters.items().sort(by=\_[0])[0][1])
+}
+
+@bench('string dict sort lambda split strip text')
+fn word-freq(n: Int) {
+    for ..n {
+        let (total, top, common, first) = statistics(TEXT)
+        assert(total == 13195)
+        assert(#top > 0 && common > 0 && first > 0)
+    }
+}
+
+if __module__ == 'main' {
+    print(statistics(TEXT))
+}

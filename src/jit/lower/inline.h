@@ -25,6 +25,7 @@ static struct {
         [TY_INLINE_SUB] = { LIR_SUB,  LIR_FSUB },
         [TY_INLINE_MUL] = { LIR_MUL,  LIR_FMUL },
         [TY_INLINE_DIV] = { LIR_SDIV, LIR_FDIV },
+        [TY_INLINE_MOD] = { LIR_SREM },
         [TY_INLINE_EQ]  = { .icc = LIR_EQ, .fcc = LIR_FEQ, .cmp = true },
         [TY_INLINE_NE]  = { .icc = LIR_NE, .fcc = LIR_FNE, .cmp = true },
         [TY_INLINE_LT]  = { .icc = LIR_LT, .fcc = LIR_FLT, .cmp = true },
@@ -161,7 +162,7 @@ plan_arith(BcLir *c, u8 op, i32 left, i32 right, LirLabel slow)
         LirReg   at    = tag_of(c, left);
         LirReg   bt    = tag_of(c, right);
         bool     cmp   = Arith[op].cmp;
-        bool     div   = (op == TY_INLINE_DIV);
+        bool     div   = (op == TY_INLINE_DIV) || (op == TY_INLINE_MOD);
         bool     eq    = (op == TY_INLINE_EQ) || (op == TY_INLINE_NE);
 
         unless(c, at, VALUE_INTEGER, reals);
@@ -185,6 +186,12 @@ plan_arith(BcLir *c, u8 op, i32 left, i32 right, LirLabel slow)
         jump(c, done);
 
         bind(c, reals);
+
+        if (op == TY_INLINE_MOD) {
+                jump(c, slow);
+                bind(c, done);
+                return;
+        }
 
         LirReg fx = as_real(c, at, c->ops, a, eq, slow);
         LirReg fy = as_real(c, bt, c->ops, b, eq, slow);
@@ -277,6 +284,7 @@ plan_insn(BcLir *c, Plan const *p, i32 i, i32 top, LirLabel const *labels, LirLa
         case TY_INLINE_SUB:
         case TY_INLINE_MUL:
         case TY_INLINE_DIV:
+        case TY_INLINE_MOD:
         case TY_INLINE_EQ:
         case TY_INLINE_NE:
         case TY_INLINE_LT:

@@ -1,0 +1,86 @@
+fn pick(a: Int) -> String { 'int' }
+fn pick(a: String) -> String { 'string' }
+fn pick(a: Int, b: Int) -> String { 'pair' }
+fn pick(a) -> String { 'any' }
+
+fn first(a) -> Int { 1 }
+fn first(a: Int) -> Int { 2 }
+
+fn nilable(a: Int, b: Int | nil) -> String { "two {b}" }
+fn nilable(a: String) -> String { 'one' }
+
+fn defaulted(a: Int, b: Int = 10) -> Int { a + b }
+fn defaulted(a: String) -> Int { #a }
+
+fn strict(a: Int) -> Int { a }
+fn strict(a: String) -> Int { #a }
+
+class Point {
+    x: Int
+    y: Int
+
+    init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+
+    init(both: Int) {
+        self.x = both
+        self.y = both
+    }
+
+    init(s: String) {
+        self.x = #s
+        self.y = -1
+    }
+
+    shift(d: Int) -> Point { Point(x + d, y + d) }
+    shift(dx: Int, dy: Int) -> Point { Point(x + dx, y + dy) }
+}
+
+pub fn first-matching-overload-wins() {
+    for round in ..2000 {
+        assert(pick(round) == 'int')
+        assert(pick("{round}") == 'string')
+        assert(pick(round, round) == 'pair')
+        assert(pick(1.5) == 'any')
+        assert(pick([round]) == 'any')
+        assert(first(round) == 1)
+    }
+}
+
+pub fn overloads-fall-back-to-the-second-round() {
+    for round in ..2000 {
+        assert(nilable(round) == 'two ')
+        assert(nilable('s') == 'one')
+        assert(nilable(round, 3) == 'two 3')
+    }
+}
+
+pub fn overloads-with-defaults() {
+    for round in ..2000 {
+        assert(defaulted(round) == round + 10)
+        assert(defaulted(round, 1) == round + 1)
+        assert(defaulted('abc') == 3)
+    }
+}
+
+pub fn constructors-and-methods() {
+    for round in ..2000 {
+        let p = Point(round, 2)
+        let q = Point(round)
+        let r = Point('four')
+        assert((p.x, p.y, q.x, q.y, r.x, r.y) == (round, 2, round, round, 4, -1))
+        let s = p.shift(1)
+        let t = p.shift(1, 2)
+        assert((s.x, s.y, t.x, t.y) == (round + 1, 3, round + 1, 4))
+    }
+}
+
+pub fn no-matching-overload-still-throws() {
+    for round in ..200 {
+        let failed = try { strict(1.5); false } catch _ { true }
+        assert(failed)
+        assert(strict(round) == round)
+    }
+}

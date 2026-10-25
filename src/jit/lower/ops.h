@@ -56,6 +56,85 @@ fast_bits(BcLir *c, u8 op)
 }
 
 static void
+fast_count(BcLir *c)
+{
+        i32      i      = c->sp - 1;
+        i32      at     = vat(i);
+        LirLabel blob   = newlabel(c);
+        LirLabel dict   = newlabel(c);
+        LirLabel string = newlabel(c);
+        LirLabel slow   = newlabel(c);
+        LirLabel done   = newlabel(c);
+        LirReg   tag    = tag_of(c, i);
+
+        unless(c, tag, VALUE_ARRAY, blob);
+        put_scalar(c, i, VALUE_INTEGER, lir_r(ldq(c, ldp(c, c->ops, at + VOFF(array)), offsetof(Array, count))));
+        jump(c, done);
+
+        bind(c, blob);
+        unless(c, tag, VALUE_BLOB, dict);
+        put_scalar(c, i, VALUE_INTEGER, lir_r(ldq(c, ldp(c, c->ops, at + VOFF(blob)), offsetof(Blob, count))));
+        jump(c, done);
+
+        bind(c, dict);
+        unless(c, tag, VALUE_DICT, string);
+        put_scalar(c, i, VALUE_INTEGER, lir_r(ldq(c, ldp(c, c->ops, at + VOFF(dict)), offsetof(Dict, count))));
+        jump(c, done);
+
+        bind(c, string);
+        unless(c, tag, VALUE_STRING, slow);
+
+        LirReg str   = ldp(c, c->ops, at + VOFF(str));
+        LirReg bytes = ldx(c, LIR_LD_U32, LIR_I64, c->ops, at + VOFF(bytes));
+
+        put_scalar(c, i, VALUE_INTEGER, lir_r(runes(c, str, bytes)));
+        jump(c, done);
+
+        bind(c, slow);
+
+        LirReg last = slot_of(c, i);
+
+        tycall(c, jit_rt_count, LT_VOID, preg(last), preg(last));
+
+        bind(c, done);
+}
+
+static bool
+class_check(BcLir *c, BcLirNode const *node)
+{
+        i32 off = (i32)(node - c->nodes);
+
+        if (node->label != LIR_NONE || !node_is(c, off - 5, INSTR_CLASS, off)) {
+                return false;
+        }
+
+        i32 id = load_i32(c->code + off - 4);
+
+        if (!testable(c, id)) {
+                return false;
+        }
+
+        i32      left = c->sp - 2;
+        LirLabel no   = newlabel(c);
+        LirLabel yes  = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        instance_branch(c, left, id, yes, no);
+
+        bind(c, no);
+        put_scalar(c, left, VALUE_BOOLEAN, lir_i(0));
+        jump(c, done);
+
+        bind(c, yes);
+        put_scalar(c, left, VALUE_BOOLEAN, lir_i(1));
+
+        bind(c, done);
+        c->sp -= 1;
+
+        return true;
+}
+
+static void
 aggregate(Ty *ty, Value *top, i32 op)
 {
         ty->stack.count = top - ty->stack.items;
@@ -313,7 +392,7 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
 
         case INSTR_COUNT:
-                tycall(c, jit_rt_count, LT_VOID, preg(last), preg(last));
+                fast_count(c);
                 return;
 
         case INSTR_ARRAY_COMPR:
@@ -386,7 +465,7 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
 
         case INSTR_STRING:
-                tycall(c, jit_rt_string, LT_VOID, preg(top), imm32(load_i32(ip + 1)));
+                string_literal(c, c->sp, load_i32(ip + 1));
                 c->sp += 1;
                 return;
 
@@ -454,7 +533,7 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
 
         case INSTR_SUBSCRIPT:
-                fast_subscript(c);
+                fast_subscript(c, node);
                 return;
 
         case INSTR_SAFE_SUBSCRIPT:
@@ -487,6 +566,12 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_SHR:
                 fast_bits(c, op);
                 return;
+
+        case INSTR_CHECK_MATCH:
+                if (class_check(c, node)) {
+                        return;
+                }
+                break;
 
         default:
                 break;

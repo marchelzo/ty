@@ -22,6 +22,9 @@ dict_new_sized(Ty *ty, usize n);
 Value *
 dict_get_value(Ty *ty, Dict *obj, Value *key);
 
+Value *
+dict_find_hashed(Ty *ty, Dict *d, Value const *key, u64 h);
+
 void
 dict_put_value(Ty *ty, Dict *obj, Value key, Value value);
 

@@ -405,6 +405,15 @@ GCForgetObject(Ty *ty, void const *o);
 void
 GCTakeOwnership(Ty *ty, AllocList *new);
 
+void
+GCTrackFinalizable(Ty *ty, TyObject const *obj);
+
+void
+GCQueueFinalizers(Ty *ty, ValueVector *queue);
+
+void
+GCDropFinalizable(Ty *ty);
+
 GCRootSet *
 GCRoots(Ty *ty);
 

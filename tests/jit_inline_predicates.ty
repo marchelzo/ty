@@ -1,0 +1,73 @@
+fn inline-digit?(c: Int) -> Bool {
+    c >= 48 && c <= 57
+}
+
+fn inline-word?(c: Int) -> Bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn inline-between?(x, lo, hi) -> Bool {
+    lo <= x && x < hi
+}
+
+fn inline-nested?(a: Int, b: Int) -> Bool {
+    a > 0 && (b > 0 || b == -1)
+}
+
+fn inline-yes?(a: Int) -> Bool {
+    true && a != 0
+}
+
+let inline-rebound? = fn (c: Int) -> Bool { c == 1 || c == 2 }
+
+fn call-inline-rebound(c: Int) -> Bool {
+    inline-rebound?(c)
+}
+
+pub fn test-inline-predicates-match-the-interpreter() {
+    let digits = 0
+    let words  = 0
+    for i in ..20000 {
+        let c = i % 128
+        if inline-digit?(c) {
+            digits += 1
+        }
+        if inline-word?(c) {
+            words += 1
+        }
+        assert(inline-digit?(c) == (c >= 48 && c <= 57))
+        assert(inline-nested?(c - 64, c % 3 - 1) == (c > 64 && (c % 3 - 1 > 0 || c % 3 - 1 == -1)))
+        assert(inline-yes?(c) == (c != 0))
+    }
+    assert(digits == 1560)
+    assert(words == 8268)
+}
+
+pub fn test-inline-predicates-with-floats-and-mixed-arguments() {
+    for i in ..5000 {
+        let x = i.float / 7.0
+        assert(inline-between?(x, 10, 20.5) == (x >= 10.0 && x < 20.5))
+        assert(inline-between?(i, 100, 200) == (i >= 100 && i < 200))
+    }
+}
+
+pub fn test-inline-predicates-fall-back-for-other-types() {
+    for i in ..3000 {
+        assert(inline-between?(i, 1000, 2000) == (i >= 1000 && i < 2000))
+    }
+    assert(inline-between?('m', 'a', 'z'))
+    assert(!inline-between?('z', 'a', 'm'))
+    for i in ..3000 {
+        assert(inline-between?(i, 1000, 2000) == (i >= 1000 && i < 2000))
+    }
+}
+
+pub fn test-inline-predicates-follow-rebinding() {
+    for c in ..3000 {
+        assert(call-inline-rebound(c % 4) == (c % 4 == 1 || c % 4 == 2))
+    }
+    inline-rebound? = fn (c: Int) -> Bool { c == 3 }
+    for c in ..3000 {
+        assert(call-inline-rebound(c % 4) == (c % 4 == 3))
+    }
+}

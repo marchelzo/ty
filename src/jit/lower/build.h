@@ -634,14 +634,45 @@ offset_of(Class const *class, i32 member, bool writing, u16 kind)
 static void
 put_scalar(BcLir *c, i32 slot, i32 type, LirOpnd payload)
 {
-        i32 at = vat(slot);
+        i32  at   = vat(slot);
+        bool bare = (type == VALUE_INTEGER) || (type == VALUE_REAL) || (type == VALUE_BOOLEAN);
 
-        for (u32 i = 0; i < sizeof (Value); i += 8) {
+        stq(c, c->ops, at, lir_i(type));
+        stq(c, c->ops, at + VOFF(z), payload);
+
+        for (u32 i = 2 * sizeof (u64); !bare && i < sizeof (Value); i += 8) {
                 stq(c, c->ops, at + i, lir_i(0));
         }
+}
 
-        stb(c, c->ops, at + VOFF(type), lir_i(type));
-        stq(c, c->ops, at + VOFF(z), payload);
+static Value
+literal_string(i32 id)
+{
+        InternEntry const *e = intern_entry(&xD.strings, id);
+        Value              v;
+
+        memset(&v, 0, sizeof v);
+
+        v.type  = VALUE_STRING;
+        v.str   = (u8 const *)e->name;
+        v.bytes = (u32)(uptr)e->data;
+        v.str0  = (u8 *)e->name;
+        v.ro    = true;
+
+        return v;
+}
+
+static void
+string_literal(BcLir *c, i32 slot, i32 id)
+{
+        Value v = literal_string(id);
+        u64   w[sizeof (Value) / sizeof (u64)];
+
+        memcpy(w, &v, sizeof w);
+
+        for (u32 i = 0; i < countof(w); ++i) {
+                stq(c, c->ops, vat(slot) + 8 * i, lir_i((i64)w[i]));
+        }
 }
 
 static void

@@ -68,6 +68,13 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
         return v;
 }
 
+Value *
+dict_find_hashed(Ty *ty, Dict *d, Value const *key, u64 h)
+{
+        usize i = ht_find(ty, d->size, d->items, h, key);
+        return HT_LIVE(d, i) ? val(d, i) : NULL;
+}
+
 bool
 dict_has_value(Ty *ty, Dict *d, Value *key)
 {

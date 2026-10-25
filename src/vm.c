@@ -509,6 +509,7 @@ BequeathAllocs(ThreadGroup *group)
         }
 
         xvPv(heir->DeadAllocs, group->DeadAllocs);
+        xvPv(heir->DeadFinalizable, group->DeadFinalizable);
         heir->DeadUsed += group->DeadUsed;
 
         TySpinLockUnlock(&heir->DLock);
@@ -575,28 +576,6 @@ MarkPendingFFIAutoValues(Ty *marker, AllocList const *allocs)
                         Value *values = (Value *)a->data;
                         value_mark(marker, &values[0]);
                         value_mark(marker, &values[1]);
-                }
-        }
-}
-
-static void
-QueueFinalizers(Ty *ty, AllocList const *allocs)
-{
-        for (usize i = 0; i < vN(*allocs); ++i) {
-                struct alloc *a = v__(*allocs, i);
-                TyObject     *o = (TyObject *)a->data;
-                Value         v;
-                if (
-                        (a->type == GC_OBJECT)
-                     && !(a->mark & 1)
-                     && (a->hard == 0)
-                     && !o->finalized
-                     && (class_get_finalizer(ty, o->class->i).type != VALUE_NONE)
-                ) {
-                        v = OBJECT(o, o->class->i);
-                        o->finalized = true;
-                        xvP(ty->group->Finalize, v);
-                        value_mark(ty, &v);
                 }
         }
 }
@@ -809,16 +788,7 @@ DoGC(Ty *ty)
                 ;
         }
 
-        for (int i = 0; i < vN(ty->group->TyList); ++i) {
-                if (v__(ty->group->TyList, i) != ty) {
-                        QueueFinalizers(ty, &v__(ty->group->TyList, i)->allocs);
-                }
-        }
-        QueueFinalizers(ty, &ty->allocs);
-
-        TySpinLockLock(&ty->group->DLock);
-        QueueFinalizers(ty, &ty->group->DeadAllocs);
-        TySpinLockUnlock(&ty->group->DLock);
+        GCQueueFinalizers(ty, &ty->group->Finalize);
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
@@ -2474,11 +2444,120 @@ SetupGenerator(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const
         push(v);
 }
 
+inline static FnExpr const *
+arm_fn(Expr const *arm)
+{
+        return IsStmt(arm) ? ((Stmt const *)arm)->value->fn : arm->fn;
+}
+
+static bool
+plain_arm(FnExpr const *fn)
+{
+        if (fn->rest != -1 || fn->ikwargs != -1 || (fn->name != NULL && IsPrivateMember(fn->name))) {
+                return false;
+        }
+
+        for (int i = 0; i < vN(fn->dflts); ++i) {
+                Expr const *dflt = v__(fn->dflts, i);
+                if (dflt != NULL && dflt->type != EXPRESSION_NIL) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static bool
+arm_fits(FnExpr const *fn, int argc)
+{
+        int required = 0;
+
+        for (int i = 0; i < vN(fn->params); ++i) {
+                required += (v__(fn->dflts, i) == NULL);
+        }
+
+        return (argc >= required) && (argc <= vN(fn->params));
+}
+
+inline static bool
+dispatcher(Value const *f)
+{
+        return (f->type == VALUE_FUNCTION)
+            && (rest_idx_of(f) != -1)
+            && (kwargs_idx_of(f) != -1)
+            && (expr_of(f)->type == EXPRESSION_MULTI_FUNCTION);
+}
+
+static bool
+dispatch(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
+{
+        Expr const *e      = expr_of(f);
+        bool        method = is_method(e);
+        Value       self   = NIL;
+        usize       base   = vN(STACK) - argc;
+
+        if ((pKwargs != NULL && !IsNil(*pKwargs)) || (e->fn->mtype & MT_SET)) {
+                return false;
+        }
+
+        if (method) {
+                self = (pSelf != NULL && !IsNone(*pSelf)) ? *pSelf : self_of(f);
+                if (self.type != VALUE_OBJECT) {
+                        return false;
+                }
+        }
+
+        for (int i = 0; i < vN(e->fn->functions); ++i) {
+                if (!plain_arm(arm_fn(v__(e->fn->functions, i)))) {
+                        return false;
+                }
+        }
+
+        gP(&self);
+
+        for (int i = 0; i < vN(e->fn->functions); ++i) {
+                Expr const   *arm = v__(e->fn->functions, i);
+                FnExpr const *fn  = arm_fn(arm);
+                Value const  *g   = method
+                                  ? class_lookup_method_i(ty, self.class, M_ID(fn->name))
+                                  : v_(Globals, ((Stmt const *)arm)->target->symbol->i);
+
+                if (!arm_fits(fn, argc)) {
+                        continue;
+                }
+
+                if (g == NULL || g->type != VALUE_FUNCTION) {
+                        break;
+                }
+
+                for (int j = 0; j < argc; ++j) {
+                        push(*v_(STACK, base + j));
+                }
+
+                Value r = method ? vm_call_method(ty, &self, g, argc) : vm_call(ty, g, argc);
+
+                if (r.type != VALUE_NONE) {
+                        gX();
+                        vN(STACK) = base;
+                        push(r);
+                        return true;
+                }
+        }
+
+        gX();
+
+        return false;
+}
+
 static bool
 call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
         if (UNLIKELY(is_starred(f))) {
                 SetupGenerator(ty, f, pSelf, argc, pKwargs);
+                return false;
+        }
+
+        if (UNLIKELY(dispatcher(f)) && dispatch(ty, f, pSelf, argc, pKwargs)) {
                 return false;
         }
 
@@ -2584,11 +2663,68 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
         }
 }
 
+inline static bool
+plain_call(Ty *ty, Value const *f, int argc)
+{
+        JitFn *jit   = jit_of(f);
+        i32    bound = f->info[FUN_INFO_BOUND];
+
+        if (
+                UNLIKELY(DebugJitOff)
+             || (jit == NULL)
+             || jit_pending(jit)
+             || (f->type != VALUE_FUNCTION)
+             || (f->info[FUN_INFO_CLASS] != -1)
+             || (rest_idx_of(f) != -1)
+             || (kwargs_idx_of(f) != -1)
+             || (argc > bound)
+             || (vN(FRAMES) >= TY_MAX_CALL_DEPTH)
+             || TY_PROBING(function__entry)
+        ) {
+                return false;
+        }
+
+        char  *ip = IP;
+        usize  fp = vN(STACK) - argc;
+        isize  f0 = vN(FRAMES);
+
+        xvR(STACK, fp + bound + 256);
+        NilStackRange(ty, fp + argc, bound - argc);
+        vN(STACK) = fp + bound;
+
+        xvP(FRAMES, FRAME(fp, *f, ip));
+        xvP(CALLS, ip);
+
+        CheckUsed(ty);
+
+        v_(FRAMES, f0)->jit_resume = 0;
+
+        xjit(ty, f0, jit, 0, v_(STACK, fp), f->env);
+
+        while (vN(FRAMES) != f0) {
+                isize  i   = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+                xjit(ty, i, frame_jit(top), top->jit_resume, v_(STACK, top->fp), top->f.env);
+        }
+
+        IP = ip;
+
+        return true;
+}
+
 static void
 exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
         if (UNLIKELY(is_starred(f))) {
                 SetupGenerator(ty, f, pSelf, argc, pKwargs);
+                return;
+        }
+
+        if (pSelf == NULL && pKwargs == NULL && plain_call(ty, f, argc)) {
+                return;
+        }
+
+        if (UNLIKELY(dispatcher(f)) && dispatch(ty, f, pSelf, argc, pKwargs)) {
                 return;
         }
 
@@ -2904,8 +3040,10 @@ CleanupThread(void *ctx)
                 TySpinLockLock(&ty->group->DLock);
         }
         xvPv(ty->group->DeadAllocs, ty->allocs);
+        xvPv(ty->group->DeadFinalizable, ty->finalizable);
         ty->group->DeadUsed += MemoryUsed;
         v0(ty->allocs);
+        v0(ty->finalizable);
         TySpinLockUnlock(&ty->group->DLock);
 
         UnlockTy();
@@ -2933,6 +3071,7 @@ CleanupThread(void *ctx)
                 if (ty->result != NULL) {
                         value_mark(ty, ty->result);
                 }
+                GCDropFinalizable(ty);
                 GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
                 UnlockTy();
         }
@@ -2979,6 +3118,7 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
+        xvF(ty->finalizable);
         xvF(ty->_2op_cache);
         xvF(ty->err);
         xvF(ty->marking);
@@ -3007,6 +3147,7 @@ CleanupThread(void *ctx)
                 xvF(ty->group->ThreadLocks);
                 xvF(ty->group->ThreadStates);
                 xvF(ty->group->DeadAllocs);
+                xvF(ty->group->DeadFinalizable);
                 xmF(ty->group->GCBlockedThreads);
         }
 

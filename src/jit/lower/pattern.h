@@ -241,6 +241,32 @@ Failed:
         vm_jit_fail(ty, ty->stack.items + ty->stack.count, ip);
 }
 
+static LirReg
+match_key(BcLir *c, LirReg value, bool wrapped)
+{
+        LirReg   key  = lir_reg(c->L, LIR_I64);
+        LirLabel none = newlabel(c);
+        LirLabel done = newlabel(c);
+        LirReg   type = ldx(c, LIR_LD_U8, LIR_I64, value, VOFF(type));
+
+        if (wrapped) {
+                jz(c, binop(c, LIR_AND, LIR_I64, lir_r(type), lir_i(VALUE_TAGGED)), none);
+                mov(c, key, ldw(c, tag_list(c, ldx(c, LIR_LD_U16, LIR_I64, value, VOFF(tags))), offsetof(struct tags, tag)));
+        } else {
+                unless(c, type, VALUE_TAG, none);
+                mov(c, key, ldx(c, LIR_LD_U16, LIR_I64, value, VOFF(tag)));
+        }
+
+        jump(c, done);
+
+        bind(c, none);
+        vset(c, LIR_LI, key, lir_i(-1));
+
+        bind(c, done);
+
+        return key;
+}
+
 static void
 switch_match(BcLir *c, BcLirNode const *node, LirReg last)
 {
@@ -248,7 +274,7 @@ switch_match(BcLir *c, BcLirNode const *node, LirReg last)
         LirReg key;
 
         if (tag) {
-                key = tycall(c, match_tag, LT_I32, preg(last), bimm(node->member));
+                key = match_key(c, last, node->member);
         } else {
                 key = ccall(
                         c,

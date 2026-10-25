@@ -1,0 +1,119 @@
+import lib (bench)
+
+// A small entity simulation: a class hierarchy with overridden methods,
+// getters and `super` calls, a value class with operator overloads, and an
+// update loop over a heterogeneous list.  Games, GUI widget trees and most
+// object-oriented application code dispatch like this.
+
+class V2 {
+    x: Float
+    y: Float
+
+    init(x: Float, y: Float) {
+        self.x = x
+        self.y = y
+    }
+
+    +(o: V2) -> V2 { V2(x + o.x, y + o.y) }
+    -(o: V2) -> V2 { V2(x - o.x, y - o.y) }
+    *(k: Float) -> V2 { V2(x * k, y * k) }
+
+    length2 -> Float { x * x + y * y }
+}
+
+class Entity {
+    pos: V2
+    vel: V2
+    hp: Int
+
+    init(pos: V2, vel: V2, hp: Int) {
+        self.pos = pos
+        self.vel = vel
+        self.hp  = hp
+    }
+
+    alive? -> Bool { hp > 0 }
+
+    speed() -> Float { 1.0 }
+
+    step(dt: Float) {
+        pos = pos + vel * (dt * self.speed())
+    }
+
+    hit(damage: Int) {
+        hp -= damage
+    }
+
+    score() -> Int { hp }
+}
+
+class Walker < Entity {
+    speed() -> Float { 0.5 }
+}
+
+class Runner < Entity {
+    stamina: Int = 100
+
+    speed() -> Float { (stamina > 0) ? 2.0 : 0.75 }
+
+    step(dt: Float) {
+        super(dt)
+        stamina -= 1
+    }
+}
+
+class Turret < Entity {
+    range2: Float = 400.0
+
+    step(dt: Float) {}
+
+    score() -> Int { hp * 2 }
+
+    targets?(e: Entity) -> Bool {
+        !(e :: Turret) && (e.pos - pos).length2 < range2
+    }
+}
+
+fn spawn(n: Int) -> Array[Entity] {
+    let out: Array[Entity] = []
+    for i in ..n {
+        let p = V2((i * 37 % 200).float - 100.0, (i * 91 % 200).float - 100.0)
+        let v = V2(((i % 7) - 3).float, ((i % 5) - 2).float)
+        out.push(match i % 4 {
+            0 => Walker(p, v, 60),
+            1 => Runner(p, v, 40),
+            2 => Turret(p, V2(0.0, 0.0), 120),
+            _ => Entity(p, v, 50)
+        })
+    }
+    out
+}
+
+fn simulate(n: Int, ticks: Int) -> Int {
+    let world   = spawn(n)
+    let turrets = [e for e in world if e :: Turret]
+
+    for tick in ..ticks {
+        for e in world if e.alive? {
+            e.step(0.05)
+        }
+        for t in turrets {
+            for e in world if e.alive? && t.targets?(e) {
+                e.hit(1 + tick % 3)
+            }
+        }
+    }
+
+    world.map(\_.score()).sum(0)
+}
+
+@bench('class polymorphic method operator getter super alloc float')
+fn entities(n: Int) {
+    for ..n {
+        assert(simulate(160, 40) == 9887)
+    }
+}
+
+if __module__ == 'main' {
+    print(simulate(160, 40))
+}

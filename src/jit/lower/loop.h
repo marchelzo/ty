@@ -418,6 +418,27 @@ string_byte_at(BcLir const *c, i32 off)
 }
 
 static bool
+planned(BcLir const *c, BcLirNode const *n)
+{
+        if (
+                !c->speculate
+             || (n->op != INSTR_CALL_GLOBAL)
+             || (n->argc <= 0)
+             || (n->argc > TY_INLINE_MAX_STACK)
+             || (n->nkw != 0)
+             || (n->resume_id != 0)
+        ) {
+                return false;
+        }
+
+        Value const *callee = vm_global(c->ctx, n->global);
+        Plan         p      = {0};
+
+        return inlinable(c, callee, n->argc)
+            && analyze(&p, callee, TY_INLINE_GLOBAL, n->argc);
+}
+
+static bool
 indexes(u8 op)
 {
         return (op == INSTR_SUBSCRIPT) || (op == INSTR_ASSIGN_SUBSCRIPT) || (op == INSTR_COUNT);
@@ -439,7 +460,7 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
 
                 bool bytes = string_byte_at(c, off);
 
-                if (is_call(n->op) && !bytes) {
+                if (is_call(n->op) && !bytes && !planned(c, n)) {
                         loop->narrays = 0;
                         return;
                 }

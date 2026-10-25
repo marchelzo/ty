@@ -1,0 +1,100 @@
+fn tri(i: Int, j: Int) -> Int {
+    (i + j) * (i + j + 1) / 2 + i + 1
+}
+
+fn inv-tri(i: Int, j: Int) -> Float {
+    1.0 / tri(i, j)
+}
+
+fn quot(a: Int, b: Int) -> Int {
+    a / b
+}
+
+fn rem(a: Int, b: Int) -> Int {
+    a % b
+}
+
+fn wrap(a: Int) -> Int {
+    (a * 7 + 3) % 10
+}
+
+fn fquot(a: Float, b: Int) -> Float {
+    a / b
+}
+
+fn frem(a, b) {
+    a % b
+}
+
+let rebound-rem = fn (a: Int, b: Int) -> Int { a % b }
+
+fn call-rebound-rem(a: Int, b: Int) -> Int {
+    rebound-rem(a, b)
+}
+
+fn truncates?(a: Int, b: Int, q: Int, r: Int) -> Bool {
+    q * b + r == a && r.abs < b.abs && (r == 0 || (r < 0) == (a < 0))
+}
+
+pub fn test-inline-division-truncates-like-the-interpreter() {
+    for a in -60..60 {
+        for b in -9..10 {
+            if b == 0 {
+                continue
+            }
+            let q = quot(a, b)
+            let r = rem(a, b)
+            assert(truncates?(a, b, q, r), "{a} / {b} gave {q} rem {r}")
+        }
+    }
+}
+
+pub fn test-inline-division-by-constants() {
+    let s = 0
+    for i in ..3000 {
+        s += tri(i % 50, i % 37)
+        assert(wrap(i - 1500) == (i - 1500) * 7 + 3 - ((i - 1500) * 7 + 3) / 10 * 10)
+    }
+    assert(s == 3331982)
+    let t = 0.0
+    for i in ..200 {
+        for j in ..200 {
+            t += inv-tri(j, i)
+        }
+    }
+    assert(t > 11.0944 && t < 11.0945)
+}
+
+pub fn test-inline-division-deopts-on-zero-and-minus-one() {
+    for i in ..5000 {
+        assert(quot(i, 7) == i / 7)
+    }
+    assert(try { quot(5, 0) } catch _: ZeroDivisionError { -1 } == -1)
+    assert(try { rem(5, 0) } catch _: ZeroDivisionError { -1 } == -1)
+    assert(quot(-9223372036854775807 - 1, -1) == -9223372036854775807 - 1)
+    assert(rem(-9223372036854775807 - 1, -1) == 0)
+    assert(quot(17, -1) == -17)
+    for i in ..5000 {
+        assert(rem(i, 9) == i - i / 9 * 9)
+    }
+}
+
+pub fn test-inline-division-with-floats() {
+    for i in ..3000 {
+        assert(fquot(i.float, 4) == i.float * 0.25)
+        assert(frem(i, 7) == i - i / 7 * 7)
+    }
+    assert(frem(7.5, 2) == 1.5)
+    assert(frem(-7.5, 2.0) == -1.5)
+    assert(try { fquot(1.0, 0) } catch _: ZeroDivisionError { -1.0 } == -1.0)
+}
+
+pub fn test-inline-division-follows-rebinding() {
+    for i in ..3000 {
+        assert(call-rebound-rem(i, 5) == i - i / 5 * 5)
+    }
+    rebound-rem = fn (a: Int, b: Int) -> Int { a / b }
+    for i in ..3000 {
+        assert(call-rebound-rem(i, 5) == i / 5)
+    }
+}

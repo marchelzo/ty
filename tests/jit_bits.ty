@@ -510,3 +510,46 @@ pub fn constant-offset-checks-merge() {
     let e = try { stamp(c, 8); 0 } catch _: IndexError { -1 }
     assert(e == -1 && c[4] == 1 && c[6] == 1 && c[7] == 2)
 }
+
+fn held-scan(s: String) -> Int {
+    let n = 0
+    let i = 0
+    while i < #s {
+        n += (s.byte(i) ?? 1000) + (s.byte(i) ?? 1000) + (s.byte(i) ?? 1000)
+        i += 1
+    }
+    n
+}
+
+fn held-length(xs: [Int], b: Blob, d: Dict[Int, Int]) -> Int {
+    let n = 0
+    for i in ..#xs {
+        n += xs[i] + #xs + #b + #d
+    }
+    n
+}
+
+pub fn test-held-string-count-is-in-characters() {
+    let s = 'héllo wörld ünïcode'
+    let want = do {
+        let n = 0
+        for i in ..19 {
+            n += 3 * (s.byte(i) ?? 1000)
+        }
+        n
+    }
+    for round in ..3000 {
+        assert(held-scan(s) == want, "round {round}")
+    }
+    assert(held-scan('') == 0)
+}
+
+pub fn test-count-of-arrays-blobs-and-dicts() {
+    let xs = [1, 2, 3, 4]
+    let b  = Blob.zeros(5)
+    let d  = %{1: 1, 2: 2}
+    for round in ..3000 {
+        assert(held-length(xs, b, d) == 10 + 4 * 11, "round {round}")
+    }
+    assert(held-length([], b, d) == 0)
+}

@@ -1,0 +1,116 @@
+fn keeps-value-across-call() {
+    let xs = [1, 2, 3]
+    let swap = fn () { xs = [7, 8, 9] }
+
+    fn probe(a, b) {
+        a[0] * 10 + b
+    }
+
+    fn run() {
+        let before = xs
+        swap()
+        let after = xs
+        [before[0], after[0], probe(xs, 1)]
+    }
+
+    let first = run()
+    xs = [1, 2, 3]
+    first
+}
+
+fn argument-taken-before-reassignment() {
+    let xs = [1, 2, 3]
+    let total = 0
+
+    fn change() -> Int {
+        xs = [100, 200, 300]
+        5
+    }
+
+    fn pair(a, b) {
+        a[0] + b
+    }
+
+    fn run() {
+        for i in ..2000 {
+            xs = [i, i, i]
+            total += pair(xs, change())
+        }
+        total
+    }
+
+    run()
+}
+
+fn scan-with-break(n: Int) -> Int {
+    let cols = [i % 7 for i in ..n]
+    let hits = 0
+
+    fn place(row: Int) {
+        for col in ..n {
+            let ok = true
+            for r in ..row {
+                if cols[r] == col || cols[r] + r == col + row || cols[r] - r == col - row {
+                    ok = false
+                    break
+                }
+            }
+            if ok {
+                hits += 1
+            }
+        }
+    }
+
+    for row in ..n {
+        place(row)
+    }
+
+    hits
+}
+
+fn type-change-in-loop() -> Int {
+    let data = [1, 2, 3, 4]
+    let total = 0
+
+    fn flip(i: Int) {
+        if i == 1500 {
+            data = 'abcd'
+        }
+    }
+
+    fn walk() {
+        for i in ..3000 {
+            flip(i)
+            let x = data[i % 4]
+            total += match x {
+                n: Int => n,
+                s      => #s
+            }
+        }
+    }
+
+    walk()
+    total
+}
+
+pub fn test-captured-values-are-read-when-loaded() {
+    for ..200 {
+        assert(keeps-value-across-call() == [1, 7, 71])
+    }
+}
+
+pub fn test-captured-arguments-are-boxed-before-calls() {
+    assert(argument-taken-before-reassignment() == 2009000)
+}
+
+pub fn test-captured-arrays-in-counted-loops-with-break() {
+    let expected = scan-with-break(40)
+    for ..20 {
+        assert(scan-with-break(40) == expected)
+    }
+    assert(expected == 1247)
+}
+
+pub fn test-captured-type-change-deopts() {
+    assert(type-change-in-loop() == 5250)
+}

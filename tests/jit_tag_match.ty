@@ -1,0 +1,60 @@
+tag Lit, Neg, Pair, Leaf, Empty;
+
+fn classify(x) -> Int {
+    match x {
+        Lit(n)           => n,
+        Neg(Lit(n))      => -n,
+        Neg(Neg(inner))  => classify(inner) * 10,
+        Neg(other)       => classify(other) - 1,
+        Pair(a, b)       => classify(a) + classify(b),
+        Empty            => 1000,
+        Leaf             => 2000,
+        _                => -7
+    }
+}
+
+fn first-tag(x) -> Int {
+    match x {
+        Lit(_)  => 1,
+        Neg(_)  => 2,
+        Pair(_) => 3,
+        _       => 0
+    }
+}
+
+pub fn test-tag-matches-agree-with-the-interpreter() {
+    let values = [
+        Lit(4), Neg(Lit(3)), Neg(Neg(Lit(2))), Neg(Pair(Lit(1), Lit(2))),
+        Pair(Lit(5), Neg(Lit(6))), Empty, Leaf, 17, 'text', nil
+    ]
+    let want = [4, -3, 20, 2, -1, 1000, 2000, -7, -7, -7]
+    for round in ..6000 {
+        let i = round % #values
+        assert(classify(values[i]) == want[i], "round {round}")
+    }
+}
+
+pub fn test-tag-switch-keys() {
+    let values = [Lit(1), Neg(2), Pair(3, 4), Empty, Leaf, Lit, 0, Neg(Lit(1))]
+    let want   = [1, 2, 3, 0, 0, 0, 0, 2]
+    for round in ..6000 {
+        let i = round % #values
+        assert(first-tag(values[i]) == want[i], "round {round}")
+    }
+}
+
+pub fn test-popped-tags-leave-the-rest() {
+    for round in ..3000 {
+        let v = Neg(Neg(Lit(round)))
+        match v {
+            Neg(rest) => {
+                assert(classify(rest) == -round)
+                match rest {
+                    Neg(inner) => assert(inner == Lit(round)),
+                    _          => assert(false)
+                }
+            },
+            _ => assert(false)
+        }
+    }
+}

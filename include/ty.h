@@ -506,6 +506,7 @@ struct class {
 
         bool final;
         bool really_final;
+        bool extended;
 
         Class *super;
 
@@ -605,6 +606,7 @@ typedef struct thread_group {
 
         TySpinLock  DLock;
         AllocList   DeadAllocs;
+        AllocList   DeadFinalizable;
         isize       DeadUsed;
         ValueVector Finalize;
 
@@ -827,6 +829,7 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
+        AllocList finalizable;
         ThreadGroup *group;
         u8           gc_owner;
         Value       *result;

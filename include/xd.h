@@ -446,11 +446,40 @@ u8_rune_sz(u8 const *str)
 }
 
 inline static isize
+ascii_run(u8 const *s, isize n)
+{
+        isize i = 0;
+
+        for (u64 w; i + 8 <= n; i += 8) {
+                memcpy(&w, s + i, sizeof w);
+                if ((w & 0x8080808080808080ULL) != 0) {
+                        break;
+                }
+        }
+
+        while (i < n && s[i] < 0x80) {
+                i += 1;
+        }
+
+        return i;
+}
+
+inline static isize
 rune_count(u8 const *s, isize n)
 {
         isize count = 0;
 
         while (n != 0) {
+                isize run = ascii_run(s, n);
+
+                count += run;
+                s     += run;
+                n     -= run;
+
+                if (n == 0) {
+                        break;
+                }
+
                 i32 rune;
                 isize bytes = utf8proc_iterate(s, n, &rune);
                 if (bytes <= 0) {

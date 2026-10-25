@@ -1,0 +1,68 @@
+import lib (bench)
+
+// Collection pipelines in functional style: `map`/`filter`/`zip` chains with
+// lambdas and partial application, closures that capture configuration,
+// comprehensions, a hand-written reduce, and a formatted report.  Data
+// cleaning scripts, CLI tools and most glue code are written this way.
+
+use Sample = {
+    sensor: String,
+    reading: Float,
+    weight: Int,
+    tags: Array[String]
+}
+
+fn samples(n: Int) -> Array[Sample] {
+    [{
+        sensor: "s{i % 23}",
+        reading: ((i * 7919) % 1000).float / 10.0,
+        weight: i % 5 + 1,
+        tags: (i % 3 == 0) ? ['hot', 'checked'] : ['cold']
+    } for i in ..n]
+}
+
+let SAMPLES = samples(3000)
+
+fn fold(xs, init, f) {
+    let acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+fn scaler(k: Float) {
+    x -> x * k
+}
+
+fn within(lo: Float, hi: Float) {
+    (s: Sample) -> s.reading >= lo && s.reading < hi
+}
+
+fn report(xs: Array[Sample]) -> String {
+    let scale  = scaler(1.8)
+    let window = within(10.0, 90.0)
+    let kept   = xs.filter(window).filter(s -> 'hot' in s.tags || s.weight > 2)
+    let scaled = kept.map(\_.reading).map(scale).map(\_ + 32.0)
+    let weight = fold(kept, 0, (acc, s) -> acc + s.weight)
+    let pairs  = kept.map(&.sensor).zip(scaled)
+    let total  = fold(pairs, %{*: 0.0}, fn (acc, pair) { acc[pair[0]] += pair[1]; acc })
+    let lines  = [
+        "{k:<4} {v:>10.2f} {(v / weight.float):>8.4f}"
+        for k, v in total
+        if v > 0.0
+    ]
+    lines.sort().join('\n')
+}
+
+@bench('lambda closure higher-order map filter zip record format')
+fn pipeline(n: Int) {
+    for ..n {
+        let r = report(SAMPLES)
+        assert(#r.lines() == 23)
+    }
+}
+
+if __module__ == 'main' {
+    print(report(SAMPLES))
+}

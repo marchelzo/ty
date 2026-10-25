@@ -1763,6 +1763,12 @@ jit_rt_truthy(Ty *ty, Value *v)
         return value_truthy(ty, v);
 }
 
+i64
+jit_rt_runes(u8 const *s, i64 n)
+{
+        return rune_count(s, n);
+}
+
 void
 jit_rt_bit_and(Ty *ty, Value *result, Value *a, Value *b)
 {

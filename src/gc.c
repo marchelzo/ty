@@ -282,6 +282,76 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
 }
 
 void
+GCTrackFinalizable(Ty *ty, TyObject const *obj)
+{
+        xvP(ty->finalizable, ALLOC_OF(obj));
+}
+
+inline static bool
+doomed(struct alloc *a)
+{
+        return !(A_LOAD(&a->mark) & 1) && (A_LOAD(&a->hard) == 0);
+}
+
+static void
+QueueFinalizers(Ty *ty, AllocList *list, ValueVector *queue)
+{
+        usize n = 0;
+
+        for (usize i = 0; i < vN(*list); ++i) {
+                struct alloc *a   = v__(*list, i);
+                TyObject     *obj = (TyObject *)a->data;
+
+                if (doomed(a) && obj->finalized) {
+                        continue;
+                }
+
+                *v_(*list, n++) = a;
+
+                if (doomed(a)) {
+                        Value v = OBJECT(obj, obj->class->i);
+                        obj->finalized = true;
+                        xvP(*queue, v);
+                        value_mark(ty, &v);
+                }
+        }
+
+        vN(*list) = n;
+}
+
+void
+GCQueueFinalizers(Ty *ty, ValueVector *queue)
+{
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *other = v__(ty->group->TyList, i);
+                if (other != ty) {
+                        QueueFinalizers(ty, &other->finalizable, queue);
+                }
+        }
+
+        QueueFinalizers(ty, &ty->finalizable, queue);
+
+        TySpinLockLock(&ty->group->DLock);
+        QueueFinalizers(ty, &ty->group->DeadFinalizable, queue);
+        TySpinLockUnlock(&ty->group->DLock);
+}
+
+void
+GCDropFinalizable(Ty *ty)
+{
+        AllocList *list = &ty->group->DeadFinalizable;
+        usize      n    = 0;
+
+        for (usize i = 0; i < vN(*list); ++i) {
+                if (!doomed(v__(*list, i))) {
+                        *v_(*list, n++) = v__(*list, i);
+                }
+        }
+
+        vN(*list) = n;
+}
+
+void
 GCTakeOwnership(Ty *ty, AllocList *new)
 {
         for (usize i = 0; i < new->count; ++i) {

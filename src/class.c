@@ -199,7 +199,8 @@ class_set_super(Ty *ty, int class, int super)
         Class *c0 = C(class);
         Class *c1 = C(super);
 
-        c0->super = c1;
+        c0->super    = c1;
+        c1->extended = true;
 
         if (!c0->is_trait || !c1->is_trait) {
                 return;
@@ -355,6 +356,10 @@ class_new_instance(Ty *ty, int class)
 
         if (vN(c->empty) > 0) {
                 Unpack(ty, c, obj);
+        }
+
+        if (UNLIKELY(c->finalizer.type != VALUE_NONE)) {
+                GCTrackFinalizable(ty, obj);
         }
 
         return obj;

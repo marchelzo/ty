@@ -95,27 +95,10 @@ addr(dasm_State **Dst, u8 d, u8 base, i64 disp)
 static void
 copy32(dasm_State **Dst, u8 dst, i32 ddisp, u8 src, i32 sdisp)
 {
-        u8 t = LIR_PHYS_NONE;
-
-        if (src != TMP0 && dst != TMP0) {
-                t = TMP0;
-        } else if (src != TMP1 && dst != TMP1) {
-                t = TMP1;
-        }
-
-        if (t != LIR_PHYS_NONE) {
-                | mov Rq(t), [Rq(src)+sdisp]
-                | mov [Rq(dst)+ddisp], Rq(t)
-                | mov Rq(t), [Rq(src)+sdisp+8]
-                | mov [Rq(dst)+ddisp+8], Rq(t)
-        } else {
-                | movq xmm14, qword [Rq(src)+sdisp]
-                | movq qword [Rq(dst)+ddisp], xmm14
-                | movq xmm14, qword [Rq(src)+sdisp+8]
-                | movq qword [Rq(dst)+ddisp+8], xmm14
-        }
-
+        | movq xmm14, qword [Rq(src)+sdisp]
+        | movhps xmm14, qword [Rq(src)+sdisp+8]
         | movups xmm15, [Rq(src)+sdisp+16]
+        | movups [Rq(dst)+ddisp], xmm14
         | movups [Rq(dst)+ddisp+16], xmm15
 }
 

@@ -1,0 +1,44 @@
+fn accumulate(xs) {
+    let s = 0
+    let p = 1
+    let d = 100.0
+    for x in xs {
+        s += x
+        p *= (x :: Float) ? 1.5 : 2
+        d -= x
+    }
+    (s, p, d)
+}
+
+fn extremes(xs) {
+    let lo = xs[0]
+    let hi = xs[0]
+    for x in xs {
+        if x < lo {
+            lo = x
+        } else if x > hi {
+            hi = x
+        }
+    }
+    (lo, hi)
+}
+
+pub fn mixed-compound-assignment() {
+    let xs: _ = [(i % 3 == 0) ? (i.float / 4.0) : i for i in ..60]
+    for round in ..3000 {
+        assert(accumulate(xs) == (1342.5, 3656158440062976.0, -1242.5), "round {round}")
+    }
+    let ys: _ = [1, 2.5, 'x']
+    assert(try { accumulate(ys); false } catch _ { true })
+    let zs: _ = [2, 3, 4]
+    assert(accumulate(zs) == (9, 8, 91.0))
+}
+
+pub fn mixed-comparisons() {
+    let xs: _ = [5, 2.5, 7, -1.25, 3, 9.5, 0]
+    for round in ..3000 {
+        assert(extremes(xs) == (-1.25, 9.5), "round {round}")
+    }
+    let ys: _ = [3, 1, 2]
+    assert(extremes(ys) == (1, 3))
+}

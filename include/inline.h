@@ -29,6 +29,7 @@ typedef enum {
         TY_INLINE_SUB,
         TY_INLINE_MUL,
         TY_INLINE_DIV,
+        TY_INLINE_MOD,
         TY_INLINE_EQ,
         TY_INLINE_NE,
         TY_INLINE_LT,

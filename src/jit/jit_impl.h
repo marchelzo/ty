@@ -277,6 +277,9 @@ jit_rt_safe_subscript(Ty *ty, Value *top);
 int
 jit_rt_truthy(Ty *ty, Value *v);
 
+i64
+jit_rt_runes(u8 const *s, i64 n);
+
 void
 jit_rt_bit_and(Ty *ty, Value *result, Value *a, Value *b);
 

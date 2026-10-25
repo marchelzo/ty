@@ -1,0 +1,85 @@
+import lib (bench)
+
+// Graph algorithms over generated inputs: Dijkstra with a `Heap` of tuples
+// and adjacency lists, and a breadth-first flood fill on a grid tracked with
+// a set of coordinate tuples.  Routing, dependency resolution, puzzle
+// solvers and game AI lean on these data structures.
+
+fn graph(n: Int) -> Array[Array[(Int, Int)]] {
+    let adj = [[] for ..n]
+    for u in ..n {
+        for k in 1..4 {
+            let v = (u * 31 + k * 17) % n
+            let w = (u * 7 + k * 13) % 23 + 1
+            adj[u].push((v, w))
+            adj[v].push((u, w + k))
+        }
+    }
+    adj
+}
+
+fn grid(w: Int, h: Int) -> Array[String] {
+    [
+        [((x * 13 + y * 7) % 11 == 0 && x % 9 != 4) ? '#' : '.' for x in ..w].join('')
+        for y in ..h
+    ]
+}
+
+let GRAPH = graph(1500)
+let GRID  = grid(60, 40)
+
+fn dijkstra(adj: Array[Array[(Int, Int)]], source: Int) -> Array[Int] {
+    let dist = [1 << 40 for ..#adj]
+    let heap = Heap([(0, source)])
+    dist[source] = 0
+    while !heap.empty? {
+        let (d, u) = heap.pop()
+        if d > dist[u] {
+            continue
+        }
+        for (v, w) in adj[u] {
+            let nd = d + w
+            if nd < dist[v] {
+                dist[v] = nd
+                heap.push((nd, v))
+            }
+        }
+    }
+    dist
+}
+
+fn flood(rows: Array[String], start: (Int, Int)) -> Int {
+    let seen  = %[start]
+    let queue = [start]
+    let head  = 0
+    while head < #queue {
+        let (x, y) = queue[head]
+        head += 1
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let next = (x + dx, y + dy)
+            let (nx, ny) = next
+            if ny < 0 || ny >= #rows || nx < 0 || nx >= #rows[ny] {
+                continue
+            }
+            if rows[ny][nx] == '#' || next in seen {
+                continue
+            }
+            seen.insert(next)
+            queue.push(next)
+        }
+    }
+    #seen
+}
+
+@bench('heap tuple set graph array destructure')
+fn graph-search(n: Int) {
+    for ..n {
+        let dist = dijkstra(GRAPH, 0)
+        assert(dist.sum(0) == 65326)
+        assert(flood(GRID, (0, 0)) == 2206)
+    }
+}
+
+if __module__ == 'main' {
+    print(dijkstra(GRAPH, 0).sum(0), flood(GRID, (0, 0)))
+}

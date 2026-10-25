@@ -7,6 +7,16 @@
 
 typedef struct class Class;
 
+struct tags {
+        int n;
+        int tag;
+        struct tags *next;
+        _Atomic(struct links *) links;
+};
+
+void const *
+tags_lists(void);
+
 void
 tags_init(Ty *ty);
 

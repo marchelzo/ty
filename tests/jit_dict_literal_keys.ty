@@ -1,0 +1,89 @@
+class Box {
+    items: Dict[String, Int]
+
+    init() { items = %{'a': 1} }
+
+    [](key: String) -> Int { items[key] ?? -1 }
+}
+
+fn kind-of(event) {
+    event['kind']
+}
+
+fn count-of(counts) {
+    counts['missing'] + counts['a']
+}
+
+pub fn literal-keys-read-dicts() {
+    let events = [%{'kind': 'view', 'id': 1}, %{'kind': 'click'}, %{'id': 3}]
+    for round in ..4000 {
+        let e = events[round % 3]
+        let want = ['view', 'click', nil][round % 3]
+        assert(kind-of(e) == want, "round {round}")
+    }
+}
+
+pub fn literal-keys-follow-defaults-and-mutation() {
+    let counts = %{*: 10}
+    counts['a'] = 1
+    for round in ..4000 {
+        counts['a'] = round
+        assert(count-of(counts) == 10 + round)
+    }
+    assert('missing' in counts)
+}
+
+pub fn literal-keys-on-other-containers() {
+    let values = [%{'kind': 1}, Box(), %{'other': 2}]
+    let want   = [1, -1, nil]
+    for round in ..4000 {
+        let i = round % #values
+        assert(kind-of(values[i]) == want[i], "round {round}")
+    }
+}
+
+fn lookup(d, k) {
+    d[k]
+}
+
+fn lookup-typed(d: Dict[String, Int], k: String) -> Int | nil {
+    d[k]
+}
+
+pub fn variable-keys-read-dicts() {
+    let keys = ['a', 'b', 'zz', 'c']
+    let plain = %{'a': 1, 'b': 2, 'c': 3}
+    let dflt  = %{*: 7}
+    dflt['a'] = 1
+    for round in ..4000 {
+        let k = keys[round % 4]
+        assert(lookup(plain, k) == [1, 2, nil, 3][round % 4], "round {round}")
+        assert(lookup-typed(plain, k) == [1, 2, nil, 3][round % 4], "round {round}")
+        assert(lookup(dflt, k) == [1, 7, 7, 7][round % 4], "round {round}")
+        assert(lookup([10, 20, 30], round % 3) == [10, 20, 30][round % 3])
+    }
+    assert(#dflt == 4)
+}
+
+fn nest(outer: String, inner: String, value: String) {
+    let dict = %{*: %{}}
+    dict[outer][inner] = value
+    dict
+}
+
+fn grouped(keys: Array[String]) {
+    let groups = %{*: []}
+    for k in keys {
+        groups[k].push(#k)
+    }
+    groups
+}
+
+pub fn default-factories-run-during-lookups() {
+    for round in ..3000 {
+        let k = "k{round % 5}"
+        assert(nest(k, 'inner', 'v')[k]['inner'] == 'v', "round {round}")
+    }
+    let g = grouped(['a', 'bb', 'a', 'ccc', 'bb', 'a'])
+    assert(g['a'] == [1, 1, 1] && g['bb'] == [2, 2] && g['ccc'] == [3])
+}

@@ -25,13 +25,6 @@ struct links {
         struct link items[];
 };
 
-struct tags {
-        int n;
-        int tag;
-        struct tags *next;
-        _Atomic(struct links *) links;
-};
-
 static struct links nil;
 
 static TyMutex lock;
@@ -39,6 +32,12 @@ static u32 nlists;
 static _Atomic(struct tags *) lists[1 << (8 * sizeof ((Value){0}).tags)];
 
 static u32 next_id = 0;
+
+void const *
+tags_lists(void)
+{
+        return lists;
+}
 
 static vec(char const *) names;
 static vec(struct itable) tables;

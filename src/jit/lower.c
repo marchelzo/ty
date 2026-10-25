@@ -1746,10 +1746,16 @@ compare_branch(BcLir *c, BcLirNode const *node, u8 op)
         jump(c, done);
 
         bind(c, floats);
-        unless(c, at, VALUE_REAL, other);
-        unless(c, bt, VALUE_REAL, slow);
-        a = real_at(c, lhs);
-        b = real_at(c, rhs);
+
+        if (eq || c->compact) {
+                unless(c, at, VALUE_REAL, other);
+                unless(c, bt, VALUE_REAL, slow);
+                a = real_at(c, lhs);
+                b = real_at(c, rhs);
+        } else {
+                promote_pair(c, at, bt, slow, &a, &b);
+        }
+
         vset(c, LIR_FSETCC, result, lir_cc(ar->fcc), lir_r(a), lir_r(b));
         jump(c, done);
 

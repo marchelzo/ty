@@ -694,3 +694,23 @@ pub fn utf8-ranges() {
     assert(!bad.utf8?)
     assert(bad.utf8?(3))
 }
+
+pub fn counting-and-indexing-skip-ascii-runs() {
+    let s = 'ascii-prefix-of-sixteen-bytes→then→arrows→and-more-ascii-after'
+    assert(#s == 62)
+    assert(s.size() == 68)
+    assert(s[29] == '→')
+    assert(s[30] == 't')
+    assert(s[34] == '→')
+    assert(s[-1] == 'r')
+    assert(s[28;31] == 's→t')
+    assert(#('x' * 37) == 37)
+    assert(#'日本語のテキスト and ascii' == 18)
+}
+
+pub fn invalid-utf8-chars-are-single-bytes() {
+    let s = 'a\xc3b'
+    assert(s.char(1).size() == 1)
+    assert(s[1].size() == 1)
+    assert(#'ab\xffcd' == 4)
+}

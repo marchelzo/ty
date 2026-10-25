@@ -30,10 +30,88 @@ blob_slot(BcLir *c, i32 container, i32 index, LirLabel slow)
 }
 
 static void
-fast_subscript(BcLir *c)
+dict_lookup(BcLir *c, LirReg base, i32 at, i32 key, i32 out, LirLabel done)
 {
+        LirLabel missing = newlabel(c);
+        LirReg   dict    = ldp(c, base, at + VOFF(dict));
+
+        sync_sp(c);
+
+        LirReg item = ccall(c, dict_get_value, LT_PTR, preg(c->ty), preg(dict), preg(slot_of(c, key)));
+
+        jz(c, item, missing);
+        copy(c, c->ops, vat(out), item, 0);
+        jump(c, done);
+
+        bind(c, missing);
+        put_scalar(c, out, VALUE_NIL, lir_i(0));
+        jump(c, done);
+}
+
+static i32
+literal_key(BcLir const *c, BcLirNode const *node)
+{
+        i32 off = (i32)(node - c->nodes);
+
+        if (node->label != LIR_NONE || off < 5) {
+                return -1;
+        }
+
+        BcLirNode const *prev = &c->nodes[off - 5];
+
+        return (prev->op == INSTR_STRING && prev->next == off) ? load_i32(c->code + off - 4) : -1;
+}
+
+static bool
+keyed_subscript(BcLir *c, BcLirNode const *node)
+{
+        i32 id = literal_key(c, node);
+
+        if (id < 0) {
+                return false;
+        }
+
+        Value    key  = literal_string(id);
+        i32      at   = vat(c->sp - 2);
+        LirLabel slow = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        expect(c, c->ops, at, VALUE_DICT, slow);
+
+        LirReg dict = ldp(c, c->ops, at + VOFF(dict));
+        LirReg item = ccall(
+                c,
+                dict_find_hashed,
+                LT_PTR,
+                preg(c->ty),
+                preg(dict),
+                preg(slot_of(c, c->sp - 1)),
+                { LT_I64, lir_i((i64)value_hash(c->ctx, &key)) }
+        );
+
+        jz(c, item, slow);
+        copy(c, c->ops, at, item, 0);
+        jump(c, done);
+
+        bind(c, slow);
+        tycall(c, jit_rt_subscript, LT_VOID, preg(slot_of(c, c->sp - 2)));
+
+        bind(c, done);
+        c->sp -= 1;
+
+        return true;
+}
+
+static void
+fast_subscript(BcLir *c, BcLirNode const *node)
+{
+        if (keyed_subscript(c, node)) {
+                return;
+        }
+
         LirLabel slow  = newlabel(c);
         LirLabel bytes = newlabel(c);
+        LirLabel dict  = newlabel(c);
         LirLabel done  = newlabel(c);
         LirReg   slot  = array_slot(c, c->sp - 2, c->sp - 1, bytes);
 
@@ -41,9 +119,13 @@ fast_subscript(BcLir *c)
         jump(c, done);
 
         bind(c, bytes);
-        LirReg p = blob_slot(c, c->sp - 2, c->sp - 1, slow);
+        LirReg p = blob_slot(c, c->sp - 2, c->sp - 1, dict);
         put_scalar(c, c->sp - 2, VALUE_INTEGER, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)));
         jump(c, done);
+
+        bind(c, dict);
+        unless(c, tag_of(c, c->sp - 2), VALUE_DICT, slow);
+        dict_lookup(c, c->ops, vat(c->sp - 2), c->sp - 1, c->sp - 2, done);
 
         bind(c, slow);
         tycall(c, jit_rt_subscript, LT_VOID, preg(slot_of(c, c->sp - 2)));
@@ -153,6 +235,16 @@ mutate_real(BcLir *c, LirOp op, LirReg base, i32 at, i32 rhs, LirLabel done)
 }
 
 static void
+mutate_mixed(BcLir *c, LirOp op, LirReg base, i32 at, i32 rhs, LirReg a, LirReg b, LirLabel done)
+{
+        LirReg r = binop(c, op, LIR_F64, lir_r(a), lir_r(b));
+
+        put_real(c, base, at, r);
+        put_real(c, c->ops, rhs, r);
+        jump(c, done);
+}
+
+static void
 inline_mutation(
         BcLir *c,
         u8 op,
@@ -211,10 +303,43 @@ inline_mutation(
                 return;
         }
 
+        LirLabel both = newlabel(c);
+        LirLabel lint = newlabel(c);
+        LirLabel rint = newlabel(c);
+
         bind(c, real);
-        unless(c, lt, VALUE_REAL, slow);
-        unless(c, rt, VALUE_REAL, slow);
+        unless(c, lt, VALUE_REAL, lint);
+        unless(c, rt, VALUE_REAL, rint);
+
+        bind(c, both);
         mutate_real(c, fop, base, at, rhs, done);
+
+        bind(c, rint);
+        unless(c, rt, VALUE_INTEGER, slow);
+        mutate_mixed(
+                c,
+                fop,
+                base,
+                at,
+                rhs,
+                ldf(c, base, at + VOFF(real)),
+                unop(c, LIR_I2F, LIR_F64, lir_r(ldq(c, c->ops, rhs + VOFF(z)))),
+                done
+        );
+
+        bind(c, lint);
+        unless(c, lt, VALUE_INTEGER, slow);
+        unless(c, rt, VALUE_REAL, slow);
+        mutate_mixed(
+                c,
+                fop,
+                base,
+                at,
+                rhs,
+                unop(c, LIR_I2F, LIR_F64, lir_r(ldq(c, base, at + VOFF(z)))),
+                ldf(c, c->ops, rhs + VOFF(real)),
+                done
+        );
 }
 
 static bool
@@ -548,6 +673,96 @@ index_tuple(BcLir *c, BcLirNode const *node, i32 n, LirLabel fail, bool *fused)
         return true;
 }
 
+static i32
+class_tag(i32 class)
+{
+        switch (class) {
+        case CLASS_INT:    return VALUE_INTEGER;
+        case CLASS_FLOAT:  return VALUE_REAL;
+        case CLASS_STRING: return VALUE_STRING;
+        case CLASS_BOOL:   return VALUE_BOOLEAN;
+        case CLASS_ARRAY:  return VALUE_ARRAY;
+        case CLASS_DICT:   return VALUE_DICT;
+        case CLASS_BLOB:   return VALUE_BLOB;
+        case CLASS_TUPLE:  return VALUE_TUPLE;
+        default:           return -1;
+        }
+}
+
+static bool
+testable(BcLir const *c, i32 id)
+{
+        if (class_tag(id) >= 0) {
+                return true;
+        }
+
+        return (id > CLASS_PRIMITIVE) && !class_get(c->ctx, id)->is_trait;
+}
+
+static void
+instance_branch(BcLir *c, i32 slot, i32 id, LirLabel yes, LirLabel no)
+{
+        Class const *class = class_get(c->ctx, id);
+        i32          at    = vat(slot);
+        i32          want  = class_tag(id);
+        LirLabel     slow  = newlabel(c);
+        LirLabel     other = newlabel(c);
+        LirReg       type  = tagat(c, c->ops, at);
+
+        if (want >= 0) {
+                jcc(c, LIR_EQ, lir_r(type), lir_i(want), yes);
+        }
+
+        unless(c, type, VALUE_OBJECT, other);
+
+        if (want < 0) {
+                jcc(c, LIR_EQ, lir_r(ldw(c, c->ops, at + VOFF(class))), lir_i(id), yes);
+        }
+
+        jnz(c, ldx(c, LIR_LD_U8, LIR_I64, pval(c, &class->extended), 0), slow);
+        jump(c, no);
+
+        bind(c, other);
+        jcc(c, LIR_EQ, lir_r(type), lir_i(VALUE_JIT_FUNCTION), slow);
+        jcc(c, LIR_UGE, lir_r(type), lir_i(VALUE_TAGGED), slow);
+        jump(c, no);
+
+        bind(c, slow);
+        sync_sp(c);
+        jnz(c, tycall(c, jit_rt_jii, LT_BOOL, preg(slot_of(c, slot)), imm32(id)), yes);
+        jump(c, no);
+}
+
+static LirReg
+tag_list(BcLir *c, LirReg tags)
+{
+        LirReg lists = pval(c, tags_lists());
+
+        return ldp(c, lea(c, lists, binop(c, LIR_SHL, LIR_I64, lir_r(tags), lir_i(3)), 0), 0);
+}
+
+static void
+pop_tag(BcLir *c, i32 at, i32 tag, LirLabel fail)
+{
+        LirLabel keep = newlabel(c);
+        LirReg   tags = ldx(c, LIR_LD_U16, LIR_I64, c->ops, at + VOFF(tags));
+
+        jz(c, tags, fail);
+
+        LirReg list = tag_list(c, tags);
+
+        jcc(c, LIR_NE, lir_r(ldw(c, list, offsetof(struct tags, tag))), lir_i(tag), fail);
+
+        LirReg rest = ldw(c, ldp(c, list, offsetof(struct tags, next)), offsetof(struct tags, n));
+        LirReg type = tagat(c, c->ops, at);
+
+        store(c, LIR_ST16, c->ops, at + VOFF(tags), lir_r(rest));
+        jnz(c, rest, keep);
+        stb(c, c->ops, at + VOFF(type), lir_r(binop(c, LIR_AND, LIR_I64, lir_r(type), lir_i(~VALUE_TAGGED & 0xff))));
+
+        bind(c, keep);
+}
+
 static bool
 fast_pattern(BcLir *c, BcLirNode const *node, char const *ip, bool *fused)
 {
@@ -577,6 +792,30 @@ fast_pattern(BcLir *c, BcLirNode const *node, char const *ip, bool *fused)
         case INSTR_INDEX_TUPLE:
         case INSTR_TRY_INDEX_TUPLE:
                 return index_tuple(c, node, n, fail, fused);
+
+        case INSTR_TRY_TAG_POP:
+                pop_tag(c, at, n, fail);
+                return true;
+
+        case INSTR_JII:
+        case INSTR_JNI: {
+                i32 id = (n < 0) ? -n : n;
+
+                if (!testable(c, id)) {
+                        return false;
+                }
+
+                LirLabel next = newlabel(c);
+
+                if (node->op == INSTR_JII) {
+                        instance_branch(c, c->sp - 1, id, fail, next);
+                } else {
+                        instance_branch(c, c->sp - 1, id, next, fail);
+                }
+
+                bind(c, next);
+                return true;
+        }
 
         case INSTR_TRY_INDEX: {
                 if (n < 0) {

@@ -261,6 +261,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case INSTR_SUB:
                 case INSTR_MUL:
                 case INSTR_DIV:
+                case INSTR_MOD:
                 case INSTR_EQ:
                 case INSTR_NEQ:
                 case INSTR_LT:
@@ -271,6 +272,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                                 : op == INSTR_SUB ? TY_INLINE_SUB
                                 : op == INSTR_MUL ? TY_INLINE_MUL
                                 : op == INSTR_DIV ? TY_INLINE_DIV
+                                : op == INSTR_MOD ? TY_INLINE_MOD
                                 : op == INSTR_EQ  ? TY_INLINE_EQ
                                 : op == INSTR_NEQ ? TY_INLINE_NE
                                 : op == INSTR_LT  ? TY_INLINE_LT
@@ -460,6 +462,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case TY_INLINE_SUB:
                 case TY_INLINE_MUL:
                 case TY_INLINE_DIV:
+                case TY_INLINE_MOD:
                 case TY_INLINE_EQ:
                 case TY_INLINE_NE:
                 case TY_INLINE_LT:

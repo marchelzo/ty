@@ -1,0 +1,174 @@
+class Shape {
+    name: String
+    sides: Int
+
+    init(name: String, sides: Int) {
+        self.name  = name
+        self.sides = sides
+    }
+
+    corners -> Int { sides }
+
+    label -> String { "{name}/{sides}" }
+
+    scaled(k: Int) -> Int { sides * k }
+
+    grow(k: Int) -> Int {
+        let junk = [[i, k] for i in ..64]
+        sides += junk[k][1]
+        sides
+    }
+}
+
+class Tri < Shape {
+    hyp: Float = 5.0
+
+    init() { super('tri', 3) }
+}
+
+class Quad < Shape {
+    w: Int = 2
+    h: Int = 7
+
+    init() { super('quad', 4) }
+
+    corners -> Int { sides * 100 }
+}
+
+class Odd < Shape {
+    init() { super('odd', 9) }
+
+    label -> String { 'odd one' }
+}
+
+fn sides-of(s: Shape) -> Int {
+    s.sides
+}
+
+fn name-of(s: Shape) -> String {
+    s.name
+}
+
+fn corners-of(s: Shape) -> Int {
+    s.corners
+}
+
+fn label-of(s: Shape) -> String {
+    s.label
+}
+
+pub fn test-fields-read-through-subclass-receivers() {
+    let shapes: Array[Shape] = [Shape('base', 1), Tri(), Quad(), Odd()]
+    for round in ..4000 {
+        let s = shapes[round % 4]
+        assert(sides-of(s) == [1, 3, 4, 9][round % 4], "round {round}")
+        assert(name-of(s) == ['base', 'tri', 'quad', 'odd'][round % 4], "round {round}")
+    }
+}
+
+pub fn test-inherited-and-overridden-getters() {
+    let shapes: Array[Shape] = [Shape('base', 1), Tri(), Quad(), Odd()]
+    for round in ..4000 {
+        let s = shapes[round % 4]
+        assert(corners-of(s) == [1, 3, 400, 9][round % 4], "round {round}")
+        assert(label-of(s) == ['base/1', 'tri/3', 'quad/4', 'odd one'][round % 4], "round {round}")
+    }
+}
+
+pub fn test-subclass-fields-follow-mutation() {
+    let q = Quad()
+    let t = Tri()
+    for round in ..3000 {
+        q.sides = round
+        t.sides = -round
+        assert(sides-of(q) + sides-of(t) == 0)
+        assert(corners-of(q) == round * 100)
+        assert(corners-of(t) == -round)
+    }
+}
+
+class Leaf {
+    v: Int = 1
+}
+
+fn kinds(x) -> Int {
+    (x :: Shape ? 1 : 0) + (x :: Quad ? 10 : 0) + (x :: Leaf ? 100 : 0) + (x :: Odd ? 1000 : 0)
+}
+
+pub fn test-class-checks-follow-the-hierarchy() {
+    let values = [Shape('s', 1), Tri(), Quad(), Odd(), Leaf(), 7, 'str', nil, [1], %{}]
+    let want   = [1, 1, 11, 1001, 100, 0, 0, 0, 0, 0]
+    for round in ..5000 {
+        let i = round % #values
+        assert(kinds(values[i]) == want[i], "round {round}")
+    }
+}
+
+tag Wrapped;
+
+fn builtin-kinds(x) -> Int {
+    (x :: Int ? 1 : 0) + (x :: String ? 10 : 0) + (x :: Array ? 100 : 0) + (x :: Float ? 1000 : 0) + (x :: Dict ? 10000 : 0)
+}
+
+pub fn test-builtin-class-checks() {
+    let values = [3, 'a', [1], 2.5, %{}, nil, Wrapped(4), Wrapped('s'), (1, 2), Quad(), true]
+    let want   = [1, 10, 100, 1000, 10000, 0, 0, 0, 0, 0, 0]
+    for round in ..5000 {
+        let i = round % #values
+        assert(builtin-kinds(values[i]) == want[i], "round {round} value {values[i]}")
+    }
+}
+
+fn scaled-of(s: Shape, k: Int) -> Int {
+    s.scaled(k)
+}
+
+fn grown(s: Shape) -> Int {
+    s.grow(1)
+}
+
+pub fn test-inherited-methods-on-subclass-receivers() {
+    let shapes: Array[Shape] = [Shape('base', 1), Tri(), Quad(), Odd()]
+    for round in ..4000 {
+        let s = shapes[round % 4]
+        assert(scaled-of(s, 3) == s.sides * 3, "round {round}")
+    }
+    for (i, s) in shapes.enumerate() {
+        let start = s.sides
+        for round in ..3000 {
+            assert(grown(s) == start + round + 1, "shape {i} round {round}")
+        }
+    }
+}
+
+class Disc {
+    r: Int
+
+    init(r: Int) { self.r = r }
+
+    corners -> Int { 0 }
+
+    scaled(k: Int) -> Int { r * k * 3 }
+}
+
+fn union-scaled(s: Shape | Disc, k: Int) -> Int {
+    s.scaled(k)
+}
+
+fn nilable-scaled(s: Disc | Quad | nil, k: Int) -> Int {
+    (s == nil) ? -1 : s.scaled(k)
+}
+
+pub fn test-union-receivers-dispatch-per-class() {
+    let values: Array[Shape | Disc] = [Shape('s', 2), Disc(5), Quad(), Disc(1), Tri()]
+    let want = [6, 45, 12, 9, 9]
+    for round in ..5000 {
+        let i = round % #values
+        assert(union-scaled(values[i], 3) == want[i], "round {round}")
+    }
+    let maybes: Array[Disc | Quad | nil] = [Disc(2), nil, Quad()]
+    for round in ..3000 {
+        let i = round % 3
+        assert(nilable-scaled(maybes[i], 2) == [12, -1, 8][i])
+    }
+}
