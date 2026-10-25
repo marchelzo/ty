@@ -93,7 +93,7 @@ if((TY_PGO_GENERATE OR TY_PGO_USE) AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
 endif()
 
 if(TY_PGO_GENERATE)
-  add_compile_options(-fprofile-generate=${TY_PGO_GENERATE})
+  add_compile_options(-fprofile-generate=${TY_PGO_GENERATE} "SHELL:-mllvm -vp-counters-per-site=8")
   add_link_options(-fprofile-generate=${TY_PGO_GENERATE})
 elseif(TY_PGO_USE)
   if(NOT EXISTS ${TY_PGO_USE})

@@ -435,11 +435,14 @@ pub fn print-run(path: String, run-id: Int) {
     let rows: [_] = sql-rows(
         """
         SELECT m.benchmark, m.median_seconds AS current, b.best, b.best_run
-          FROM measurements AS m JOIN ({best-times()}) AS b ON b.benchmark = m.benchmark
+          FROM measurements AS m LEFT JOIN ({best-times(excluding=run-id)}) AS b
+            ON b.benchmark = m.benchmark
          WHERE m.run_id = ?
          ORDER BY m.benchmark
         """, run-id
     )
+    let ratios = rows.filter(r -> r['best'] && r['current']).map(r -> r['current'] / r['best'])
+    let geomean = #ratios > 0 ? math.exp(ratios.map(math.log).sum()! / #ratios) : nil
     print(chalk"[bold bright cyan]Run[/] {run-label(run-id)}  {timestamp-label(run['recorded_at'])}  "
                "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}  {build-label(run)}")
     print(chalk"{revision-label(run['commit_hash'], 12)}  {branch-label(run['branch'])}  "
@@ -453,10 +456,11 @@ pub fn print-run(path: String, run-id: Int) {
         print(chalk"  {benchmark-label(row['benchmark'], width)}"
                    " {duration-label(row['current'], width=10)}  "
                    "{duration-label(row['best'], role='baseline', width=10)}  "
-                   "{delta-label(row['current'] / row['best'], 8)}  {run-label(row['best_run'], 4)}")
+                   "{delta-label(row['best'] ? row['current'] / row['best'] : nil, 8)}  "
+                   "{row['best_run'] ? run-label(row['best_run'], 4) : ''}")
     }
     print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
-    print(chalk"  {'Geomean':>{width}} {' ':>10}  {' ':>10}   {geomean-label(run-geomeans()[run-id])}")
+    print(chalk"  {'Geomean':>{width}} {' ':>10}  {' ':>10}   {geomean-label(geomean)}")
     close-history()
 }
 

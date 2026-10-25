@@ -3,9 +3,11 @@ import http
 import ty.test (Test, skip-if, platform)
 import path (Path)
 import json
+import hash
 import http.codec as codec
 import super.support.process (run)
 import tpm.tar as tar
+import tpm.registry as registry
 import sh as shell
 
 class Space {
@@ -18,7 +20,7 @@ class Space {
     }
 
     env -> Dict[String, String] {
-        %{'TPM_CACHE': str(cache), 'TPM_REGISTRY': ''}
+        %{'TPM_CACHE': str(cache), 'TPM_CONFIG': str(root / 'config'), 'TPM_REGISTRY': '', 'TPM_TOKEN': ''}
     }
 
     file(rel: String, text: String) -> Path {
@@ -458,4 +460,205 @@ pub fn path-dependencies-use-their-own-native-builds(t: Test) {
     (s.root / 'solo/native/linux-x86_64/libsolo.so').unlink()
     let err = s.fails('app', 'main.ty')
     assert(err.contains?('the solo library bundled with this package'), err)
+}
+
+const SHOUT_C = 'int shout(int x) { return x * 3 + SHOUT_BIAS; }\n'
+
+const SHOUT_TY = [
+    'import ffi as c',
+    "let lib = c.open('shout') ?? throw RuntimeError('no libshout')",
+    "let f = c.wrap(lib, 'shout', c.int, c.int)",
+    'pub fn shout(x: Int) -> Int { f(x) }',
+].join('\n') + '\n'
+
+@platform('linux')
+@skip-if(-> !which?('cc') || !which?('patchelf'), 'needs cc and patchelf')
+pub fn build-scripts-make-the-natives-they-bundle(t: Test) {
+    let s = Space(t)
+    s.file('shout/ty.toml', '[package]\nname = "shout"\nversion = "1.0.0"\n\n[native]\nshout = "shout"\n\n[build]\nscript = "build.sh"\n')
+    s.file('shout/shout.ty', SHOUT_TY)
+    s.file('shout/csrc/shout.c', SHOUT_C)
+    s.file('shout/build.sh', [
+        'set -eu',
+        'echo "$TPM_PACKAGE $TPM_VERSION $TPM_OS" > "$TPM_NATIVE_OUT/../seen"',
+        'cc -shared -fPIC -DSHOUT_BIAS=1 -Wl,-soname,libshout.so.1 -o "$TPM_NATIVE_OUT/libshout.so" csrc/shout.c',
+    ].join('\n') + '\n')
+    s.publish('shout')
+
+    assert((s.root / 'shout/native/seen').read-text().trim() == 'shout 1.0.0 linux')
+    let archive = (s.root / 'shout/dist').glob('*.tar.gz')[0]
+    assert(archive.name.match?(/^shout-1\.0\.0-linux-x86_64-glibc[0-9.]+\.tar\.gz$/), archive.name)
+    let names = archive-names(archive)
+    assert(names.any?(\_.match?(/^native\/libshout-[0-9a-f]{8}\.so\.1$/)), names)
+    assert('csrc/shout.c' in names && !names.any?(\_.contains?('seen')), names)
+
+    s.app(['shout = "1"'], 'import shout\nprint(shout.shout(4))\n')
+    assert(s.ok('app', 'main.ty') == '13')
+
+    (s.root / 'shout/native').rmtree()
+    s.file('shout/build.sh', 'echo building >&2\nexit 3\n')
+    let err = s.fails('shout', '--pm', 'build')
+    assert(err.contains?('building') && err.contains?('[build] script `build.sh` failed (exit status 3)'), err)
+}
+
+@platform('linux')
+@skip-if(-> !which?('cc') || !which?('patchelf'), 'needs cc and patchelf')
+pub fn ty-build-scripts-run-with-ty(t: Test) {
+    let s = Space(t)
+    s.file('shout/ty.toml', '[package]\nname = "shout"\nversion = "1.0.0"\n\n[native]\nshout = "shout"\n\n[build]\nscript = "tools/build.ty"\n')
+    s.file('shout/shout.ty', SHOUT_TY)
+    s.file('shout/csrc/shout.c', SHOUT_C)
+    s.file('shout/tools/build.ty', [
+        'import sh',
+        'let out = getenv("TPM_NATIVE_OUT")!',
+        'let r = sh.run(["cc", "-shared", "-fPIC", "-DSHOUT_BIAS=2", "-o", out + "/libshout.so", "csrc/shout.c"])',
+        'if !r.ok? { throw RuntimeError(r.stderr) }',
+    ].join('\n') + '\n')
+    s.tpm('shout', 'build', '-o', '../out')
+    assert((s.root / 'shout/native/linux-x86_64/libshout.so').file?)
+
+    s.app(['shout = { path = "../shout" }'], 'import shout\nprint(shout.shout(1))\n')
+    assert(s.ok('app', 'main.ty') == '5')
+}
+
+pub fn manifests-check-the-build-table(t: Test) {
+    let s = Space(t)
+    s.file('a/ty.toml', '[package]\nname = "a"\n\n[build]\nscript = "../escape.sh"\n')
+    assert(s.fails('a', '--pm', 'build').contains?('[build] script must be a path inside the package'))
+    s.file('a/ty.toml', '[package]\nname = "a"\n\n[build]\nscirpt = "build.sh"\n')
+    assert(s.fails('a', '--pm', 'build').contains?('[build]: unknown key `scirpt`'))
+    s.file('a/ty.toml', '[package]\nname = "a"\n\n[build]\nscript = "missing.sh"\n')
+    assert(s.fails('a', '--pm', 'build').contains?('[build] script `missing.sh` does not exist'))
+}
+
+/// A registry server speaking the upload API: index and files over GET, uploads over PUT
+/// with a bearer token.
+class Uploads {
+    dir:    Path
+    token:  String
+    srv:    http.Server
+    thread: Thread
+    seen:   Dict[String, Bool] = %{}
+
+    init(dir: Path, token: String) {
+        self.dir   = dir
+        self.token = token
+        srv        = http.Server('127.0.0.1', 0)
+        srv.get('/index/<name>', (req, rsp, name) -> rsp.file(str(dir / 'index' / name)))
+        srv.get('/files/<name>/<file>', (req, rsp, name, file) -> rsp.file(str(dir / 'files' / name / file)))
+        srv.get('/api/v1/me', fn (req, rsp) {
+            if !authorized?(req, rsp) {
+                return
+            }
+            rsp.json(%{'user': 'tester', 'admin': false})
+        })
+        srv.put('/api/v1/packages', fn (req, rsp) {
+            if !authorized?(req, rsp) {
+                return
+            }
+            let body = Blob()
+            while let $chunk = req.read() {
+                body.push(chunk)
+            }
+            let file = dir.parent / "upload-{#seen}.tar.gz"
+            file.write(body)
+            let entries = tar.unpack(codec.decode('gzip', body))
+            let meta = json.parse(entries.find(\_.name == 'tpm.json')!.data.str())
+            let sum = hash.sha256(body).hexdigest()
+            try {
+                registry.publish(dir, meta, file)
+            } catch e {
+                rsp.status(409)
+                rsp.json(%{'error': e.what})
+                return
+            }
+            let created = !seen[sum]
+            seen[sum] = true
+            rsp.status(created ? 201 : 200)
+            rsp.json(%{'created': created})
+        }, stream: true)
+        thread = Thread(srv.run)
+    }
+
+    authorized?(req: _, rsp: _) -> Bool {
+        if req.header('authorization') == "Bearer {token}" {
+            return true
+        }
+        rsp.status(401)
+        rsp.json(%{'error': 'invalid or revoked token'})
+        false
+    }
+
+    url -> String {
+        "http://127.0.0.1:{srv.port}"
+    }
+
+    close() {
+        srv.stop()
+        thread.join()
+        srv.close()
+    }
+}
+
+pub fn http-registries-take-uploads-with-a-saved-token(t: Test) {
+    let s = Space(t)
+    (s.root / 'registry').mkdir(parents: true)
+    let up = Uploads(s.root / 'registry', 'sekrit')
+    try {
+        let dir = s.package('z', '1.0.0')
+        s.tpm(dir, 'build')
+
+        let none = s.fails(dir, '--pm', 'publish', '--registry', up.url)
+        assert(none.contains?("no API token for {up.url}; run `tpm login --registry {up.url}`"), none)
+
+        let bad = s.fails(dir, '--pm', 'login', '--registry', up.url, 'wrong')
+        assert(bad.contains?('invalid or revoked token; run `tpm login`'), bad)
+        assert(!(s.root / 'config/credentials.json').exists?)
+
+        let r = shell.run(
+            [ty.executable, '--color=never', '--pm', 'login', '--registry', "{up.url}/"],
+            input: 'sekrit\n',
+            env: %{**__env, **s.env}
+        )
+        assert(r.ok? && r.stderr.contains?("Logged in to {up.url} as tester"), r.stderr)
+        let creds = s.root / 'config/credentials.json'
+        assert((creds.stat.mode & 0o777) == 0o600, "{creds.stat.mode:o}")
+
+        assert(s.exec(dir, '--pm', 'publish', '--registry', up.url).stderr.contains?("Published z 1.0.0 (any) to {up.url}"))
+        assert(s.exec(dir, '--pm', 'publish', '--registry', up.url).stderr.contains?("Unchanged z 1.0.0 (any) is already on {up.url}"))
+
+        s.file("{dir}/z.ty", 'pub fn who() { "changed" }\n')
+        s.tpm(dir, 'build')
+        let conflict = s.fails(dir, '--pm', 'publish', '--registry', up.url)
+        assert(conflict.contains?('z 1.0.0 is already published for any'), conflict)
+
+        let env = %{**s.env, 'TPM_TOKEN': 'wrong'}
+        let r2 = run(['--pm', 'publish', '--registry', up.url], env: env, chdir: str(s.root / dir))
+        assert(r2.status != 0 && r2.stderr.contains?('invalid or revoked token'), r2.stderr)
+
+        s.app(['z = "1"'], 'import z\nprint(z.who())\n')
+        s.file('app/ty.toml', (s.root / 'app/ty.toml').read-text().sub('"../registry"', "\"{up.url}\""))
+        assert(s.ok('app', 'main.ty') == 'z 1.0.0')
+
+        s.tpm(dir, 'logout', '--registry', up.url)
+        assert(s.fails(dir, '--pm', 'logout', '--registry', up.url).contains?("no token saved for {up.url}"))
+        assert(s.fails(dir, '--pm', 'publish', '--registry', up.url).contains?('no API token'))
+    } finally {
+        up.close()
+    }
+}
+
+pub fn pkg-trans-tools-is-the-default-registry(t: Test) {
+    let s = Space(t)
+    let dir = s.package('z', '1.0.0')
+    s.tpm(dir, 'build')
+
+    let unset = %{**s.env}
+    unset.remove('TPM_REGISTRY')
+    let env = %{k: v for k, v in __env if k != 'TPM_REGISTRY'}
+    let r = shell.run([ty.executable, '--color=never', '--pm', 'publish'], env: %{**env, **unset}, chdir: str(s.root / dir))
+    assert(!r.ok? && r.stderr.contains?('no API token for https://pkg.trans.tools'), r.stderr)
+
+    assert(s.fails(dir, '--pm', 'publish').contains?('no registry given'))
+    assert(s.fails(dir, '--pm', 'login', 'x').contains?('no registry given'))
 }

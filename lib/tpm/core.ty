@@ -7,6 +7,8 @@ import sh (run)
 
 pub class TpmError < RuntimeError {}
 
+pub const DEFAULT_REGISTRY = 'https://pkg.trans.tools'
+
 pub const SET_REGISTRY = 'set [tpm] registry or TPM_REGISTRY'
 
 pub fn fail(what: String) -> _ {
@@ -46,6 +48,16 @@ pub fn cache-root() -> Path {
     Path.home() / '.cache' / 'ty'
 }
 
+pub fn config-root() -> Path {
+    if let $dir = getenv('TPM_CONFIG') {
+        return Path(dir)
+    }
+    if let $xdg = getenv('XDG_CONFIG_HOME') {
+        return Path(xdg) / 'ty'
+    }
+    Path.home() / '.config' / 'ty'
+}
+
 pub fn sha256(data: Blob | String) -> String {
     hash.sha256(Blob(data)).hexdigest()
 }
@@ -75,6 +87,23 @@ pub fn write-atomic(p: Path, data: String | Blob) {
     let tmp = p.parent / ".{p.name}.{os.getpid()}.tmp"
     tmp.write(data)
     if os.rename(str(tmp), str(p)) != 0 {
+        tmp.unlink(missing-ok: true)
+        fail("failed to write {p}")
+    }
+}
+
+/// Like `write-atomic`, but the file is readable only by its owner from the start.
+pub fn write-private(p: Path, data: String | Blob) {
+    p.parent.mkdir(parents: true, exist-ok: true)
+    let tmp = p.parent / ".{p.name}.{os.getpid()}.tmp"
+    let fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    if fd < 0 {
+        fail("failed to write {p}")
+    }
+    let b = Blob(data)
+    let n = os.write(fd, b, all: true)
+    os.close(fd)
+    if n != #b || os.rename(str(tmp), str(p)) != 0 {
         tmp.unlink(missing-ok: true)
         fail("failed to write {p}")
     }

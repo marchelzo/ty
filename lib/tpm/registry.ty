@@ -67,6 +67,52 @@ fn fetch(url: String, timeout: Float) -> _ {
     }
 }
 
+fn api(method: String, url: String, token: String, headers: Dict = %{}, %kwargs) -> Dict {
+    let client = ty.mod.load('http/client')
+    let request = client.request
+    let opts = %{**kwargs, 'headers': %{'Authorization': "Bearer {token}", **headers}}
+    let r = try {
+        request(method, url, **opts)
+    } catch e: client.RequestError {
+        throw TpmError("{url}: {e.what}")
+    }
+    let body = try {
+        r.json()
+    } catch _ {
+        nil
+    }
+    if r.status-code < 400 {
+        return (body :: Dict) ? body : throw TpmError("{url}: unexpected response from the registry")
+    }
+    let why = ((body :: Dict) && (body['error'] :: String)) ? body['error'] : "HTTP {r.status-code}"
+    match r.status-code {
+        401        => throw TpmError("{why}; run `tpm login` with a valid token"),
+        404 or 405 => throw TpmError("{url}: this registry does not accept uploads ({why})"),
+        _          => throw TpmError(why)
+    }
+}
+
+/// Who `token` belongs to on the HTTP registry at `url`: `{user, admin}`.
+pub fn whoami(url: String, token: String) -> Dict {
+    api('GET', "{url}/api/v1/me", token, timeout: 30.0)
+}
+
+/// Uploads a built archive to the HTTP registry at `url`. The result says whether it was
+/// `created` (false when the registry already had these exact bytes) and where it now lives.
+pub fn upload(url: String, token: String, archive: Path) -> Dict {
+    api(
+        'PUT',
+        "{url}/api/v1/packages",
+        token,
+        content: archive,
+        timeout: 300.0,
+        headers: %{
+            'Content-Type':      'application/gzip',
+            'X-Checksum-Sha256': sha256-file(archive)
+        }
+    )
+}
+
 pub class Registry {
     url:     String
     offline: Bool = false

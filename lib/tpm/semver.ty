@@ -91,7 +91,7 @@ pub class Version {
     }
 
     ==(other: Any) -> Bool {
-        other :: Version && (self <=> other) == 0
+        (other :: Version) && (self <=> other) == 0
     }
 
     __str__() -> String {

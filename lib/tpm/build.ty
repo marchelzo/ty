@@ -1,4 +1,5 @@
 import os
+import ty
 import json
 import http.codec as codec
 import path (Path)
@@ -288,6 +289,45 @@ pub fn meta(m: Manifest, platform: String, natives: Dict[String, String]) -> Dic
     }
 }
 
+fn exit-status(status: Int) -> String {
+    os.WIFSIGNALED(status) ? "killed by signal {os.WTERMSIG(status)}" : "exit status {os.WEXITSTATUS(status)}"
+}
+
+/// Runs `[build] script` in the package directory. It puts the native libraries it builds
+/// in `TPM_NATIVE_OUT`, where `tpm build` and `tpm sync` look for them.
+pub fn run-script(m: Manifest, out: Path) {
+    let script = (m.script)!
+    let file = m.dir / script
+    if !file.file? {
+        fail("{m.file}: [build] script `{script}` does not exist")
+    }
+    out.mkdir(parents: true, exist-ok: true)
+
+    let here = plat.host()
+    let env = %{
+        **__env,
+        'TPM_NATIVE_OUT': str(out),
+        'TPM_PACKAGE':    m.name,
+        'TPM_VERSION':    str(m.version),
+        'TPM_OS':         here.?os ?? ty.platform,
+        'TPM_ARCH':       here.?arch ?? ty.arch,
+        'TPM_PLATFORM':   plat.host-tag(),
+        'TPM_TY':         ty.executable,
+    }
+    let cmd = script.ends?('.ty') ? [ty.executable, str(file)] : ['sh', str(file)]
+
+    note('Running', script)
+    let p = try {
+        os.spawn(cmd, chdir: str(m.dir), env: env)
+    } catch e: OSError {
+        fail("[build] script: could not run `{cmd[0]}`: {e}")
+    }
+    let status = (os.wait4(p.pid)!).status
+    if os.WIFSIGNALED(status) || os.WEXITSTATUS(status) != 0 {
+        fail("[build] script `{script}` failed ({exit-status(status)})")
+    }
+}
+
 /// Builds `dist/<name>-<version>-<platform>.tar.gz` for `m` and returns its path and metadata.
 pub fn build(m: Manifest, native-dirs: Array[Path], out: Path) -> (Path, Dict) {
     for d in m.deps if d.kind != 'registry' {
@@ -299,6 +339,10 @@ pub fn build(m: Manifest, native-dirs: Array[Path], out: Path) -> (Path, Dict) {
 
     let here = plat.host()
     let dirs = (#native-dirs > 0) ? native-dirs.map(real) : m.native-dirs
+
+    if m.script != nil {
+        run-script(m, dirs[0])
+    }
 
     let stage = Path(os.mkdtemp(str(Path.tmp() / 'tpm-build')))
     let result = nil

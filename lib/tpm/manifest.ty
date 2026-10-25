@@ -49,6 +49,7 @@ pub class Manifest {
     natives:     Array[Native] = []
     exclude:     Array[String] = []
     system-libs: Array[String] = []
+    script:      String | nil = nil
     registry:    String | nil = nil
 
     root-dirs -> Array[Path] {
@@ -215,6 +216,16 @@ pub fn parse(source: String, file: Path) -> Manifest {
         throw ManifestError(file, "[package] roots must stay inside the package: `{r}`")
     }
 
+    let build = table('build')
+    for key in build.keys() if !(key in ['script', 'system-libs']) {
+        throw ManifestError(file, "[build]: unknown key `{key}`")
+    }
+
+    let script = build['script']
+    if script != nil && (!(script :: String) || script.starts?('/') || '..' in script.split('/')) {
+        throw ManifestError(file, '[build] script must be a path inside the package')
+    }
+
     Manifest(
         dir:         dir,
         file:        file,
@@ -225,7 +236,8 @@ pub fn parse(source: String, file: Path) -> Manifest {
         deps:        [dependency(file, dir, alias, v) for alias, v in table('dependencies')],
         natives:     [native(file, key, v) for key, v in table('native')],
         exclude:     string-list(file, '[package] exclude', pkg['exclude']),
-        system-libs: string-list(file, '[build] system-libs', table('build')['system-libs']),
+        system-libs: string-list(file, '[build] system-libs', build['system-libs']),
+        script:      script,
         registry:    tpm['registry'] && str(tpm['registry'])
     )
 }
