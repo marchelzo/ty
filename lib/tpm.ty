@@ -18,6 +18,16 @@ import tpm.tar as tar
 import tpm.credentials as credentials
 import tpm.edit (edit-entry, edit-dependencies)
 
+/// Create a project in a new directory: ty.toml, main.ty, .gitignore and a git repository
+clap! New {
+    /// Package name (default: the directory name)
+    name: String, short: 'n', long: 'name'
+    /// Do not create a git repository
+    no-git: Bool, long: 'no-git'
+    /// The directory to create
+    dir: String, pos: true, required: true
+}
+
 /// Create a ty.toml in DIR (default: the current directory)
 clap! Init {
     /// Package name (default: the directory name)
@@ -146,6 +156,9 @@ clap! Cache {
 }
 
 clap! Tpm {
+    /// Create a new project
+    cmd new: New
+
     /// Create a ty.toml
     cmd init: Init
 
@@ -380,26 +393,67 @@ fn remove(opts: Remove) {
     sync-project(man.load(m.dir), reg, Options(offline: opts.offline))
 }
 
-fn init(opts: Init) {
-    let dir = real(opts.dir)
-    let file = dir / man.FILE
-    if file.exists? {
-        fail("{file} already exists")
-    }
-    let name = opts.name ?? dir.name.lower().sub(/[^a-z0-9_]/, '_')
+fn package-name(dir: Path, given: String | nil) -> String {
+    let name = given ?? dir.name.lower().sub(/[^a-z0-9_]/, '_')
     if !name.match?(NAME) {
         fail("invalid package name `{name}`; pick one with --name")
     }
-    dir.mkdir(parents: true, exist-ok: true)
-    let text = [
+    name
+}
+
+fn new-manifest(name: String) -> String {
+    [
         '[package]',
         "name = {toml-string(name)}",
         'version = "0.1.0"',
         '',
         '[dependencies]',
         '',
-    ]
-    write-atomic(file, text.join('\n'))
+    ].join('\n')
+}
+
+fn in-git?(dir: Path) -> Bool {
+    let d = dir
+    while true {
+        if (d / '.git').exists? {
+            return true
+        }
+        if d.parent == d {
+            return false
+        }
+        d = d.parent
+    }
+}
+
+fn new(opts: New) {
+    let dir = real(opts.dir)
+    if dir.exists? && (!dir.dir? || #dir.ls() > 0) {
+        fail("{opts.dir} already exists")
+    }
+    let name = package-name(dir, opts.name)
+    let git? = !opts.no-git && which?('git') && !in-git?(dir.parent)
+    dir.mkdir(parents: true, exist-ok: true)
+    write-atomic(dir / man.FILE, new-manifest(name))
+    write-atomic(dir / 'main.ty', "print('Hello from {name}!')\n")
+    write-atomic(dir / '.gitignore', '.ty/\ndist/\n')
+    if git? {
+        core.tool(['git', 'init', '-q', str(dir)], 'creating a git repository')
+    }
+    note('Created', "{name} in {opts.dir}")
+    if !core.quiet? {
+        eprint("\nRun it with `cd {opts.dir} && ty main.ty`, and add packages with `tpm add NAME`.")
+    }
+}
+
+fn init(opts: Init) {
+    let dir = real(opts.dir)
+    let file = dir / man.FILE
+    if file.exists? {
+        fail("{file} already exists")
+    }
+    let name = package-name(dir, opts.name)
+    dir.mkdir(parents: true, exist-ok: true)
+    write-atomic(file, new-manifest(name))
     note('Created', str(file))
 }
 
@@ -578,6 +632,7 @@ fn sync(opts: Sync) {
 
 fn dispatch(cmd: _) {
     match cmd {
+        c: New     => new(c),
         c: Init    => init(c),
         c: Add     => add(c),
         c: Remove  => remove(c),

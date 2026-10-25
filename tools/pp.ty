@@ -7,6 +7,8 @@ import os
 import path (Path)
 import procs (Process)
 import term
+import termios as tio
+import time
 
 C! fn { void *getpwuid(unsigned int uid); }
 
@@ -22,6 +24,27 @@ C! fn { void *getpwuid(unsigned int uid); }
 clap! Pp {
     /// Process name, or a regex matched against full command lines
     query: String, pos: true
+
+    /// Sort column
+    sort: String, short: 's', placeholder: 'KEY', default: 'pid', check: ['pid', 'pct', 'cpu', 'mem', 'age', 'threads', 'name', 'user']
+
+    /// Seconds to sample CPU usage over (0 for lifetime average, like ps)
+    interval: Float, short: 'i', default: 0.0, placeholder: 'SECS'
+
+    /// Send SIG (name or number) to every matching process
+    kill: String, short: 'k', placeholder: 'SIG'
+
+    /// Don't ask before killing
+    yes: Bool, short: 'y'
+
+    /// Reverse the sort order
+    reverse: Bool, short: 'r'
+
+    /// Only show processes owned by USER
+    user: String, short: 'u', placeholder: 'USER'
+
+    /// Show at most N processes
+    top: Int, short: 'n', check: 1..1000000
 }
 
 use Row = {
@@ -29,6 +52,7 @@ use Row = {
     user:    String | nil,
     state:   String | nil,
     cpu:     Float | nil,
+    pct:     Float | nil,
     rss:     Int | nil,
     age:     Float | nil,
     threads: Int | nil,
@@ -72,21 +96,31 @@ fn state-of(p: Process) -> String | nil {
          :                'S'
 }
 
-fn row(p: Process) -> Row {
+fn pct-of(total: Float | nil, age: Float | nil, then: Float | nil, dt: Float) -> Float | nil {
+    match (dt > 0.0, total, age, then) {
+        (true,  t: Float, _, x: Float) => (t - x) / dt * 100.0,
+        (false, t: Float, a: Float, _) => (a > 0.0) ? t / a * 100.0 : nil,
+        _                              => nil
+    }
+}
+
+fn row(p: Process, before: Dict[Int, Float], dt: Float) -> Row {
     let exe  = safe(-> p.exe)
     let argv = safe(-> p.argv) ?? []
     let arg0 = argv ? Path(argv[0]).name : nil
     let name = safe(-> p.name) ?? exe.?name ?? arg0 ?? '?'
     let cpu  = safe(-> p.cpu)
     let uid  = safe(-> p.uid)
+    let age  = safe(-> p.age)
 
     return {
         pid:     p.pid,
         user:    (uid == nil) ? nil : user-name(uid),
         state:   state-of(p),
         cpu:     cpu.?total,
+        pct:     pct-of(cpu.?total, age, before[p.pid], dt),
         rss:     safe(-> p.memory.resident),
-        age:     safe(-> p.age),
+        age:     age,
         threads: safe(-> p.threads),
         name:    name,
         names:   [name, exe.?name, arg0].remove(nil),
@@ -143,6 +177,14 @@ fn rss-style(n: Int | nil) -> String {
          :                    'dim'
 }
 
+fn pct-style(x: Float | nil) -> String {
+    let x = x ?? 0.0
+    return (x >= 90.0) ? 'b red'
+         : (x >= 25.0) ? 'yellow'
+         : (x >= 0.5)  ? 'no-fg'
+         :               'dim'
+}
+
 fn cpu-style(s: Float | nil) -> String {
     let s = s ?? 0.0
     return (s >= 3600.0) ? 'red'
@@ -153,7 +195,7 @@ fn cpu-style(s: Float | nil) -> String {
 
 fn command(r: Row, re: Regex | nil) -> String {
     let head   = r.argv ? visible(r.argv[0]) : r.cmd
-    let dir    = head.match(/^.*\//) ?? ''
+    let dir    = r.argv ? (head.match(/^.*\//) ?? '') : ''
     let (a, b) = match (re && r.cmd.match(re)) {
         m: RegexMatch => (m.start, m.end),
         _             => (-1, -1)
@@ -180,6 +222,7 @@ fn render(rows: Array[Row], re: Regex | nil) {
         cell('PID', w-pid, 'dim'),
         cell('USER', w-user, 'dim', left?: true),
         cell('S', 1, 'dim'),
+        cell('%CPU', 5, 'dim'),
         cell('CPU', 9, 'dim'),
         cell('MEM', 5, 'dim'),
         cell('AGE', 7, 'dim'),
@@ -194,6 +237,7 @@ fn render(rows: Array[Row], re: Regex | nil) {
             cell("{r.pid}", w-pid, 'b yellow'),
             cell(r.user, w-user, (r.user == 'root') ? 'red' : "{r.user}?", left?: true),
             "[{gstyle}]{glyph}[/]",
+            cell((r.pct == nil) ? nil : "{r.pct:.1f}", 5, pct-style(r.pct)),
             cell((r.cpu == nil) ? nil : fmt-cpu(r.cpu), 9, cpu-style(r.cpu)),
             cell((r.rss == nil) ? nil : fmt-bytes(r.rss), 5, rss-style(r.rss)),
             cell((r.age == nil) ? nil : fmt-age(r.age), 7, 'cyan'),
@@ -209,6 +253,64 @@ fn render(rows: Array[Row], re: Regex | nil) {
     let hid = #rows.filter(\_.cpu == nil)
     let extra = hid ? " · {hid} restricted" : ''
     print(chalk"[dim]{n} process{(n == 1) ? '' : 'es'} · {fmt-bytes(rss)} resident{extra}[/]")
+}
+
+fn sort-key(by: String) -> (Row -> Any) {
+    match by {
+        'pct'     => (r -> r.pct ?? -1.0),
+        'cpu'     => (r -> r.cpu ?? -1.0),
+        'mem'     => (r -> r.rss ?? -1),
+        'age'     => (r -> r.age ?? -1.0),
+        'threads' => (r -> r.threads ?? -1),
+        'name'    => (r -> r.name),
+        'user'    => (r -> r.user ?? ''),
+        _         => &.pid
+    }
+}
+
+fn sample(secs: Float) -> (Dict[Int, Float], Float) {
+    if secs <= 0.0 {
+        return (%{}, 0.0)
+    }
+
+    let t0     = time.utime(time.CLOCK_MONOTONIC)
+    let before = %{p.pid: t for p in procs.find() if let $t = safe(-> p.cpu.total)}
+    os.sleep(secs)
+    (before, Float(time.utime(time.CLOCK_MONOTONIC) - t0) / 1.0e6)
+}
+
+fn signal(s: String) -> Int | nil {
+    let name = s.upper().sub(/^SIG/, '')
+    return s.match?(/^\d+$/) ? int(s)
+         :                      (1..65).find(i -> os.signame(i) == name)
+}
+
+fn keypress() -> String {
+    let $saved = tio.tcgetattr(0) or return os.read(0, 64).str()
+    tio.tcsetattr(0, tio.TCSANOW, {*saved, lflag: saved.lflag & ~(tio.ICANON | tio.ECHO)})
+    let key = os.read(0, 1).str()
+    tio.tcsetattr(0, tio.TCSANOW, saved)
+    eprint(key.match?(/^[[:print:]]$/) ? key : '')
+    key
+}
+
+fn reap(rows: Array[Row], sig: Int, yes?: Bool) {
+    let what = "SIG{os.signame(sig)} to {#rows} process{(#rows == 1) ? '' : 'es'}"
+
+    if !yes? && os.isatty(0) {
+        eprint(chalk.text("[b]send {what}?[/] [dim]press[/] [b green]y[/] [dim]to confirm, anything else aborts:[/] "), end: '')
+        if !keypress().match?(/^[yY]/) {
+            eprint(chalk"[dim]aborted[/]")
+            os.exit(1)
+        }
+    }
+
+    let failed = [r for r in rows if os.kill(r.pid, sig) != 0]
+    for r in failed {
+        eprint(chalk"[red]failed:[/] [b yellow]{r.pid}[/] {escape(r.name)}")
+    }
+    eprint(chalk"[dim]sent {what}{failed ? " · {#failed} failed" : ''}[/]")
+    os.exit(failed ? 1 : 0)
 }
 
 fn main() {
@@ -234,7 +336,30 @@ fn main() {
         _        => (r -> q in r.names)
     }
 
-    let rows = [row(p) for p in procs.find() if p.pid != me].filter(keep?)
+    let mine? = match opts.user {
+        nil => (_ -> true),
+        $u  => (r -> r.user == u)
+    }
+
+    let desc? = (opts.reverse ?? false) != (opts.sort in ['pct', 'cpu', 'mem', 'threads'])
+    let sig = match opts.kill {
+        nil => nil,
+        $k  => signal(k) ?? do {
+            eprint(chalk"[red]unknown signal:[/] [b]{k}[/]")
+            os.exit(2)
+        }
+    }
+
+    if sig != nil && opts.query == nil && opts.user == nil {
+        eprint(chalk"[red]refusing to signal every process[/] [dim](give a QUERY or --user)[/]")
+        os.exit(2)
+    }
+
+    let (before, dt) = sample((sig == nil) ? opts.interval : 0.0)
+    let rows  = [row(p, before, dt) for p in procs.find() if p.pid != me]
+               .filter(r -> keep?(r) && mine?(r))
+               .sort(by=sort-key(opts.sort), desc=desc?)
+    let rows = opts.top ? rows[;opts.top] : rows
 
     if !rows {
         eprint(chalk"[red]no processes match[/] [b]{opts.query ?? ''}[/]")
@@ -242,6 +367,10 @@ fn main() {
     }
 
     render(rows, re)
+
+    if sig != nil {
+        reap(rows, sig, opts.yes ?? false)
+    }
 }
 
 main()

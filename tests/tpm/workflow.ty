@@ -106,6 +106,26 @@ fn which?(cmd: String) -> Bool {
     (getenv('PATH') ?? '').split(':').any?(dir -> dir != '' && (Path(dir) / cmd).executable?)
 }
 
+pub fn new-makes-a-project-that-runs(t: Test) {
+    let s = Space(t)
+    let err = s.exec('.', '--pm', 'new', 'hello-world').stderr
+    assert(err.contains?('Created hello_world in hello-world'), err)
+    let dir = s.root / 'hello-world'
+    assert((dir / 'ty.toml').read-text().contains?('name = "hello_world"\nversion = "0.1.0"'))
+    assert((dir / '.gitignore').read-text() == '.ty/\ndist/\n')
+    assert(s.ok('hello-world', 'main.ty') == 'Hello from hello_world!')
+    assert((dir / '.git').exists? == which?('git'))
+
+    s.tpm('hello-world', 'new', 'inner', '--name', 'inner_pkg')
+    assert(!(dir / 'inner/.git').exists?)
+    assert((dir / 'inner/ty.toml').read-text().contains?('name = "inner_pkg"'))
+
+    assert(s.fails('.', '--pm', 'new', 'hello-world').contains?('hello-world already exists'))
+    assert(s.fails('.', '--pm', 'new', '9lives').contains?('invalid package name `9lives`'))
+    s.tpm('.', 'new', 'plain', '--no-git')
+    assert(!(s.root / 'plain/.git').exists?)
+}
+
 pub fn path-dependencies-can-be-added-and-removed(t: Test) {
     let s = Space(t)
     s.file('util/ty.toml', '[package]\nname = "util"\nversion = "0.2.0"\n')
