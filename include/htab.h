@@ -51,6 +51,33 @@ ht_crowded(HT const *t)
         return (4 * (t->count + t->tombs) >= 3 * t->size);
 }
 
+inline static u64
+ht_hash(Ty *ty, Value const *k)
+{
+        switch (k->type) {
+        case VALUE_STRING:  return k->tags ^ XXH3_64bits(ss(*k), sN(*k));
+        case VALUE_INTEGER: return k->tags ^ hash64(k->z);
+        default:            return value_hash(ty, k);
+        }
+}
+
+inline static bool
+ht_eq(Ty *ty, Value const *a, Value const *b)
+{
+        switch (PACK_TYPES(a->type, b->type)) {
+        case PAIR_OF(VALUE_STRING):
+                return (a->tags == b->tags)
+                    && (sN(*a) == sN(*b))
+                    && ((ss(*a) == ss(*b)) || memcmp(ss(*a), ss(*b), sN(*a)) == 0);
+
+        case PAIR_OF(VALUE_INTEGER):
+                return (a->tags == b->tags) && (a->z == b->z);
+
+        default:
+                return v_eq(a, b);
+        }
+}
+
 inline static usize
 ht_find(Ty *ty, usize size, HT_ITEM const *items, u64 h, Value const *k)
 {
@@ -63,7 +90,7 @@ ht_find(Ty *ty, usize size, HT_ITEM const *items, u64 h, Value const *k)
         usize tomb = HT_NONE;
 
         while (!HT_EMPTY(&items[i])) {
-                if (items[i].h == h && v_eq(&items[i].k, k)) {
+                if (items[i].h == h && ht_eq(ty, &items[i].k, k)) {
                         return i;
                 }
                 if (tomb == HT_NONE && HT_TOMB(&items[i])) {
@@ -119,7 +146,7 @@ ht_lookup(Ty *ty, HT const *t, Value const *k)
                 return HT_NONE;
         }
 
-        usize i = ht_find(ty, t->size, t->items, value_hash(ty, k), k);
+        usize i = ht_find(ty, t->size, t->items, ht_hash(ty, k), k);
 
         return HT_LIVE(t, i) ? i : HT_NONE;
 }

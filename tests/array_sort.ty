@@ -1,0 +1,148 @@
+import ty
+
+tag KeyError;
+
+fn counted-key(seen: Array[Int], n: Int) -> Int {
+    seen.push(n)
+    return -n
+}
+
+fn throwing-key(n: Int) -> Int {
+    if n == 2 {
+        throw KeyError(n)
+    }
+    n
+}
+
+fn growing-key(xs: Array[Int], n: Int) -> Int {
+    xs.push(n)
+    n
+}
+
+class CollectKey {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+}
+
+fn <=>(a: CollectKey, b: CollectKey) -> Int {
+    ty.gc()
+    a.n <=> b.n
+}
+
+fn collecting-key(s: String) -> CollectKey {
+    ty.gc()
+    CollectKey(Int(s))
+}
+
+class ThrowKey {
+    init() { }
+}
+
+fn <=>(a: ThrowKey, b: ThrowKey) -> Int {
+    throw KeyError('comparison')
+}
+
+pub fn sort-computes-each-key-once() {
+    let xs = [3, 1, 4, 1, 5]
+    let seen: Array[Int] = []
+    let ys = xs.sort(by=counted-key@(seen, _))
+
+    assert(ys == [5, 4, 3, 1, 1])
+    assert(seen == xs)
+    assert(xs == [3, 1, 4, 1, 5])
+
+    seen.clear()
+    xs.sort!(by=counted-key@(seen, _), desc=true)
+    assert(seen == [3, 1, 4, 1, 5])
+    assert(xs == [1, 1, 3, 4, 5])
+}
+
+pub fn sort-on-caches-keys() {
+    let xs = [4, 2, 3, 1]
+    let seen: Array[Int] = []
+
+    assert(xs.sort-on(counted-key@(seen, _)) == [4, 3, 2, 1])
+    assert(seen == xs)
+    seen.clear()
+    xs.sort-on!(counted-key@(seen, _))
+    assert(seen == [4, 2, 3, 1])
+    assert(xs == [4, 3, 2, 1])
+}
+
+pub fn sort-empty-and-singleton-keys() {
+    let seen: Array[Int] = []
+    let xs: Array[Int] = []
+
+    assert(xs.sort(by=counted-key@(seen, _)) == [])
+    assert(seen == [])
+    assert([7].sort(by=counted-key@(seen, _)) == [7])
+    assert(seen == [7])
+}
+
+pub fn sort-range-keys() {
+    let xs = [9, 3, 1, 2, 8]
+    let seen: Array[Int] = []
+    let sort-range: Any = xs.sort!
+
+    sort-range(1, 3, by=counted-key@(seen, _))
+    assert(xs == [9, 3, 2, 1, 8])
+    assert(seen == [3, 1, 2])
+}
+
+pub fn sort-roots-keys-and-values() {
+    let xs = ["{32 - it}" for ..32]
+    let ys = xs.sort(by=collecting-key)
+
+    assert(ys == ["{it}" for 1...32])
+    assert(xs == ["{32 - it}" for ..32])
+}
+
+pub fn sort-key-exception-preserves-input() {
+    let xs = [3, 2, 1]
+    let caught? = false
+
+    try {
+        xs.sort!(by=throwing-key)
+    } catch KeyError(2) {
+        caught? = true
+    }
+
+    ty.gc()
+    assert(caught?)
+    assert(xs == [3, 2, 1])
+    assert(xs.sort(by=\-_) == [3, 2, 1])
+}
+
+pub fn sort-rejects-size-changing-key() {
+    let xs = [3, 2, 1]
+    let caught? = false
+
+    try {
+        xs.sort!(by=growing-key@(xs, _))
+    } catch e: RuntimeError {
+        caught? = true
+    }
+
+    ty.gc()
+    assert(caught?)
+    assert(xs == [3, 2, 1, 3, 2, 1])
+}
+
+pub fn sort-comparison-exception-preserves-input() {
+    let xs = [3, 2, 1]
+    let caught? = false
+
+    try {
+        xs.sort!(by=\ThrowKey())
+    } catch KeyError('comparison') {
+        caught? = true
+    }
+
+    ty.gc()
+    assert(caught?)
+    assert(xs == [3, 2, 1])
+    assert(xs.sort(by=id) == [1, 2, 3])
+}

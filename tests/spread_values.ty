@@ -1,0 +1,55 @@
+import ty
+
+fn collect(*xs: Any) -> Array[Any] {
+    xs
+}
+
+fn emitted*(xs: Array[Int]) -> Generator[Int] {
+    for xs {
+        yield it
+    }
+}
+
+fn appended(xs: Array[Int], n: Int) -> Array[Int] {
+    xs.push(n)
+    xs
+}
+
+pub fn spread-keeps-order-and-empty-values() {
+    let xs = [1, 2, 3]
+    let ys = [*[], 0, *xs, *(4, 5), *[], 6]
+
+    assert(ys == [0, 1, 2, 3, 4, 5, 6])
+    assert(xs == [1, 2, 3])
+    assert([*[], *(), *[nil], *(nil,)] == [nil, nil])
+    assert(collect(*xs, *(4, 5), *[], nil) == [1, 2, 3, 4, 5, nil])
+    assert(%[*xs, *(3, 4)] == %[1, 2, 3, 4])
+    assert(%{*xs, *(4, 5)} == %{1: nil, 2: nil, 3: nil, 4: nil, 5: nil})
+}
+
+pub fn spread-resizes-the-stack() {
+    let xs = ["value-{it}" for ..8192]
+    let ys = [*xs, *xs]
+
+    ty.gc()
+    assert(#ys == 2 * #xs)
+    assert(ys[;#xs] == xs && ys[#xs;] == xs)
+    assert(collect(*xs) == xs)
+    assert(#%{*xs} == #xs)
+}
+
+pub fn spread-preserves-expression-order() {
+    let xs = [1]
+    let ys = [*xs, *appended(xs, 2), *emitted([3, 4]), *xs]
+
+    assert(ys == [1, 1, 2, 3, 4, 1, 2])
+    assert(xs == [1, 2])
+}
+
+pub fn spread-in-comprehensions-and-nested-literals() {
+    let xs = [[*it, *it] for [[1], [], [2, 3]]]
+
+    assert(xs == [[1, 1], [], [2, 3, 2, 3]])
+    assert([*[*[1, 2], *(3, 4)], *[5]] == [1, 2, 3, 4, 5])
+    assert([*'ab', *Blob([3, 4]), *emitted([5, 6])] == ['a', 'b', 3, 4, 5, 6])
+}

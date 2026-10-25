@@ -51,6 +51,8 @@ ifeq ($(MODE),optimized)
 endif
 
 ifdef TRAIN
+override TRAIN := $(value TRAIN)
+export TRAIN
 define pgo-train
 -TY=$(abspath $(1)) $(SHELL) -c "$$TRAIN" >$(2)/train.log 2>&1
 endef

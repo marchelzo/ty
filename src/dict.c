@@ -41,7 +41,7 @@ has_default(Dict const *d)
 Value *
 dict_get_value(Ty *ty, Dict *d, Value *key)
 {
-        u64 h = value_hash(ty, key);
+        u64 h = ht_hash(ty, key);
         usize i = ht_find(ty, d->size, d->items, h, key);
 
         if (HT_LIVE(d, i)) {
@@ -104,7 +104,7 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 
         HT_ENSURE(d);
 
-        u64 h = value_hash(ty, &key);
+        u64 h = ht_hash(ty, &key);
         usize i = ht_find(ty, d->size, d->items, h, &key);
 
         if (HT_LIVE(d, i)) {
@@ -125,7 +125,7 @@ dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 
         HT_ENSURE(d);
 
-        u64 h = value_hash(ty, &key);
+        u64 h = ht_hash(ty, &key);
         usize i = ht_find(ty, d->size, d->items, h, &key);
 
         Value *result;
@@ -149,7 +149,7 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 
         HT_ENSURE(d);
 
-        u64 h = value_hash(ty, &key);
+        u64 h = ht_hash(ty, &key);
         usize i = ht_find(ty, d->size, d->items, h, &key);
 
         if (HT_LIVE(d, i)) {
@@ -521,7 +521,7 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
 
         HT_ENSURE(dict);
 
-        u64   h = value_hash(ty, &key);
+        u64   h = ht_hash(ty, &key);
         usize i = ht_find(ty, dict->size, dict->items, h, &key);
 
         if (HT_LIVE(dict, i)) {

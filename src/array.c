@@ -28,8 +28,9 @@ static Value
 array_reverse(Ty *ty, Value *array, int argc, Value *kwargs);
 
 typedef struct {
-        Value f;
-        Ty *ty;
+        Value        f;
+        Ty          *ty;
+        Value const *keys;
 } SortContext;
 
 static int
@@ -52,18 +53,10 @@ compare_by(void *ctx_, void const *v1, void const *v2)
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
 
-        Value k1 = vm_call1(ty, &ctx->f, (Value *)v1);
-        gP(&k1);
-
-        Value k2 = vm_call1(ty, &ctx->f, (Value *)v2);
-        gP(&k2);
-
-        int result = v_cmp(&k1, &k2);
-
-        gX();
-        gX();
-
-        return result;
+        return v_cmp(
+                ctx->keys + 2 * *(usize const *)v1,
+                ctx->keys + 2 * *(usize const *)v2
+        );
 }
 
 static int
@@ -90,6 +83,54 @@ compare_by2(void *ctx_, void const *v1, void const *v2)
         gX();
 
         return result;
+}
+
+static void
+sort_keys(Ty *ty, Array *xs, usize i, usize n, Value const *f)
+{
+        if (n == 0) {
+                return;
+        }
+
+        usize count = vN(*xs);
+        Value keys  = ARRAY(vAn(2 * n));
+
+        gP(&keys);
+
+        for (usize j = 0; j < n; ++j) {
+                vvP(*keys.array, NIL);
+                vvP(*keys.array, v__(*xs, i + j));
+        }
+
+        for (usize j = 0; j < n; ++j) {
+                *v_(*keys.array, 2 * j) = vm_call1(ty, f, v_(*keys.array, 2 * j + 1));
+        }
+
+        if (vN(*xs) != count) {
+                zP("Array.sort(): array changed size during key evaluation");
+        }
+
+        SCRATCH_SAVE();
+
+        usize *order = smA(n * sizeof *order);
+        SortContext ctx = { .ty = ty, .keys = vv(*keys.array) };
+
+        for (usize j = 0; j < n; ++j) {
+                order[j] = j;
+        }
+
+        rqsort(order, n, sizeof *order, compare_by, &ctx);
+
+        if (vN(*xs) != count) {
+                zP("Array.sort(): array changed size during key comparison");
+        }
+
+        for (usize j = 0; j < n; ++j) {
+                *v_(*xs, i + j) = v__(*keys.array, 2 * order[j] + 1);
+        }
+
+        SCRATCH_RESTORE();
+        gX();
 }
 
 inline static void
@@ -662,8 +703,7 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
         SortContext ctx = { .ty = ty };
 
         if (!IsNone(o.by)) {
-                ctx.f = o.by;
-                rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by, &ctx);
+                sort_keys(ty, array->array, i, n, &o.by);
         } else if (!IsNone(o.cmp)) {
                 ctx.f = o.cmp;
                 rqsort(vv(*array->array) + i, n, sizeof (Value), compare_by2, &ctx);
@@ -2240,12 +2280,7 @@ array_sort_on(Ty *ty, Value *array, int argc, Value *kwargs)
                 return *array;
         }
 
-        SortContext ctx = {
-                .f = f,
-                .ty = ty
-        };
-
-        rqsort(vv(*array->array), vN(*array->array), sizeof (Value), compare_by, &ctx);
+        sort_keys(ty, array->array, 0, vN(*array->array), &f);
 
         return *array;
 }

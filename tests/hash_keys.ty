@@ -1,0 +1,98 @@
+import ty
+
+tag TaggedKey;
+
+class CollisionKey {
+    n: Int
+
+    init(n: Int) {
+        self.n = n
+    }
+
+    __hash__() -> Int {
+        ty.hash(n % 3)
+    }
+
+    ==(other: Any) -> Bool {
+        match other {
+            k: CollisionKey => n == k.n,
+            _               => false
+        }
+    }
+}
+
+pub fn primitive-key-content() {
+    let keys: Array[Any] = ['', 'a\0b', 'éλ', -1, 0, 1, 1 << 60]
+    let d = %{keys[it]: it for ..#keys}
+    let s = Set(keys)
+
+    assert(#d == #keys && #s == #keys)
+    assert(d['xa\0by'[1;-1]] == 1)
+    assert(d['xéλy'[1;-1]] == 2)
+    assert('xa\0by'[1;-1] in s)
+    assert('a\0' not in s)
+    assert(d[(1 << 59) * 2] == 6)
+    assert(d.get-or-put-with('xa\0by'[1;-1], \99) == 1)
+    assert(d.get-or-put-with('new', \99) == 99)
+}
+
+pub fn tagged-keys-stay-distinct() {
+    let keys: Array[Any] = ['x', TaggedKey('x'), 1, TaggedKey(1)]
+    let d = %{keys[it]: it for ..#keys}
+    let s = Set(keys)
+
+    assert(#d == 4 && #s == 4)
+    assert(d['x'] == 0 && d[TaggedKey('x')] == 1)
+    assert(d[1] == 2 && d[TaggedKey(1)] == 3)
+    assert(s.remove(TaggedKey('x')))
+    assert('x' in s && TaggedKey('x') not in s)
+}
+
+pub fn primitive-keys-survive-resize-and-removal() {
+    let d: Dict[Any, Int] = %{}
+    let s: Set[Any] = %[]
+
+    for ..512 {
+        d[it] = it
+        d["key-{it}"] = -it
+        s.add(it, "key-{it}")
+    }
+
+    for (0..512)[;;2] {
+        d.remove(it)
+        d.remove("key-{it}")
+        s.remove(it)
+        s.remove("key-{it}")
+    }
+
+    ty.gc()
+    assert(#d == 512 && #s == 512)
+
+    for (1..512)[;;2] {
+        assert(d[it] == it && d["key-{it}"] == -it)
+        assert(it in s && "key-{it}" in s)
+        assert(it - 1 not in s && "key-{it - 1}" not in s)
+    }
+}
+
+pub fn custom-keys-share-primitive-hash-buckets() {
+    let d: Dict[Any, Int] = %{0: -1, 1: -2, 2: -3}
+    let s: Set[Any] = %[0, 1, 2]
+
+    for ..48 {
+        d[CollisionKey(it)] = it
+        s.add(CollisionKey(it))
+    }
+
+    assert(#d == 51 && #s == 51)
+    assert(d[0] == -1 && d[1] == -2 && d[2] == -3)
+
+    for ..48 {
+        assert(d[CollisionKey(it)] == it)
+        assert(CollisionKey(it) in s)
+    }
+
+    assert(d.remove(CollisionKey(17)) == 17)
+    assert(s.remove(CollisionKey(17)))
+    assert(CollisionKey(17) not in s && 2 in s)
+}
