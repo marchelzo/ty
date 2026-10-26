@@ -2568,6 +2568,19 @@ yield(BcLir *c, BcLirNode const *node)
         default:               helper = jit_rt_yield_none; reason = JIT_YIELD_NONE; break;
         }
 
+        if (!c->has_try && node->op != INSTR_YIELD_NONE) {
+                LirLabel kept = newlabel(c);
+                LirReg   top  = slot_of(c, c->sp);
+                LirReg   ok   = tycall(c, vm_jit_yield_kept, LT_I32, preg(top), imm32(node->op == INSTR_YIELD_SOME));
+
+                jnz(c, ok, kept);
+                sync_sp(c);
+                leave(c, JIT_PACK(reason, node->resume_id));
+
+                bind(c, kept);
+                return;
+        }
+
         if (!c->has_try) {
                 sync_sp(c);
                 leave(c, JIT_PACK(reason, node->resume_id));

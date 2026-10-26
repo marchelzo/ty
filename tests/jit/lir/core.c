@@ -106,6 +106,7 @@ operands(Lir *L, LirOp op, LirInst *in, LirLabel target, Payload *pay)
         case LF_FMA:      D(LIR_F64); A(lir_r(f), lir_r(g), lir_r(h));          break;
         case LF_LD:       D(lir_type_class(info->type)); A(mem);                break;
         case LF_COPY:     A(deref(p, 0), deref(p, 32));                         break;
+        case LF_RMW:      A(mem, lir_r(x));                                     break;
         case LF_BRZ:      A(lir_r(x), lir_l(target));                           break;
         case LF_JMP:
         case LF_POLL:     A(lir_l(target));                                     break;

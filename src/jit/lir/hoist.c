@@ -199,6 +199,10 @@ writes_memory(Hoist *h, LirInst const *in)
                 note_store(h, in->args[0].mem, 32);
                 return false;
 
+        case LF_RMW:
+                note_store(h, in->args[0].mem, op_size(in->op));
+                return false;
+
         case LF_CAS:
         case LF_ATOMIC:
                 note_store(h, in->args[0].mem, 8);

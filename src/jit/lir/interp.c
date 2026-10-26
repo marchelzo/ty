@@ -875,6 +875,12 @@ run(LirMachine *m, u32 pc)
                         memmove(P(0), P(1), 32);
                         break;
 
+                case LF_RMW:
+                        a = arg(m, in, 1, lir_type_class(LirOps[in->op].type));
+                        a.u += load(in->op, P(0)).u;
+                        store(in->op, P(0), a);
+                        break;
+
                 case LF_ALLOCA:
                         result = addr(m->frame + m->slots[pc]);
                         break;

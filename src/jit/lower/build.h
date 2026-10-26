@@ -560,7 +560,7 @@ bump(BcLir *c, LirReg base, i32 disp, i64 n)
 inline static void
 bumpw(BcLir *c, LirReg base, i32 disp, i64 n)
 {
-        stw(c, base, disp, lir_r(plus(c, ldw(c, base, disp), n)));
+        veff(c, LIR_ADDM32, mref(base, disp), lir_i(n));
 }
 
 inline static LirReg

@@ -29,8 +29,8 @@ NilStackRange(Ty *ty, usize i, usize n)
 inline static Frame *
 PushFrame(FrameStack *frames, usize fp, Value const *f, char const *ip)
 {
-        if (UNLIKELY(vec_full(*frames))) {
-                xvR(*frames, vec_new_capacity(*frames));
+        if (UNLIKELY(vN(*frames) == vC(*frames))) {
+                xvR(*frames, 2 * vN(*frames) + 4);
         }
 
         Frame *frame = v_(*frames, vN(*frames));
@@ -643,6 +643,11 @@ vm_jit_failure(Ty *ty, int op, char *ip);
 
 bool
 vm_jit_yield_from(Ty *ty);
+
+i32
+vm_jit_yield_kept(Ty *ty, Value *top, i32 some);
+
+extern _Thread_local i32 KeptStacks;
 
 void
 vm_jit_try_get_member(Ty *ty);

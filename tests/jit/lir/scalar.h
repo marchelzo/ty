@@ -536,6 +536,67 @@ check_memory(void)
         lir_free(L);
 }
 
+static void
+check_read_modify_write(void)
+{
+        static struct {
+                LirOp     op;
+                LirOp     ld;
+                LirOp     st;
+                bool      reg;
+                LirScalar in;
+                LirScalar k;
+                LirScalar want;
+        } const cases[] = {
+                { LIR_ADDM32, LIR_LD_I32, LIR_ST32, false, { .i = 7 },          { .i = -9 },        { .i = -2 }          },
+                { LIR_ADDM32, LIR_LD_U32, LIR_ST32, true,  { .u = UINT32_MAX }, { .i = 2 },         { .u = 1 }           },
+                { LIR_ADDM64, LIR_LD_I64, LIR_ST64, false, { .i = 40 },         { .i = 1LL << 40 }, { .i = (1LL << 40) + 40 } },
+                { LIR_ADDM64, LIR_LD_I64, LIR_ST64, true,  { .i = -5 },         { .i = 5000 },      { .i = 4995 }        }
+        };
+
+        for (u32 i = 0; i < countof(cases); ++i) {
+                LirClass cls   = lir_type_class(LirOps[cases[i].op].type);
+                Lir     *L     = fn(LT_I64, LT_PTR, LT_I64, LT_I64);
+                LirReg   index = lir_reg(L, LIR_I64);
+                LirOpnd  mem   = lir_m(L->params[0], index, 4, -5);
+                LirOpnd  k     = cases[i].reg ? lir_r(L->params[2]) : lir_i(cases[i].k.i);
+
+                put(L, LIR_LI, index, lir_i(2));
+                put(L, cases[i].st, LIR_NONE, mem, lir_r(L->params[1]));
+                put(L, cases[i].op, LIR_NONE, mem, k);
+
+                LirReg d = lir_reg(L, cls);
+
+                put(L, cases[i].ld, d, mem);
+                ret(L, d);
+
+                u8 buf[32];
+                memset(buf, 0xa5, sizeof buf);
+
+                LirScalar out = run(L, S(ptr, buf), cases[i].in, cases[i].k);
+
+                CHECK(equal(cls, out, cases[i].want));
+                CHECK(buf[2] == 0xa5 && buf[3 + lir_type_size(LirOps[cases[i].op].type)] == 0xa5);
+
+                lir_free(L);
+        }
+
+        Lir    *L   = fn(LT_I64);
+        LirReg  q   = lir_reg(L, LIR_PTR);
+        LirReg  d   = lir_reg(L, LIR_I64);
+        LirOpnd mem = deref(q, 8);
+
+        put(L, LIR_ALLOCA, q, lir_i(16), lir_i(8));
+        put(L, LIR_ST64, LIR_NONE, mem, lir_i(5));
+        put(L, LIR_ADDM64, LIR_NONE, mem, lir_i(2));
+        put(L, LIR_LD_I64, d, mem);
+        ret(L, d);
+
+        CHECK(run(L).i == 7);
+
+        lir_free(L);
+}
+
 static Lir *
 triangle(void)
 {
@@ -783,6 +844,7 @@ scalar_suite(Backend *exec, bool native)
         check_promotions();
         check_stack_bool();
         check_memory();
+        check_read_modify_write();
         check_flow();
         check_atomics();
         check_returns_twice();

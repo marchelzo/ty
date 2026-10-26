@@ -1,0 +1,123 @@
+import ty
+
+let log = []
+
+class R {
+    k: String
+    init(k) {
+        self.k = k
+    }
+    __drop__() {
+        log.push("~{k}")
+    }
+}
+
+fn counter*(start: Int, n: Int) {
+    for i in ..n {
+        yield start + i
+    }
+}
+
+fn echo*() {
+    let total = 0
+    while true {
+        let x = yield total
+        if x == nil {
+            return
+        }
+        total += x
+    }
+}
+
+fn holding*(k: String) {
+    let ^r = R(k)
+    for i in ..3 {
+        yield i
+    }
+}
+
+fn plain*() {
+    for i in ..1000000 {
+        yield i
+    }
+}
+
+fn round-robin(m: Int, n: Int) -> Int {
+    let gens = [counter(1000 * j, n) for j in ..m]
+    let sum  = 0
+    for i in ..n {
+        for j in ..m {
+            let v = gens[j]()
+            assert(v == Some(1000 * j + i))
+            if let Some(x) = v {
+                sum += x
+            }
+        }
+    }
+    for g in gens {
+        assert(g() == None)
+    }
+    sum
+}
+
+pub fn more-live-generators-than-kept-stacks() {
+    let want = 0
+    for j in ..400 {
+        for i in ..20 {
+            want += 1000 * j + i
+        }
+    }
+    for ..3 {
+        assert(round-robin(400, 20) == want)
+    }
+    assert(round-robin(5, 2000) == 10000 * 2000 + 2000 * 1999 / 2 * 5)
+}
+
+pub fn sent-values-survive-in-place-resumes() {
+    for ..20 {
+        let co = echo()
+        co()
+        let want = 0
+        for i in ..500 {
+            want += i
+            assert(co(i) == Some(want))
+        }
+        assert(co(nil) == None)
+    }
+}
+
+pub fn closing-kept-generators-runs-drops() {
+    for i in ..300 {
+        log = []
+        let g = holding("r{i}")
+        assert(g() == Some(0))
+        assert(g() == Some(1))
+        g.close()
+        assert(log == ["~r{i}"])
+    }
+}
+
+pub fn raising-into-kept-generators-propagates() {
+    for i in ..300 {
+        log = []
+        let g = holding("q")
+        g()
+        let r = try { g.raise('boom'); nil } catch e { e }
+        assert(r == 'boom')
+        assert(log == ['~q'])
+        assert(g() == None)
+    }
+}
+
+pub fn dropped-suspended-generators-are-collected() {
+    for round in ..5 {
+        let gens = [plain() for _ in ..300]
+        for g in gens {
+            assert(g() == Some(0))
+            assert(g() == Some(1))
+        }
+        gens = []
+        ty.gc()
+        assert(round-robin(3, 100) == 100 * 1000 * 3 + 100 * 99 / 2 * 3)
+    }
+}

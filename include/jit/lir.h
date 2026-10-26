@@ -203,7 +203,8 @@ typedef enum lir_form {
         LF_SITE,
         LF_ENTRY,
         LF_RAW,
-        LF_COPY
+        LF_COPY,
+        LF_RMW
 } LirForm;
 
 #define LIR_OPS(X)                                                       \
@@ -295,7 +296,9 @@ typedef enum lir_form {
         X(SITE,     SITE,     VOID, 1, "tag")                            \
         X(ENTRY,    ENTRY,    VOID, 1, "L")                              \
         X(RAW,      RAW,      VOID, 0, ";bytes,inputs,outputs,clobbers") \
-        X(COPY32,   COPY,     VOID, 2, "mem,mem")
+        X(COPY32,   COPY,     VOID, 2, "mem,mem")                        \
+        X(ADDM32,   RMW,      I32,  2, "mem,a")                          \
+        X(ADDM64,   RMW,      I64,  2, "mem,a")
 
 typedef enum lir_op {
 #define LIR_ENUM(name, form, type, argc, signature) LIR_##name,

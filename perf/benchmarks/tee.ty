@@ -1,0 +1,83 @@
+import lib (bench)
+
+// Streaming statistics over generators: a lazy source, lazy `map`/`filter`
+// stages, `Iter.tee` branches consumed in lockstep (pairwise deltas via
+// `zip`) and one after another (three summaries over a single pass, so the
+// tee queues buffer the whole stream).  Log scanners and sensor pipelines
+// look like this when they avoid materializing intermediate arrays.
+
+fn readings*(n: Int, seed: Int) -> Generator[Float] {
+    let x = seed
+    for ..n {
+        x = (x * 1103515245 + 12345) % 2147483648
+        yield (x % 10000).float / 100.0
+    }
+}
+
+fn smoothed*(xs: Iterable[Float]) -> Generator[Float] {
+    let prev = nil
+    for x in xs {
+        yield if let $p = prev { (p + x) / 2.0 } else { x }
+        prev = x
+    }
+}
+
+fn deltas(xs: Iterable[Float]) -> (Float, Int) {
+    let (a, b) = Iter.tee(xs)
+    let next: Iterable[Float] = b.drop(1)
+
+    let total = 0.0
+    let jumps = 0
+
+    for (x, y) in a.zip(next) {
+        let d = y - x
+        total += d.abs
+        if d > 25.0 {
+            jumps += 1
+        }
+    }
+
+    (total, jumps)
+}
+
+fn summaries(xs: Iterable[Float]) -> (Float, Float, Float) {
+    let (a, b, c) = Iter.tee(xs, 3)
+
+    let lo = 1e30
+    for x in a {
+        if x < lo { lo = x }
+    }
+
+    let hi = -1e30
+    for x in b {
+        if x > hi { hi = x }
+    }
+
+    let sum = 0.0
+    let n = 0
+    for x in c {
+        sum += x
+        n += 1
+    }
+
+    (lo, hi, sum / n.float)
+}
+
+fn pass(seed: Int) -> Int {
+    let src = readings(2000, seed).map(\_ * 1.5).filter(\_ < 140.0)
+    let (total, jumps) = deltas(smoothed(src))
+    let (lo, hi, mean) = summaries(readings(1500, seed + 1).filter(\_ > 5.0))
+    jumps + (total + lo + hi + mean).int % 7
+}
+
+@bench('generator tee lazy queue zip stream float')
+fn tee(n: Int) {
+    for i in ..n {
+        let r = pass(i)
+        assert(r >= 0)
+    }
+}
+
+if __module__ == 'main' {
+    tee(5)
+}

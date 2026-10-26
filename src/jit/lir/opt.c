@@ -1273,6 +1273,20 @@ store(Fwd *f, LirInst const *in)
         }
 }
 
+static void
+modified(Fwd *f, LirInst const *in)
+{
+        LirReg root;
+        i64    lo;
+
+        if (!place(f, in->args[0], &root, &lo)) {
+                wipe(f);
+                return;
+        }
+
+        clobber(f, root, lo, lo + lir_type_size(LirOps[in->op].type), NULL);
+}
+
 static bool
 unpack(Fwd const *f, LirInst const *in, LirReg root, i64 lo, LirInst out[static 4])
 {
@@ -2194,6 +2208,7 @@ forward(Ty *ty, Lir *L, LirReg *root, i64 *off)
                 switch (form) {
                 case LF_LD:   hit = load(f, in);  break;
                 case LF_ST:   store(f, in);       break;
+                case LF_RMW:  modified(f, in);    break;
                 case LF_COPY:
                         if (mirrored(f, in) && getenv("TY_LIR_NO_MIRROR") == NULL) {
                                 drop[pc] = true;

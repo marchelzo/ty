@@ -1873,6 +1873,50 @@ co_abort(Ty *ty)
 
 _Thread_local Generator *InterruptedGenerator;
 
+enum { TY_KEPT_STACKS = 128 };
+
+_Thread_local i32 KeptStacks;
+
+inline static bool
+ClaimStack(Generator *gen)
+{
+        if (gen->kept) {
+                return true;
+        }
+
+        if (KeptStacks >= TY_KEPT_STACKS) {
+                return false;
+        }
+
+        KeptStacks += 1;
+        gen->kept   = true;
+
+        return true;
+}
+
+inline static void
+DropClaim(Generator *gen)
+{
+        if (gen->kept) {
+                gen->kept  = false;
+                KeptStacks = (KeptStacks > 0) ? KeptStacks - 1 : 0;
+        }
+}
+
+inline static void
+TagSome(Ty *ty, Value *v)
+{
+        u64 w;
+
+        memcpy(&w, v, sizeof w);
+
+        u64 tags = tags_push(ty, (u16)(w >> 16), TAG_SOME);
+
+        w = (w & ~(0xFFFFULL << 16)) | (tags << 16) | VALUE_TAGGED;
+
+        memcpy(v, &w, sizeof w);
+}
+
 static bool
 co_yield_value(Ty *ty)
 {
@@ -1887,7 +1931,9 @@ co_yield_value(Ty *ty)
         Generator *gen = vv(STACK)->gen;
         gen->ip = IP;
 
-        Value v = pop();
+        Value const *v = vvL(STACK);
+
+        vN(STACK) -= 1;
 
         ty->st->stack = STACK;
         SWAP(co_state *, gen->st, ty->st);
@@ -1896,11 +1942,12 @@ co_yield_value(Ty *ty)
         vN(STACK) = vXx(FRAMES).fp;
         IP = vXx(CALLS);
 
-        put(v);
+        MoveJitResult(top(), v);
 
-        cothread_t co = gen->co;
+        cothread_t co     = gen->co;
+        bool       forced = (gen->st->exec_depth > 1) || (vN(gen->st->try_stack) > 0);
 
-        if (gen->st->exec_depth > 1 || vN(gen->st->try_stack) > 0) {
+        if (forced || ClaimStack(gen)) {
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p] (RECURSED): %s", gen->co, VSC(top()));
                 gen->co = co_active();
         } else {
@@ -2121,7 +2168,7 @@ JitReturn:
         case JIT_YIELD_SOME:
                 CO_LOG("jit_yield_some", TERM(91;1), "yielding: %s, resume=%d", VSC(vvL(STACK)), next_resume);
                 top->jit_resume = next_resume;
-                v_L(STACK) = Some(v_L(STACK));
+                TagSome(ty, vvL(STACK));
                 DoYield(ty);
                 CheckInterrupt(ty);
                 break;
@@ -2830,6 +2877,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
 
         if (gen->co != NULL) {
                 cothread_t co = gen->co;
+                DropClaim(gen);
                 gen->co = co_active();
                 CO_LOG("co_call()", TERM(95), "switch BACK to %s with: %s", name_of(&gen->f), VSC(top()));
                 xco_switch(co);
@@ -3748,6 +3796,12 @@ DiscardGenerator(Ty *ty, Generator *gen)
         co_state *st = gen->st;
         gen->st = NULL;
 
+        if (gen->kept) {
+                xvP(CO_THREADS, gen->co);
+                gen->co = NULL;
+                DropClaim(gen);
+        }
+
         while (vN(st->to_drop) > 0) {
                 Array *group = vvL(st->to_drop)->array;
                 while (vN(*group) > 0) {
@@ -3773,7 +3827,7 @@ vm_close_generator(Ty *ty, Generator *gen)
                 zP("attempt to close an active generator");
         }
 
-        if (gen->ip != code_of(&gen->f) && gen->co != NULL) {
+        if (gen->ip != code_of(&gen->f) && gen->co != NULL && !gen->kept) {
                 Value v = GENERATOR(gen);
                 gen->closing     = true;
                 InterruptedGenerator = gen;
@@ -3818,7 +3872,7 @@ vm_raise_generator(Ty *ty, Generator *gen, Value const *exc)
         gP(&e);
         gP(&v);
 
-        if (gen->ip == code_of(&gen->f) || gen->co == NULL) {
+        if (gen->ip == code_of(&gen->f) || gen->co == NULL || gen->kept) {
                 DiscardGenerator(ty, gen);
                 vm_throw(ty, &e);
         }
@@ -12755,6 +12809,28 @@ vm_jit_unapply(Ty *ty, bool maybe)
         }
         IP = saved;
         return true;
+}
+
+i32
+vm_jit_yield_kept(Ty *ty, Value *top, i32 some)
+{
+        Generator *gen    = GetCurrentGenerator(ty);
+        bool       forced = (EXEC_DEPTH > 2) || (vN(TRY_STACK) > 0);
+
+        if (gen == NULL || (!forced && !ClaimStack(gen))) {
+                return 0;
+        }
+
+        vN(STACK) = top - vv(STACK);
+
+        if (some) {
+                TagSome(ty, vvL(STACK));
+        }
+
+        DoYield(ty);
+        CheckInterrupt(ty);
+
+        return 1;
 }
 
 bool

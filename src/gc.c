@@ -98,6 +98,9 @@ collect(Ty *ty, struct alloc *a)
                 if (UNLIKELY((gen->co != ty->co_top) & (gen->co != NULL))) {
                         xvP(ty->cothreads, gen->co);
                 }
+                if (gen->kept && KeptStacks > 0) {
+                        KeptStacks -= 1;
+                }
                 if (LIKELY(gen->st != NULL)) {
                         xvP(ty->co_states, gen->st);
                 }

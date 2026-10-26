@@ -124,23 +124,80 @@ method_of(Class *class, i32 member)
         return (off == OFF_NOT_FOUND) ? NULL : v_(class->methods.values, off & OFF_MASK);
 }
 
+static i32
+value_class(Value const *v)
+{
+        switch (v->type) {
+        case VALUE_OBJECT:    return v->class;
+        case VALUE_INTEGER:   return CLASS_INT;
+        case VALUE_REAL:      return CLASS_FLOAT;
+        case VALUE_BOOLEAN:   return CLASS_BOOL;
+        case VALUE_STRING:    return CLASS_STRING;
+        case VALUE_ARRAY:     return CLASS_ARRAY;
+        case VALUE_DICT:      return CLASS_DICT;
+        case VALUE_SET:       return CLASS_SET;
+        case VALUE_BLOB:      return CLASS_BLOB;
+        case VALUE_QUEUE:     return CLASS_QUEUE;
+        case VALUE_GENERATOR: return CLASS_GENERATOR;
+        default:              return -1;
+        }
+}
+
+static i32
+class_value(Class const *class)
+{
+        switch (class->i) {
+        case CLASS_INT:       return VALUE_INTEGER;
+        case CLASS_FLOAT:     return VALUE_REAL;
+        case CLASS_BOOL:      return VALUE_BOOLEAN;
+        case CLASS_STRING:    return VALUE_STRING;
+        case CLASS_ARRAY:     return VALUE_ARRAY;
+        case CLASS_DICT:      return VALUE_DICT;
+        case CLASS_SET:       return VALUE_SET;
+        case CLASS_BLOB:      return VALUE_BLOB;
+        case CLASS_QUEUE:     return VALUE_QUEUE;
+        case CLASS_GENERATOR: return VALUE_GENERATOR;
+        default:              return (class->i >= CLASS_PRIMITIVE) ? VALUE_OBJECT : -1;
+        }
+}
+
+static Value const *
+builtin_class_method(Ty *ty, Class *class, i32 member)
+{
+        if (class_value(class) < 0 || jit_builtin_method(class, member, NULL) != NULL) {
+                return NULL;
+        }
+
+        return class_lookup_method_i(ty, class->i, member);
+}
+
 static Frame *
 method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip, JitCallProfile *site)
 {
         bool  explicit = (op != INSTR_CALL_SELF_METHOD);
         Value self     = explicit ? top[-1] : *vm_get_self(ty);
+        i32   class    = value_class(&self);
 
         if (site != NULL) {
-                jit_profile_note(site, (self.type == VALUE_OBJECT) ? (uptr)self.class : 0);
+                jit_profile_note(site, (class > 0) ? (uptr)class : 0);
         }
 
-        if (self.type == VALUE_OBJECT) {
-                Value const *method = method_of(class_get(ty, self.class), member);
+        if (class >= 0) {
+                Class       *c      = class_get(ty, class);
+                Value const *method = (self.type == VALUE_OBJECT)
+                                    ? method_of(c, member)
+                                    : builtin_class_method(ty, c, member);
                 Value        callee = (method != NULL) ? *method : NIL;
                 JitFn       *code   = enterable(&callee, argc) ? try_jit(ty, &callee) : NULL;
                 if (code != NULL) {
                         ty->stack.count = top - ty->stack.items - explicit;
                         return push_frame(ty, &callee, &self, argc, code);
+                }
+                if (self.type != VALUE_OBJECT && callee.type == VALUE_FUNCTION) {
+                        usize base = top - ty->stack.items - explicit - argc;
+                        ty->stack.count = base + argc;
+                        push_result(ty, base, vm_call_method(ty, &self, &callee, argc));
+                        return NULL;
                 }
         }
 
@@ -686,8 +743,14 @@ method_arm(
 {
         LirLabel other = (fallback && extended(class)) ? newlabel(c) : next;
         LirLabel call  = newlabel(c);
+        i32      type  = class_value(class);
 
-        guard_class(c, self, class->i, other);
+        if (type == VALUE_OBJECT) {
+                guard_class(c, self, class->i, other);
+        } else {
+                expect(c, self, 0, type, other);
+        }
+
         guard_epoch(c, other);
 
         bool planned = try_plan(
@@ -716,6 +779,14 @@ method_arm(
         }
 }
 
+static Value const *
+arm_method(BcLir *c, Class *class, i32 member)
+{
+        return (class->i >= CLASS_PRIMITIVE)
+             ? method_of(class, member)
+             : builtin_class_method(c->ctx, class, member);
+}
+
 static i32
 profiled_classes(BcLir *c, BcLirNode const *node, Class **out, i32 max)
 {
@@ -724,14 +795,19 @@ profiled_classes(BcLir *c, BcLirNode const *node, Class **out, i32 max)
         i32  k = 0;
 
         for (u32 i = 0; i < n && k < max; ++i) {
-                if (keys[i] < CLASS_PRIMITIVE || keys[i] >= (uptr)class_count(c->ctx)) {
+                if (keys[i] >= (uptr)class_count(c->ctx)) {
                         continue;
                 }
 
                 Class       *class = class_get(c->ctx, keys[i]);
-                Value const *m     = method_of(class, node->member);
+                Value const *m     = arm_method(c, class, node->member);
 
-                if (class->final && m != NULL && roomy(m, node->argc)) {
+                if (
+                        (class_value(class) >= 0)
+                     && (class->i < CLASS_PRIMITIVE || class->final)
+                     && (m != NULL)
+                     && roomy(m, node->argc)
+                ) {
                         out[k++] = class;
                 }
         }
@@ -806,11 +882,11 @@ inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
         }
 
         for (i32 i = 0; i < n; ++i) {
-                if (classes[i]->i < CLASS_PRIMITIVE) {
+                if (class_value(classes[i]) < 0) {
                         return false;
                 }
 
-                methods[i] = method_of(classes[i], node->member);
+                methods[i] = arm_method(c, classes[i], node->member);
 
                 if (methods[i] == NULL || !roomy(methods[i], node->argc)) {
                         return false;

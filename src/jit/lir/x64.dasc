@@ -1086,6 +1086,26 @@ lea(dasm_State **Dst, u8 d, u8 base, u8 index, u8 scale, i32 disp, bool narrow)
 }
 
 static void
+addmi(dasm_State **Dst, u8 base, i32 disp, u32 size, i32 k)
+{
+        if (size == 4) {
+                | add dword [Rq(base)+disp], k
+        } else {
+                | add qword [Rq(base)+disp], k
+        }
+}
+
+static void
+addmr(dasm_State **Dst, u8 base, i32 disp, u32 size, u8 r)
+{
+        if (size == 4) {
+                | add dword [Rq(base)+disp], Rd(r)
+        } else {
+                | add qword [Rq(base)+disp], Rq(r)
+        }
+}
+
+static void
 sti(dasm_State **Dst, u8 base, i64 disp, u32 size, i64 imm)
 {
         switch (size) {

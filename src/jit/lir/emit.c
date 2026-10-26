@@ -1297,6 +1297,31 @@ movop(Emit *e, LirInst const *in, u32 pc, u8 d, u8 a, LirClass cls)
         return true;
 }
 
+#if defined(__x86_64__)
+static void
+rmwop(Emit *e, LirInst const *in, u32 pc, u8 const *a)
+{
+        LirMem m     = in->args[0].mem;
+        u8     base  = physical(e, m.base, pc, false);
+        u8     index = physical(e, m.index, pc, false);
+        bool   word  = (m.index != LIR_NONE) && (rcls(e, m.index) == LIR_I32);
+        u32    size  = lir_type_size(LirOps[in->op].type);
+        i32    disp  = m.disp;
+
+        if (index != LIR_PHYS_NONE) {
+                lea(Dst, TMP0, base, index, m.scale, m.disp, word);
+                base = TMP0;
+                disp = 0;
+        }
+
+        if (in->args[1].kind == LO_IMM) {
+                addmi(Dst, base, disp, size, (i32)in->args[1].imm);
+        } else {
+                addmr(Dst, base, disp, size, a[1]);
+        }
+}
+#endif
+
 static void
 memop(Emit *e, LirInst const *in, u32 pc, u8 d, u8 const *a)
 {
@@ -1551,6 +1576,14 @@ insn(Emit *e, u32 pc)
         case LF_FENCE:
                 fence(Dst);
                 break;
+
+        case LF_RMW:
+#if defined(__x86_64__)
+                rmwop(e, in, pc, a);
+                break;
+#else
+                return lir_fail(e->err, LE_TARGET, pc, in->span, "unlegalized read-modify-write");
+#endif
 
         case LF_COPY:
                 copy32(

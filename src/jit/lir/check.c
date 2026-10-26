@@ -329,7 +329,8 @@ form_valid(Lir const *L, LirInst const *in, u32 pc)
         case LF_FENCE:    return true;
         case LF_RAW:      return raw_valid(L, &in->raw);
         case LF_LD:       return memop_valid(L, in, lir_r(in->dst));
-        case LF_ST:       return memop_valid(L, in, a[1]);
+        case LF_ST:
+        case LF_RMW:      return memop_valid(L, in, a[1]);
 
         case LF_LI:
                 return (isint(d) || d == LIR_PTR)

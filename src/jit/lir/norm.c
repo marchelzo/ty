@@ -130,6 +130,12 @@ foldst(LirInst const *in)
         LirClass cls = lir_type_class(LirOps[in->op].type);
         return imm32(in->args[1]) && cls != LIR_F32 && cls != LIR_F64;
 }
+
+static bool
+unfold_rmw(Lir *L, LirInst *in)
+{
+        return true;
+}
 #else
 static bool
 bitmask(u64 v, bool narrow)
@@ -203,6 +209,36 @@ foldst(LirInst const *in)
 {
         LirClass cls = lir_type_class(LirOps[in->op].type);
         return (in->args[1].kind == LO_IMM) && (in->args[1].imm == 0) && !isfloat(cls);
+}
+
+static bool
+unfold_rmw(Lir *L, LirInst *in)
+{
+        bool     wide = (in->op == LIR_ADDM64);
+        LirClass cls  = wide ? LIR_I64 : LIR_I32;
+        LirOpnd  k    = in->args[1];
+        LirReg   v    = lir_reg(L, cls);
+        LirReg   w    = lir_reg(L, cls);
+
+        if (k.kind == LO_IMM && (k.imm < -4095 || k.imm > 4095)) {
+                LirReg t = lir_reg(L, cls);
+                if (!put(L, LIR_LI, t, k)) {
+                        return false;
+                }
+                k = lir_r(t);
+        }
+
+        if (
+                !put(L, wide ? LIR_LD_I64 : LIR_LD_I32, v, in->args[0])
+             || !put(L, LIR_ADD, w, lir_r(v), k)
+        ) {
+                return false;
+        }
+
+        in->op      = wide ? LIR_ST64 : LIR_ST32;
+        in->args[1] = lir_r(w);
+
+        return true;
 }
 #endif
 
@@ -521,6 +557,10 @@ shape(Lir *L, LirInst *in, u8 *use, LirClass *cls)
                 *use = (1 << in->nargs) - 1;
                 break;
 
+        case LF_RMW:
+                if (!unfold_rmw(L, in)) {
+                        return false;
+                }
         case LF_ST:
                 *use   = foldst(in) ? 0 : 0b10;
                 cls[1] = classof(L, a[1], lir_type_class(LirOps[in->op].type));

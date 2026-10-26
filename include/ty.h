@@ -575,6 +575,7 @@ struct generator {
         co_state *st;
         Value f;
         bool closing;
+        bool kept;
 };
 
 #ifdef _WIN32

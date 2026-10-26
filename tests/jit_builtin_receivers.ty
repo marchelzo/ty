@@ -1,0 +1,117 @@
+class Pad {
+    w: Int
+
+    init(w: Int) { self.w = w }
+
+    center(n: Int) -> String { "pad{w}:{n}" }
+    reverse() -> String { "pad-reversed" }
+    str() -> String { "pad{w}" }
+}
+
+fn centered(xs: [_], n: Int) -> [_] {
+    let out = []
+    for x in xs {
+        out.push(x.center(n))
+    }
+    out
+}
+
+fn reversed(xs: [_]) -> [_] {
+    let out = []
+    for x in xs {
+        out.push(x.reverse())
+    }
+    out
+}
+
+fn typed(s: String) -> String {
+    s.title()
+}
+
+fn clamped(xs: [Int]) -> Int {
+    let sum = 0
+    for x in xs {
+        sum += x.clamp(0, 10)
+    }
+    sum
+}
+
+fn countdown(n: Int) -> Int {
+    let sum = 0
+    for k in n.downto(0) {
+        sum += k
+    }
+    sum
+}
+
+fn drain(it: _) -> Int {
+    let n = 0
+    while let Some(x) = it.__next__() {
+        n += x
+    }
+    n
+}
+
+fn upto*(n: Int) {
+    for i in ..n {
+        yield i
+    }
+}
+
+pub fn test-ty-methods-on-builtin-receivers() {
+    let xs = ['ab', 'xyz', Pad(3), 'q']
+    for ..4000 {
+        assert(centered(xs, 5) == [' ab  ', ' xyz ', 'pad3:5', '  q  '])
+        assert(reversed(xs) == ['ba', 'zyx', 'pad-reversed', 'q'])
+        assert(reversed(['ab', [3, 1, 2], Pad(1)]) == ['ba', [2, 1, 3], 'pad-reversed'])
+        assert(typed('hello world') == 'Hello World')
+    }
+}
+
+fn lens(xs: [_]) -> [_] {
+    let out = []
+    for x in xs {
+        out.push(#x)
+    }
+    out
+}
+
+fn splits(xs: [_]) -> [_] {
+    let out = []
+    for x in xs {
+        out.push(x.split(','))
+    }
+    out
+}
+
+fn strs(xs: [_]) -> [_] {
+    let out = []
+    for x in xs {
+        out.push(x.str())
+    }
+    out
+}
+
+pub fn test-builtin-receivers-keep-their-builtin-methods() {
+    let xs: [_] = ['a,b', [3, 1, 2], %{'k': 1}]
+    for ..4000 {
+        assert(lens(xs) == [3, 3, 1])
+        assert(splits(['a,b', 'c']) == [['a', 'b'], ['c']])
+    }
+}
+
+pub fn test-int-methods-and-generator-methods() {
+    for ..4000 {
+        assert(clamped([-5, 3, 20, 7]) == 0 + 3 + 10 + 7)
+        assert(countdown(10) == 55)
+        assert(drain(upto(10)) == 45)
+    }
+}
+
+pub fn test-receivers-that-change-kind() {
+    let xs: [_] = ['  a  ', 4, Pad(1), 'b']
+    for ..4000 {
+        assert(strs(xs) == ['  a  ', '4', 'pad1', 'b'])
+    }
+    assert(strs([5, 'z', 6, Pad(2)]) == ['5', 'z', '6', 'pad2'])
+}
