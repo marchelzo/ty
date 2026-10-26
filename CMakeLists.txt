@@ -141,6 +141,11 @@ if(TY_ASAN)
   add_link_options(-fsanitize=address)
 endif()
 
+if(TY_USE_MOLD AND TY_BOLT)
+  message(STATUS "TY_BOLT: not linking with mold (llvm-bolt misparses its PLT header)")
+  set(TY_USE_MOLD OFF)
+endif()
+
 if(TY_USE_MOLD)
   include(CheckLinkerFlag)
   check_linker_flag(C "-fuse-ld=mold" _mold_supported)
