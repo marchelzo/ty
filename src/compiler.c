@@ -22118,7 +22118,6 @@ DumpProgram(
                         READVALUE(n);
                         break;
                 CASE(TARGET_GLOBAL)
-                CASE(ASSIGN_GLOBAL)
                         READVALUE(n);
                         break;
                 CASE(TARGET_LOCAL)

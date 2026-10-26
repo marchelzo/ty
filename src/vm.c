@@ -8513,15 +8513,6 @@ NextInstruction:
                         pushtarget(local(ty, n), NULL);
                         break;
 
-                CASE(ASSIGN_GLOBAL)
-                        READVALUE(n);
-                        LOG("Global: %d", (int)n);
-                        while (vN(Globals) <= n) {
-                                xvP(Globals, NIL);
-                        }
-                        *v_(Globals, n) = pop();
-                        break;
-
                 CASE(ASSIGN_LOCAL)
                         READVALUE(n);
                         LOG("Targeting %d", n);
@@ -11890,7 +11881,6 @@ StepInstruction(char const *ip)
                 break;
         CASE(TARGET_GLOBAL)
         CASE(TARGET_THREAD_LOCAL)
-        CASE(ASSIGN_GLOBAL)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_LOCAL)

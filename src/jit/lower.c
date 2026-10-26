@@ -807,7 +807,6 @@ static BcEffect const Effects[256] = {
         [INSTR_POP]                  = FXP(1, -1),
         [INSTR_DEFER]                = FXP(1, -1),
         [INSTR_ASSIGN_LOCAL]         = FXP(1, -1),
-        [INSTR_ASSIGN_GLOBAL]        = FXP(1, -1),
         [INSTR_ASSIGN_REGEX_MATCHES] = FXP(1, -1),
         [INSTR_JUMP_IF]              = FXP(1, -1),
         [INSTR_JUMP_IF_NOT]          = FXP(1, -1),
@@ -2358,10 +2357,7 @@ invoke_local_fast(BcLir *c, BcLirNode const *node, LirReg fn, i32 first)
 static LirReg
 global_addr(BcLir *c, i32 global)
 {
-        LirReg where   = pval(c, &Globals.items);
-        LirReg globals = ldp(c, where, 0);
-
-        return addr(c, globals, vat(global));
+        return pval(c, v_(Globals, global));
 }
 
 static void
@@ -3087,7 +3083,6 @@ lower_op(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_PUSH_DROP:
         case INSTR_ENTER:
         case INSTR_DEFER:
-        case INSTR_ASSIGN_GLOBAL:
                 state(c, node, ip);
                 return false;
 
@@ -3314,7 +3309,7 @@ lower_op(BcLir *c, BcLirNode const *node, char const *ip)
                 return false;
 
         case INSTR_LOAD_GLOBAL:
-                push_from(c, tycall(c, vm_global, LT_PTR, imm32(load_i32(ip + 1))));
+                push_from(c, global_addr(c, load_i32(ip + 1)));
                 return false;
 
         case INSTR_LOAD_CAPTURED:

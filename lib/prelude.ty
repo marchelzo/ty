@@ -1987,14 +1987,6 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
 
     shrink() -> nil;
 
-    searchr(s: String) -> Int | nil {
-        for let off = size() - 1; off >= 0; --off {
-            if let $i = search(off, s) {
-                return i
-            }
-        }
-    }
-
     base64() -> String {
         base64::encode(self)
     }
@@ -2038,6 +2030,8 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
 
     search(needle: Int | String | Blob) -> Int | nil;
     search(off: Int, needle: Int | String | Blob) -> Int | nil;
+    searchr(needle: Int | String | Blob) -> Int | nil;
+    searchr(end: Int, needle: Int | String | Blob) -> Int | nil;
 
     str(i: ?Int = 0, n: ?Int = #self, lossy: Bool = false) -> String;
     str!(i: ?Int = 0, n: ?Int = #self) -> String;

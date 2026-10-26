@@ -1142,7 +1142,6 @@ extern usize TotalBytesAllocated;
         X(DEC),                   \
         X(ASSIGN),                \
         X(ASSIGN_LOCAL),          \
-        X(ASSIGN_GLOBAL),         \
         X(ASSIGN_SUBSCRIPT),      \
         X(ARRAY_REST),            \
         X(TUPLE_REST),            \

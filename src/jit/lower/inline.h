@@ -512,7 +512,7 @@ inline_operator(BcLir *c, u8 instr)
         guard_class(c, b, right->i, slow);
         unless(c, ldw(c, pval(c, &OperatorEpoch), 0), epoch, recheck);
 
-        LirReg defined = addr(c, ldp(c, pval(c, &Globals.items), 0), vat(ref));
+        LirReg defined = global_addr(c, ref);
 
         expect(c, defined, 0, VALUE_FUNCTION, recheck);
         same_ptr(c, ldp(c, defined, VOFF(info)), callee->info, recheck);
@@ -538,9 +538,7 @@ inline_operator(BcLir *c, u8 instr)
                 emit_plan(c, &p, c->sp - 2, slow);
                 jump(c, done);
         } else {
-                LirReg globals = ldp(c, pval(c, &Globals.items), 0);
-                LirReg fn      = addr(c, globals, vat(ref));
-                inline_call(c, fn, callee, c->sp - 2, 2, LIR_NONE, slow, done);
+                inline_call(c, global_addr(c, ref), callee, c->sp - 2, 2, LIR_NONE, slow, done);
         }
 
         bind(c, slow);

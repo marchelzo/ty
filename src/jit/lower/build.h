@@ -307,8 +307,7 @@ static u32
 helper_flags(void const *helper)
 {
         if (
-                (helper == vm_global)
-             || (helper == vm_get_self)
+                (helper == vm_get_self)
              || (helper == ClassOf)
              || (helper == jit_rt_truthy)
         ) {

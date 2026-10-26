@@ -124,7 +124,6 @@ state(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_TARGET_GLOBAL:
         case INSTR_TARGET_THREAD_LOCAL:
         case INSTR_TARGET_SELF_STATIC:
-        case INSTR_ASSIGN_GLOBAL:
         case INSTR_INTO_METHOD:
         case INSTR_BIND_CLASS:
         case INSTR_SELF_STATIC_ACCESS:
@@ -141,15 +140,9 @@ state(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
         }
 
-        case INSTR_LOAD_THREAD_LOCAL:
-        case INSTR_ASSIGN_GLOBAL: {
-                bool   load = (op == INSTR_LOAD_THREAD_LOCAL);
-                LirReg slot = tycall(c, vm_jit_state_slot, LT_PTR, imm32(n), bimm(load));
-                if (load) {
-                        copy(c, c->ops, vat(c->sp++), slot, 0);
-                } else {
-                        copy(c, slot, 0, c->ops, vat(--c->sp));
-                }
+        case INSTR_LOAD_THREAD_LOCAL: {
+                LirReg slot = tycall(c, vm_jit_state_slot, LT_PTR, imm32(n), bimm(true));
+                copy(c, c->ops, vat(c->sp++), slot, 0);
                 return;
         }
 
