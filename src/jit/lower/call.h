@@ -921,35 +921,37 @@ kernel_box(BcLir *c, i32 out, LirType type, LirReg value)
 {
         i32 at = vat(out);
 
-        for (u32 i = 0; i < sizeof (Value); i += 8) {
+        for (u32 i = VOFF(z) + 8; i < sizeof (Value); i += 8) {
                 stq(c, c->ops, at + i, lir_i(0));
         }
 
         switch (type) {
         case LT_VOID:
-                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_NIL));
+                stq(c, c->ops, at + VOFF(z),    lir_i(0));
+                stq(c, c->ops, at + VOFF(type), lir_i(VALUE_NIL));
                 break;
 
         case LT_F32:
                 value = unop(c, LIR_FEXT, LIR_F64, lir_r(value));
         case LT_F64:
                 stf(c, c->ops, at + VOFF(real), lir_r(value));
-                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_REAL));
+                stq(c, c->ops, at + VOFF(type), lir_i(VALUE_REAL));
                 break;
 
         case LT_BOOL:
+                stq(c, c->ops, at + VOFF(z),       lir_i(0));
                 stb(c, c->ops, at + VOFF(boolean), lir_r(value));
-                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_BOOLEAN));
+                stq(c, c->ops, at + VOFF(type),    lir_i(VALUE_BOOLEAN));
                 break;
 
         case LT_PTR:
-                stq(c, c->ops, at + VOFF(ptr), lir_r(value));
-                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_PTR));
+                stq(c, c->ops, at + VOFF(ptr),  lir_r(value));
+                stq(c, c->ops, at + VOFF(type), lir_i(VALUE_PTR));
                 break;
 
         default:
-                stq(c, c->ops, at + VOFF(z), lir_r(value));
-                stb(c, c->ops, at + VOFF(type), lir_i(VALUE_INTEGER));
+                stq(c, c->ops, at + VOFF(z),    lir_r(value));
+                stq(c, c->ops, at + VOFF(type), lir_i(VALUE_INTEGER));
                 break;
         }
 }

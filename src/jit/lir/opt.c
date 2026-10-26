@@ -982,8 +982,10 @@ typedef struct {
         LirType type;
         bool    load;
         bool    known;
+        bool    mirror;
         u64     bits;
         LirReg  reg;
+        i64     moff;
         u32     born;
 } Cell;
 
@@ -1193,6 +1195,8 @@ clobber(Fwd *f, LirReg root, i64 lo, i64 hi, Cell const *merge)
 
                 if (c->root != root) {
                         forget(f, k);
+                } else if (c->mirror && (c->reg != root || (c->moff < hi && lo < c->moff + c->size))) {
+                        forget(f, k);
                 } else if (c->off < hi && lo < c->off + c->size) {
                         if (merge != NULL && c->known && covers(c, lo, hi)) {
                                 xsplice(c, lo, merge->size, merge->bits);
@@ -1332,7 +1336,12 @@ copy(Fwd *f, LirInst const *in, LirInst out[static 4])
 
         for (u32 k = 0; src && k < f->s.n; ++k) {
                 Cell c = f->s.cells[k];
-                if (c.root == sroot && slo <= c.off && c.off + c.size <= slo + 32) {
+                if (
+                        (c.root == sroot)
+                     && (slo <= c.off)
+                     && (c.off + c.size <= slo + 32)
+                     && !(c.mirror && c.reg == droot && c.moff < dlo + 32 && dlo < c.moff + c.size)
+                ) {
                         c.root = droot;
                         c.off  = c.off - slo + dlo;
                         moved[nmoved++] = c;
@@ -1345,7 +1354,52 @@ copy(Fwd *f, LirInst const *in, LirInst out[static 4])
                 remember(f, moved[k]);
         }
 
+        if (src) {
+                remember(f, (Cell) {
+                        .root   = droot,
+                        .off    = dlo,
+                        .size   = 32,
+                        .type   = LT_VOID,
+                        .mirror = true,
+                        .reg    = sroot,
+                        .moff   = slo,
+                        .born   = f->pc
+                });
+        }
+
         return flat;
+}
+
+static bool
+mirrored(Fwd const *f, LirInst const *in)
+{
+        LirReg droot;
+        LirReg sroot;
+        i64    dlo;
+        i64    slo;
+
+        if (!place(f, in->args[0], &droot, &dlo) || !place(f, in->args[1], &sroot, &slo)) {
+                return false;
+        }
+
+        if (droot == sroot && dlo == slo) {
+                return true;
+        }
+
+        for (u32 k = 0; k < f->s.n; ++k) {
+                Cell const *c = &f->s.cells[k];
+                if (
+                        c->mirror
+                     && (
+                                (c->root == droot && c->off == dlo && c->reg == sroot && c->moff == slo)
+                             || (c->root == sroot && c->off == slo && c->reg == droot && c->moff == dlo)
+                        )
+                ) {
+                        return true;
+                }
+        }
+
+        return false;
 }
 
 static bool
@@ -1701,6 +1755,8 @@ same_cell(Cell *a, Cell const *b)
                  && (a->type == b->type)
                  && (a->load == b->load)
                  && (a->known == b->known)
+                 && (a->mirror == b->mirror)
+                 && (a->moff == b->moff)
                  && (a->known ? (a->bits == b->bits) : (a->reg == b->reg));
 
         if (same) {
@@ -2139,7 +2195,11 @@ forward(Ty *ty, Lir *L, LirReg *root, i64 *off)
                 case LF_LD:   hit = load(f, in);  break;
                 case LF_ST:   store(f, in);       break;
                 case LF_COPY:
-                        if (copy(f, in, &parts[4 * nflat])) {
+                        if (mirrored(f, in) && getenv("TY_LIR_NO_MIRROR") == NULL) {
+                                drop[pc] = true;
+                                cut      = true;
+                                any      = OPENED;
+                        } else if (copy(f, in, &parts[4 * nflat])) {
                                 flat[pc] = nflat++;
                         }
                         break;

@@ -60,6 +60,52 @@ sps_drop(Ty *ty)
 }
 
 static void
+sps_push(Ty *ty, i64 n)
+{
+        xvP(ty->st->sps, n);
+}
+
+static void
+sps_lower(Ty *ty, i64 n)
+{
+        vN(ty->st->sps) -= n;
+}
+
+static void
+unsave(BcLir *c, i32 off)
+{
+        i32 chain[32];
+        i32 n     = 0;
+        i32 nreal = 0;
+
+        if (!c->vsaves || off < 0 || off >= c->size || !reached(&c->nodes[off])) {
+                return;
+        }
+
+        for (i32 s = c->nodes[off].saved; s >= 0; s = c->nodes[s].saved) {
+                if (n == countof(chain)) {
+                        c->ok = false;
+                        return;
+                }
+                chain[n++]  = s;
+                nreal      += !virtual_save(c, s);
+        }
+
+        if (nreal == n) {
+                return;
+        }
+
+        if (nreal > 0) {
+                ccallf(c, sps_lower, LT_VOID, CF_PURE, preg(c->ty), imm64(nreal));
+        }
+
+        while (n --> 0) {
+                LirReg top = plus(c, c->base_index, c->nodes[chain[n]].sp);
+                ccallf(c, sps_push, LT_VOID, CF_PURE, preg(c->ty), { LT_I64, lir_r(top) });
+        }
+}
+
+static void
 clear_extra(Ty *ty)
 {
         while (ty->stack.items[ty->stack.count - 1].type != VALUE_SENTINEL) {

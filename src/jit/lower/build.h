@@ -350,8 +350,16 @@ never_returns(BcLir *c)
 }
 
 static void
+unsave(BcLir *c, i32 off);
+
+static void
 leave(BcLir *c, i64 status)
 {
+        switch (JIT_REASON(status)) {
+        case JIT_DEOPT: unsave(c, JIT_RESUME(status));     break;
+        case JIT_OSR:   unsave(c, JIT_RESUME(status) - 1); break;
+        }
+
         veff(c, LIR_RET, lir_i(status));
 }
 

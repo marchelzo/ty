@@ -9564,6 +9564,36 @@ typedef struct {
         bool drop;
 } PatternGroup;
 
+static bool
+plain_wildcard(Expr const *p)
+{
+        return !p->has_resources
+            && (
+                       (p->type == EXPRESSION_MATCH_ANY)
+                    || (p->type == EXPRESSION_IDENTIFIER && p->constraint == NULL)
+               );
+}
+
+static int
+group_kind(PatternGroup const *grp, Expr *const *patterns)
+{
+        bool keep = (grp->count > 1) || plain_wildcard(patterns[grp->start]);
+        return keep ? grp->kind : PAT_OTHER;
+}
+
+static void
+emit_wildcard(Ty *ty, Expr *pattern)
+{
+        if (
+                (pattern->type == EXPRESSION_IDENTIFIER)
+             && !s_eq(pattern->identifier, "_")
+        ) {
+                emit_assignment2(ty, pattern, true);
+        }
+
+        INSN(POP);
+}
+
 static int
 build_pattern_groups(Ty *ty, ExprVec const *patterns, PatternGroup *groups)
 {
@@ -9623,7 +9653,7 @@ emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bo
 
         int i = grp->start;
         int n = grp->count;
-        int kind = (grp->count > 1) ? grp->kind : PAT_OTHER;
+        int kind = group_kind(grp, patterns);
 
         bool unwinds = (kind == PAT_OTHER || kind == PAT_TAGGED);
         bool returns = true;
@@ -9631,10 +9661,7 @@ emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bo
         WITH_FORKED_STACK {
                 switch (kind) {
                 case PAT_WILDCARD:
-                        if (patterns[i]->type != EXPRESSION_MATCH_ANY) {
-                                emit_assignment2(ty, patterns[i], true);
-                        }
-                        INSN(POP);
+                        emit_wildcard(ty, patterns[i]);
                         returns &= emit_arm(ty, thens[i], keep);
                         MATCH_SUCCESS();
                         break;
@@ -10049,17 +10076,14 @@ emit_match_expr_group(Ty *ty, Expr const *expr, PatternGroup *grp, bool last)
         int i = grp->start;
         int n = grp->count;
 
-        int kind = (grp->count > 1) ? grp->kind : PAT_OTHER;
+        int kind = group_kind(grp, patterns);
 
         bool returns = true;
 
         WITH_FORKED_STACK {
                 switch (kind) {
                 case PAT_WILDCARD:
-                        if (patterns[i]->type != EXPRESSION_MATCH_ANY) {
-                                emit_assignment2(ty, patterns[i], true);
-                        }
-                        INSN(POP);
+                        emit_wildcard(ty, patterns[i]);
                         returns &= EE(thens[i]);
                         MATCH_SUCCESS();
                         break;

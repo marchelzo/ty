@@ -16,6 +16,10 @@ typedef struct bc_lir_node {
         i32         sp;
         i32         fall_sp;
         i32         saved;
+        i32         twin;
+        i32         dip;
+        i32         lift;
+        bool        real;
         i32         sentinel;
         i32         sentinel_sp;
         i32         owner;
@@ -109,6 +113,7 @@ typedef struct bc_lir {
         bool                  has_try;
         bool                  compact;
         bool                  speculate;
+        bool                  vsaves;
         bool                  skip_next;
         Expr const           *prof_expr;
         i32                   prof_line;
@@ -922,6 +927,40 @@ restore_sentinel(BcLir *c, BcLirNode const *node)
         c->sentinel_sp = node->sentinel_sp;
 }
 
+static i32
+save_root(BcLir const *c, i32 s)
+{
+        while (c->nodes[s].twin != 0) {
+                s = c->nodes[s].twin - 1;
+        }
+
+        return s;
+}
+
+static void
+join_saves(BcLir *c, i32 a, i32 b)
+{
+        a = save_root(c, a);
+        b = save_root(c, b);
+
+        if (a != b) {
+                c->nodes[a].twin = b + 1;
+        }
+}
+
+static bool
+virtual_save(BcLir const *c, i32 s)
+{
+        return c->vsaves && (s >= 0) && !c->nodes[save_root(c, s)].real;
+}
+
+static bool
+keeps_below(BcLir const *c, i32 s)
+{
+        BcLirNode const *root = &c->nodes[save_root(c, s)];
+        return root->lift > root->dip;
+}
+
 static bool
 same_saves(BcLir const *c, i32 a, i32 b)
 {
@@ -963,6 +1002,10 @@ edge(BcLir *c, BcQueue *q, i32 offset, i32 sp)
                         return false;
                 }
                 c->dynamic = true;
+        }
+
+        if (node->saved != c->saved && twins) {
+                join_saves(c, node->saved, c->saved);
         }
 
         c->dynamic = c->dynamic || (node->sp != sp && !resets);
@@ -2632,6 +2675,81 @@ number_entries(BcLir *c)
         }
 }
 
+static bool
+reads_saved(BcLirNode const *node)
+{
+        switch (node->op) {
+        case INSTR_ARRAY:
+        case INSTR_SET:
+        case INSTR_DICT:
+        case INSTR_DEFAULT_DICT:
+        case INSTR_GATHER_TUPLE:
+        case INSTR_ARRAY_COMPR:
+        case INSTR_SET_COMPR:
+                return true;
+
+        default:
+                return is_call(node->op) && (node->argc == -1);
+        }
+}
+
+static void
+pin_saves(BcLir *c, i32 s, bool chain)
+{
+        for (; s >= 0; s = chain ? c->nodes[s].saved : -1) {
+                c->nodes[save_root(c, s)].real = true;
+        }
+}
+
+static void
+save_depths(BcLir *c, BcLirNode const *node)
+{
+        for (i32 s = node->saved; s >= 0; s = c->nodes[s].saved) {
+                BcLirNode *root = &c->nodes[save_root(c, s)];
+                root->dip = min(root->dip, node->sp);
+        }
+
+        if (restores(node->op) && node->saved >= 0) {
+                BcLirNode *root = &c->nodes[save_root(c, node->saved)];
+                root->lift = max(root->lift, node->fall_sp);
+        }
+}
+
+static void
+plan_saves(BcLir *c)
+{
+        c->vsaves = !c->dynamic
+                 && !c->has_try
+                 && (getenv("TY_JIT_REAL_SAVES") == NULL);
+
+        if (!c->vsaves) {
+                return;
+        }
+
+        for (i32 off = 0; off < c->size; ++off) {
+                c->nodes[off].dip  = INT32_MAX;
+                c->nodes[off].lift = -1;
+        }
+
+        for (i32 off = 0; off < c->size; ++off) {
+                BcLirNode const *node = &c->nodes[off];
+
+                if (!reached(node)) {
+                        continue;
+                }
+
+                if (reads_saved(node)) {
+                        pin_saves(c, node->saved, false);
+                }
+
+                if (node->branch && node->target <= off) {
+                        pin_saves(c, c->nodes[node->target].saved, true);
+                }
+
+                save_depths(c, node);
+        }
+}
+
 static void
 plan_nodes(BcLir *c)
 {
@@ -2646,6 +2764,7 @@ plan_nodes(BcLir *c)
         }
 
         number_entries(c);
+        plan_saves(c);
 }
 
 static void

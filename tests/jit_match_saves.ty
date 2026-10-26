@@ -1,0 +1,44 @@
+fn classify(x: Int, limit: Int) -> Int {
+    match x {
+        0                 => 0,
+        n and n > limit   => n * 2,
+        n                 => n + 1
+    }
+}
+
+fn nested(x: Int, limit: Int) -> Array[Int] {
+    [1, match x { n and n > limit => n, _ => 0 }, 3]
+}
+
+fn looped(x: Int, limit: Int) -> Int {
+    match x {
+        n and #[i for i in ..n if i % 2 == 0] > limit => n,
+        _                                             => -1
+    }
+}
+
+fn warm(f: (Int, Int) -> _) {
+    for i in ..2000 {
+        f(i % 7, 3)
+    }
+}
+
+pub fn deopt-inside-match-guard() {
+    warm(classify)
+    let x: Int = cast(4.5)
+    assert([classify(2, 3), classify(x, 3), classify(5, 3)] == [3, 9.0, 10])
+}
+
+pub fn deopt-under-real-array-save() {
+    warm(nested)
+    let x: Int = cast(4.5)
+    assert(nested(4, 3) == [1, 4, 3])
+    assert([nested(x, 3), nested(2, 3)] == [[1, 4.5, 3], [1, 0, 3]])
+}
+
+pub fn deopt-in-loop-inside-match() {
+    warm(looped)
+    let limit: Int = cast(1.5)
+    assert([looped(5, 1), looped(2, 1)] == [5, -1])
+    assert([looped(5, limit), looped(2, limit), looped(5, 1)] == [5, -1, 5])
+}

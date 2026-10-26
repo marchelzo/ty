@@ -2442,6 +2442,29 @@ vs_dup(BcLir *c)
 }
 
 static bool
+vs_saved(BcLir *c, BcLirNode const *node)
+{
+        bool save = (node->op == INSTR_SAVE_STACK_POS);
+        i32  s    = save ? c->at : node->saved;
+
+        if (!virtual_save(c, s)) {
+                return false;
+        }
+
+        if (save && keeps_below(c, s)) {
+                vs_flush_all(c);
+        }
+
+        if (node->fall_sp < c->sp) {
+                vs_pop(c, c->sp - node->fall_sp);
+        }
+
+        c->sp = node->fall_sp;
+
+        return true;
+}
+
+static bool
 vs_dup2_swap(BcLir *c)
 {
         BcSlot pair[] = { c->vs[c->sp - 1], c->vs[c->sp - 2] };
@@ -2815,6 +2838,14 @@ vs_lower(BcLir *c, BcLirNode const *node, char const *ip)
         case INSTR_LEQ:
         case INSTR_GEQ:
                 return vs_binary(c, op);
+
+        case INSTR_SAVE_STACK_POS:
+        case INSTR_RESTORE_STACK_POS:
+        case INSTR_POP_STACK_POS:
+        case INSTR_POP_STACK_POS_POP:
+        case INSTR_POP_STACK_POS_POP2:
+        case INSTR_DROP_STACK_POS:
+                return vs_saved(c, node);
 
         case INSTR_JUMP:             return vs_join_jump(c, node);
         case INSTR_JUMP_WTF:         return vs_join_wtf(c, node);
