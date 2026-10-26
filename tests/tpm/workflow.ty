@@ -20,7 +20,12 @@ class Space {
     }
 
     env -> Dict[String, String] {
-        %{'TPM_CACHE': str(cache), 'TPM_CONFIG': str(root / 'config'), 'TPM_REGISTRY': '', 'TPM_TOKEN': ''}
+        %{
+            'TPM_CACHE': str(cache),
+            'TPM_CONFIG': str(root / 'config'),
+            'TPM_REGISTRY': '',
+            'TPM_TOKEN': ''
+        }
     }
 
     file(rel: String, text: String) -> Path {
