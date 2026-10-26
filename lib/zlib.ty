@@ -1,152 +1,52 @@
-import ffi as c (C!)
+/**
+ * zlib (built in): one-shot compression in the zlib format, decompression
+ * of zlib or gzip data, and CRC-32/Adler-32 checksums. Streaming codecs
+ * live in `http.codec`.
+ */
+import _codec as native
 
-const Z_OK            = 0
-const Z_STREAM_END    = 1
-const Z_NEED_DICT     = 2
-const Z_ERRNO         = (-1)
-const Z_STREAM_ERROR  = (-2)
-const Z_DATA_ERROR    = (-3)
-const Z_MEM_ERROR     = (-4)
-const Z_BUF_ERROR     = (-5)
-const Z_VERSION_ERROR = (-6)
+pub VERSION = native.zlib-version()
 
-const Z_NO_FLUSH      = 0
-const Z_PARTIAL_FLUSH = 1
-const Z_SYNC_FLUSH    = 2
-const Z_FULL_FLUSH    = 3
-const Z_FINISH        = 4
-const Z_BLOCK         = 5
-const Z_TREES         = 6
-
-const MAX_WBITS = 15
-
-if not let $zlib = c.open('z', [nil, 1]) {
-  throw RuntimeError('failed to load zlib')
+pub class ZlibError < RuntimeError {
 }
 
-C! struct ZStream {
-    u8 *next_in;     /* next input byte */
-    unsigned avail_in;  /* number of bytes available at next_in */
-    unsigned long total_in;  /* total number of input bytes read so far */
-
-    u8 *next_out; /* next output byte will go here */
-    unsigned avail_out; /* remaining free space at next_out */
-    unsigned long total_out; /* total number of bytes output so far */
-
-    char const *msg;  /* last error message, NULL if no error */
-    void *state;
-
-    void *zalloc; /* used to allocate the internal state */
-    void *zfree;  /* used to free the internal state */
-    void *opaque; /* private data object passed to zalloc and zfree */
-
-    int data_type;  /* best guess about the data type: binary or text
-                           for deflate, or the decoding state for inflate */
-    unsigned long adler;      /* Adler-32 or CRC-32 value of the uncompressed data */
-    unsigned long reserved;   /* reserved for future use */
-}
-
-ns raw {
-    C! zlib fn {
-        int inflate(z_stream *strm, int flush);
-        int inflateEnd(z_stream *strm);
-        int inflateInit2_(z_stream *strm, int windowBits, const char *version, int streamSize);
-        int uncompress(u8 *dest, unsigned long *destLen, const u8 *source, unsigned long sourceLen);
-        int compress(u8 *dest, unsigned long *destLen, const u8 *source, unsigned long sourceLen);
-        unsigned long compressBound(unsigned long sourceLen);
-        unsigned long crc32(unsigned long crc, const u8 *buf, unsigned len);
+fn inflate(s: String | Blob, coding: String, limit: Int | nil) -> Blob | nil {
+    let z = match native.open(coding, false) {
+        p: Ptr => p,
+        why    => throw ZlibError("zlib: {why}")
     }
-}
-
-let __tls::ctx = nil
-
-pub fn compress(s: String | Blob) -> Blob {
-  let bound = raw.compressBound(s.size())
-  let $pSize = c.box(c.ulong, bound)
-  let $buffer = c.alloc(bound)
-
-  if let err = raw.compress(buffer, pSize, s, s.size()) and err != Z_OK {
-    throw Err(err)
-  }
-
-  let compressed = Blob(c.as_str(buffer, pSize[0]))
-
-  c.free(pSize)
-  c.free(buffer)
-
-  return compressed
-}
-
-pub fn uncompress(s: String | Blob, maxSize = nil) -> Blob | nil {
-  let size = 4096
-  let $pSize = c.box(c.ulong, size)
-  let $buffer = c.alloc(size)
-
-  defer {
-    c.free(pSize)
-    c.free(buffer)
-  }
-
-  while match raw.uncompress(buffer, pSize, s, s.size()) {
-    Z_OK => break,
-
-    Z_BUF_ERROR => {
-      size *= 2
-
-      if maxSize != nil && size > maxSize {
-        return nil
-      }
-
-      c.store(c.ulong, pSize, size)
-      c.free(buffer)
-      $buffer = c.alloc(size)
-    },
-
-    err => {
-      throw Err(err)
+    let out = Blob()
+    match native.run(z, s, out, 0, limit ?? -1) {
+        0  => nil,
+        -2 => return nil,
+        _  => throw ZlibError("zlib: {native.message(z)}")
     }
-  }
-
-  return Blob(c.as_str(buffer, c.load(c.ulong, pSize)))
-}
-
-pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
-  let chunk = (maxSize != nil && maxSize > 4096) ? maxSize : 4096
-
-  let zs = ctx ?? (ctx = ZStream())
-  raw.inflateInit2_(zs, MAX_WBITS + 32, '1.2.11', #ZStream)
-  zs.next_in = s
-  zs.avail_in = s.size()
-
-  let blob = Blob()
-  let obuf = c.alloc(chunk)
-
-  defer {
-    c.free(obuf)
-    raw.inflateEnd(zs)
-  }
-
-  let have = nil
-
-  while have == nil || have == chunk {
-    zs.avail_out = chunk
-    zs.next_out = obuf
-
-    match raw.inflate(zs, Z_NO_FLUSH) {
-      (Z_DATA_ERROR or Z_NEED_DICT or Z_MEM_ERROR) as err => {
-        throw Err(err)
-      },
-
-      _ => {
-        have = chunk - zs.avail_out
-        blob.push(obuf, have)
-      }
+    if !native.finish(z) {
+        throw ZlibError('zlib: truncated stream')
     }
-  }
-
-  return blob
+    out
 }
 
-pub fn crc32(s: String | Blob) -> Int {
-    raw.crc32(0, s, s.size())
+/// Compresses `s` into the zlib format (`level` 0-9, -1 for the default).
+pub fn compress(s: String | Blob, level: Int = -1) -> Blob {
+    native.zlib-compress(s, level)
+}
+
+/// Decompresses zlib-format data; nil when the output would exceed `maxSize`.
+pub fn uncompress(s: String | Blob, maxSize: Int | nil = nil) -> Blob | nil {
+    inflate(s, 'deflate', maxSize)
+}
+
+/// Decompresses zlib or gzip data (detected from the header); `maxSize`
+/// bounds the output as for `uncompress`.
+pub fn uncompress2(s: String | Blob, maxSize: Int | nil = nil) -> Blob | nil {
+    inflate(s, 'zlib-auto', nil)
+}
+
+pub fn crc32(s: String | Blob, crc: Int = 0) -> Int {
+    native.crc32(s, crc)
+}
+
+pub fn adler32(s: String | Blob, adler: Int = 1) -> Int {
+    native.adler32(s, adler)
 }

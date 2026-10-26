@@ -2,19 +2,10 @@ import os
 import errno
 import time
 import ssl
-import ffi as c (C!)
 import path (Path)
 import http.url (URL)
 import http.headers (Headers)
 import http.display as display
-
-C! fn {
-    long send(int fd, void const *buf, uint64_t n, int flags);
-    long recv(int fd, void *buf, uint64_t n, int flags);
-}
-
-let sys-send = send
-let sys-recv = recv
 
 pub const SEND_FLAGS  = __apple__ ? 0 : (__bsd__ ? 0x20000 : 0x4000)
 pub const SO_ERROR    = (__apple__ || __bsd__) ? 0x1007 : 4
@@ -163,13 +154,13 @@ pub trait Body {
     close();
 }
 
-/// An outgoing request. `content` is a Blob when the body is in memory;
+/// An outgoing request. `content` holds the body when it is in memory;
 /// `stream` holds an iterable of String/Blob chunks or a `Path` otherwise.
 pub class Request {
     method:     String
     url:        URL
     headers:    Headers
-    content:    Blob | nil
+    content:    String | Blob | nil
     stream:     BodySource | nil
     extensions: Dict[String, String]
 
@@ -184,7 +175,7 @@ pub class Request {
         self.method     = method.upper()
         self.url        = (url :: URL) ? url : URL(url)
         self.headers    = (headers :: Headers) ? headers : Headers(headers)
-        self.content    = body-of(content)
+        self.content    = content
         self.stream     = stream
         self.extensions = extensions
     }
@@ -204,8 +195,10 @@ pub class Request {
 
     /// The whole body (reading a streamed body consumes it).
     read() -> Blob {
-        if let $b = content {
-            return b
+        match content {
+            b: Blob   => return b,
+            s: String => return Blob(s),
+            _         => {}
         }
         let out = Blob()
         match stream {
@@ -223,15 +216,14 @@ pub class Request {
     }
 
     copy() -> Request {
-        let r = Request(method, URL(url), headers.copy(), content, stream, %{k: v for k, v in extensions})
-        r
+        Request(method, URL(url), headers.copy(), content, stream, extensions.clone())
     }
 
     /// Renders the request like `Response.show` does.
     pretty(body: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
         let col = color ?? display.color?()
         let version = extensions['http-version'] ?? 'HTTP/1.1'
-        let hs = [('Host', url.authority), *headers.items().filter(p -> p.0.lower() != 'host')]
+        let hs = [('Host', url.authority), *headers.items().filter(p -> !p.0.ieq?('host'))]
         let data = match stream {
             nil => content,
             _   => Blob('<streamed body>')
@@ -361,24 +353,17 @@ pub class Socket {
     port:  Int
     lower: Socket | nil
 
-    __tls-lock: Mutex
+    __tls-lock: Mutex = Mutex()
 
-    __in:    Blob
-    __out:   Blob
-    __plain: Blob
-    __eof?:  Bool
+    __in:    Blob = Blob.zeros(RECV_CHUNK)
+    __out:   Blob = Blob()
+    __plain: Blob = Blob.zeros(RECV_CHUNK * 4)
+    __eof?:  Bool = false
 
     init(fd: Int, host: String, port: Int) {
         self.fd   = fd
         self.host = host
         self.port = port
-        tls       = nil
-        lower     = nil
-        __tls-lock = Mutex()
-        __in      = Blob.zeros(RECV_CHUNK)
-        __plain   = Blob.zeros(RECV_CHUNK * 4)
-        __out     = Blob()
-        __eof?    = false
 #|if __apple__
         os.setsockopt(fd, 0xFFFF, 0x1022, 1)
 #|]
@@ -456,7 +441,10 @@ pub class Socket {
             return got
         }
         while true {
-            let n = sys-recv(fd, __in, RECV_CHUNK, 0)
+            let n = match os.recvfrom(fd, __in, RECV_CHUNK, 0) {
+                (b, _) => #b,
+                _      => -1
+            }
             if n > 0 {
                 return __in[;n]
             }
@@ -566,7 +554,7 @@ pub class Socket {
         let size = data.size()
         let off = 0
         while off < size {
-            let n = sys-send(fd, data.ptr() + off, size - off, SEND_FLAGS)
+            let n = os.sendto(fd, data, SEND_FLAGS, off: off)
             if n >= 0 {
                 off += n
                 continue
@@ -642,7 +630,7 @@ pub class Socket {
                 s.shutdown()
                 __out.clear()
                 s.drain(__out)
-                sys-send(fd, __out, #__out, SEND_FLAGS)
+                os.sendto(fd, __out, SEND_FLAGS)
             } catch _ {
             }
         }

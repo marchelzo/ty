@@ -1,7 +1,6 @@
 /**
  * HTTP/2 client connections for `http.client`, multiplexing concurrent
- * requests (from any number of threads) over one socket. Imported only
- * when libnghttp2 is installed.
+ * requests (from any number of threads) over one socket.
  *
  * One thread at a time reads from the socket while holding the right to
  * drive the nghttp2 session; others wait on a condition variable and take
@@ -9,9 +8,7 @@
  * credit is returned only as the application reads, so a slow reader
  * applies backpressure instead of buffering without bound.
  */
-import ffi as c
 import time
-import log
 import http.nghttp2 (..)
 import http.headers (Headers)
 import http.status (status-name)
@@ -35,10 +32,7 @@ const STREAM_WINDOW     = 4 * 1024 * 1024
 const CONNECTION_WINDOW = 32 * 1024 * 1024
 const UPLOAD_HIGH       = 1024 * 1024
 
-let __tls::current: H2Conn | nil = nil
 let __tls::sleeper: CondVar = CondVar()
-
-let callbacks = Callbacks(_ -> current)
 
 fn deadline(t: Float | nil) -> Float | nil {
     (t == nil) ? nil : time.now() + t
@@ -49,57 +43,55 @@ fn left(d: Float | nil) -> Float | nil {
 }
 
 class H2Stream {
-    id:        Int
+    id:        Int = -1
     status:    Int | nil
-    headers:   Array[(String, String)]
-    trailers:  Array[(String, String)]
-    head?:     Bool
-    body:      Blob
-    end?:      Bool
-    closed?:   Bool
+    headers:   Array[(String, String)] = []
+    trailers:  Array[(String, String)] = []
+    head?:     Bool = false
+    body:      Blob = Blob()
+    end?:      Bool = false
+    closed?:   Bool = false
     error:     BaseException | nil
-    out:       Blob
-    pos:       Int
-    eof?:      Bool
-    deferred?: Bool
-    touched?:  Bool
-    keep:      (Blob, Blob, Blob | nil) | nil
-
-    init() {
-        id        = -1
-        status    = nil
-        headers   = []
-        trailers  = []
-        head?     = false
-        body      = Blob()
-        end?      = false
-        closed?   = false
-        error     = nil
-        out       = Blob()
-        pos       = 0
-        eof?      = false
-        deferred? = false
-        touched?  = false
-        keep      = nil
-    }
+    out:       Blob = Blob()
+    pos:       Int = 0
+    eof?:      Bool = false
+    deferred?: Bool = false
+    touched?:  Bool = false
 
     pending -> Int {
         #out - pos
     }
+
+    /// Hands nghttp2 up to `max` bytes (see `_http`'s `cb-read`). The bytes
+    /// are copied after this returns, so consumed data is dropped on the
+    /// next call instead of now.
+    take(max: Int) -> (Blob, Int, Int, Bool) | Int {
+        if pos == #out {
+            out.clear()
+            pos = 0
+        } else if pos > 65536 && pos * 2 > #out {
+            out.clear(0, pos)
+            pos = 0
+        }
+        let n = min(max, pending)
+        if n == 0 && !eof? {
+            deferred? = true
+            return NGHTTP2_ERR_DEFERRED
+        }
+        if n > 0 {
+            touched? = true
+        }
+        let at = pos
+        pos += n
+        (out, at, n, eof? && pos == #out)
+    }
 }
 
 class H2Body : Body {
-    conn:   H2Conn
-    st:     H2Stream
-    done?:  Bool
-    t:      Timeout
-
-    init(conn: H2Conn, st: H2Stream, t: Timeout) {
-        self.conn = conn
-        self.st   = st
-        self.t    = t
-        done?     = false
-    }
+    conn:  H2Conn
+    st:    H2Stream
+    t:     Timeout
+    done?: Bool = false
 
     read() -> Blob | nil {
         if done? {
@@ -130,64 +122,40 @@ class H2Body : Body {
 pub class H2Conn : Multiplexed {
     sock:        Socket
     pool:        ConnPool
-    idle-since:  Float
-    max-streams: Int
+    idle-since:  Float = time.now()
+    max-streams: Int = 100
 
     __key:      String
-    __requests: Int
-    __active:   Int
+    __requests: Int = 0
+    __active:   Int = 0
 
     __session:  Ptr | nil
-    __lock:     Mutex
-    __sleepers: Array[(CondVar, H2Stream)]
-    __streams:  Dict[Int, H2Stream]
-    __reading?: Bool
-    __dead?:    Bool
-    __goaway?:  Bool
+    __lock:     Mutex = Mutex()
+    __sleepers: Array[(CondVar, H2Stream)] = []
+    __streams:  Dict[Int, H2Stream] = %{}
+    __reading?: Bool = false
+    __dead?:    Bool = false
+    __goaway?:  Bool = false
     __error:    BaseException | nil
-    __out:      Ptr
-    __pend:     Blob
+    __pend:     Blob = Blob()
 
     init(sock: Socket, key: String, pool: ConnPool, t: Timeout) {
-        self.sock      = sock
-        self.pool      = pool
-        __key          = key
-        __requests     = 0
-        __active       = 0
-        idle-since     = time.now()
-        max-streams    = 100
-        __lock         = Mutex()
-        __sleepers     = []
-        __streams      = %{}
-        __reading?     = false
-        __dead?        = false
-        __goaway?      = false
-        __error        = nil
-        __out          = c.new-auto(c.ptr)
-        __pend         = Blob()
+        self.sock = sock
+        self.pool = pool
+        __key     = key
 
-        let opt = c.new-auto(c.ptr)
-        nghttp2_option_new(opt)
-        let option = c.load(c.ptr, opt)
-        nghttp2_option_set_no_auto_window_update(option, 1)
-        nghttp2_option_set_peer_max_concurrent_streams(option, 100)
-        nghttp2_option_set_max_settings(option, 64)
-
-        let out = c.new-auto(c.ptr)
-        let rc = nghttp2_session_client_new2(out, callbacks.cbs, nil, option)
-        nghttp2_option_del(option)
-        if rc != 0 {
-            throw ProtocolError("http: nghttp2_session_client_new2: {strerror(rc)}")
+        __session = try {
+            h2-new(false, no-auto-window: true, peer-max-streams: 100)
+        } catch e {
+            throw ProtocolError("http: nghttp2_session_client_new2: {e}")
         }
-        __session = c.load(c.ptr, out)
 
-        let (iv, n) = settings([
-            (SETTINGS_ENABLE_PUSH, 0),
-            (SETTINGS_MAX_CONCURRENT_STREAMS, 100),
-            (SETTINGS_INITIAL_WINDOW_SIZE, STREAM_WINDOW)
+        h2-settings(__session, [
+            SETTINGS_ENABLE_PUSH,            0,
+            SETTINGS_MAX_CONCURRENT_STREAMS, 100,
+            SETTINGS_INITIAL_WINDOW_SIZE,    STREAM_WINDOW
         ])
-        nghttp2_submit_settings(__session, 0, iv, n)
-        nghttp2_session_set_local_window_size(__session, 0, 0, CONNECTION_WINDOW)
+        h2-local-window(__session, CONNECTION_WINDOW)
 
         let ^_ = __lock.lock()
         __flush(deadline(t.connect))
@@ -242,7 +210,7 @@ pub class H2Conn : Multiplexed {
         __die(ReadError('http: connection closed'))
         if let $s = __session {
             __session = nil
-            nghttp2_session_del(s)
+            h2-del(s)
         }
         sock.close()
     }
@@ -286,15 +254,13 @@ pub class H2Conn : Multiplexed {
 
     __flush(until: Float | nil) {
         let $s = __session or return
-        if __dead? || nghttp2_session_want_write(s) == 0 {
+        if __dead? || !h2-want-write(s) {
             return
         }
         let pend = __pend
         pend.clear()
         while true {
-            current = self
-            let n = nghttp2_session_mem_send(s, __out)
-            current = nil
+            let n = h2-send(s, self, pend, 65536)
             if n < 0 {
                 __die(ProtocolError("http: HTTP/2 send failed: {strerror(n)}"))
                 return
@@ -302,7 +268,6 @@ pub class H2Conn : Multiplexed {
             if n == 0 {
                 break
             }
-            pend.push(c.load(c.ptr, __out), n)
             if #pend >= 65536 {
                 __send(pend, until)
                 pend.clear()
@@ -336,7 +301,7 @@ pub class H2Conn : Multiplexed {
                 let cv = sleeper
                 __sleepers.push((cv, st))
                 cv.wait(__lock, left(until) ?? 3600.0)
-                __sleepers = [p for p in __sleepers if p.0 != cv]
+                __sleepers.filter!(p -> p.0 != cv)
                 if until != nil && left(until) == 0.0 && !ready() {
                     throw ReadTimeout("http: timed out waiting for {what} from {sock.host}")
                 }
@@ -379,9 +344,7 @@ pub class H2Conn : Multiplexed {
 
             if #plain > 0 {
                 let $s = __session or throw ReadError('http: connection closed')
-                current = self
-                let rc = nghttp2_session_mem_recv(s, plain, #plain)
-                current = nil
+                let rc = h2-recv(s, self, plain, 0, #plain)
                 if rc < 0 {
                     __die(ProtocolError("http: HTTP/2 protocol error from {sock.host}: {strerror(rc)}"))
                 }
@@ -406,10 +369,10 @@ pub class H2Conn : Multiplexed {
             (':authority', req.headers['host'] ?? req.url.authority),
             (':path', req.url.target)
         ]
-        for (k, v) in req.headers.items() {
+        for (k, v) in req.headers.pairs {
             let name = k.lower()
             if HOP_BY_HOP.contains?(name) {
-                if name == 'te' && v.lower() == 'trailers' {
+                if name == 'te' && v.ieq?('trailers') {
                     pairs.push(('te', 'trailers'))
                 }
                 continue
@@ -423,10 +386,10 @@ pub class H2Conn : Multiplexed {
         let st = H2Stream()
         let streamed = req.stream
         let body = req.content
-        let has-body? = streamed != nil || (body != nil && #body > 0)
+        let has-body? = streamed != nil || (body != nil && body.size() > 0)
 
         if body != nil && req.headers['content-length'] == nil && streamed == nil {
-            pairs.push(('content-length', str(#body)))
+            pairs.push(('content-length', str(body.size())))
         }
 
         if let $b = body {
@@ -434,14 +397,12 @@ pub class H2Conn : Multiplexed {
         }
         st.eof? = streamed == nil
 
-        let (nva, n, strs) = nv-list(pairs)
-        let prd = has-body? ? callbacks.provider(0) : nil
-        let id = nghttp2_submit_request(__session, nil, nva, n, prd, nil)
+        let $s = __session or throw StaleConnection("http: HTTP/2 connection to {sock.host} is closed")
+        let id = h2-request(s, pairs, has-body?)
         if id < 0 {
             throw ProtocolError("http: cannot submit HTTP/2 request: {strerror(id)}")
         }
         st.id = id
-        st.keep = (nva, strs, prd)
         __streams[id] = st
 
         try {
@@ -486,7 +447,9 @@ pub class H2Conn : Multiplexed {
     __resume(st: H2Stream) {
         if st.deferred? && !st.closed? {
             st.deferred? = false
-            nghttp2_session_resume_data(__session, st.id)
+            if let $s = __session {
+                h2-resume(s, st.id)
+            }
         }
     }
 
@@ -497,7 +460,7 @@ pub class H2Conn : Multiplexed {
                 let out = st.body
                 st.body = Blob()
                 if let $s = __session {
-                    nghttp2_session_consume(s, st.id, #out)
+                    h2-consume(s, st.id, #out)
                     __flush(deadline(t.write))
                 }
                 return out
@@ -519,10 +482,10 @@ pub class H2Conn : Multiplexed {
     __abandon(st: H2Stream) {
         let $s = __session or return
         if !st.closed? && (!st.end? || !st.eof? || st.pending > 0) {
-            nghttp2_submit_rst_stream(s, 0, st.id, st.end? ? NGHTTP2_NO_ERROR : NGHTTP2_CANCEL)
+            h2-rst(s, st.id, st.end? ? NGHTTP2_NO_ERROR : NGHTTP2_CANCEL)
         }
         if #st.body > 0 {
-            nghttp2_session_consume(s, st.id, #st.body)
+            h2-consume(s, st.id, #st.body)
             st.body = Blob()
         }
         __streams.remove(st.id)
@@ -545,15 +508,13 @@ pub class H2Conn : Multiplexed {
         pool.release(self, true)
     }
 
-    cb-begin(frame: Ptr) -> Int {
+    cb-begin(id: Int, cat: Int) -> Int {
         0
     }
 
-    cb-header(frame: Ptr, name: Ptr, namelen: Int, value: Ptr, valuelen: Int) -> Int {
-        let $st = __streams[frame-id(frame)] or return 0
+    cb-header(id: Int, k: String, v: String) -> Int {
+        let $st = __streams[id] or return 0
         st.touched? = true
-        let k = c.str(name, namelen)
-        let v = c.str(value, valuelen)
         if k == ':status' {
             st.status = (try { int(v, 10) }) ?? 0
             return 0
@@ -569,13 +530,10 @@ pub class H2Conn : Multiplexed {
         0
     }
 
-    cb-frame(frame: Ptr) -> Int {
-        let type = frame-type(frame)
-        let id = frame-id(frame)
-
+    cb-frame(id: Int, type: Int, flags: Int, aux: Int) -> Int {
         if type == NGHTTP2_GOAWAY {
             __goaway? = true
-            let last = goaway-last(frame)
+            let last = aux
             for sid, st in __streams {
                 if sid > last && !st.head? {
                     st.error = StaleConnection("http: {sock.host} refused the stream (GOAWAY)")
@@ -584,9 +542,9 @@ pub class H2Conn : Multiplexed {
             return 0
         }
 
-        if type == NGHTTP2_SETTINGS && (frame-flags(frame) & NGHTTP2_FLAG_ACK) == 0 {
+        if type == NGHTTP2_SETTINGS && (flags & NGHTTP2_FLAG_ACK) == 0 {
             if let $s = __session {
-                let m = nghttp2_session_get_remote_settings(s, SETTINGS_MAX_CONCURRENT_STREAMS)
+                let m = h2-remote-setting(s, SETTINGS_MAX_CONCURRENT_STREAMS)
                 max-streams = max(1, min(m, 1000))
             }
             return 0
@@ -607,7 +565,7 @@ pub class H2Conn : Multiplexed {
             }
         }
 
-        if (type == NGHTTP2_HEADERS || type == NGHTTP2_DATA) && (frame-flags(frame) & NGHTTP2_FLAG_END_STREAM) != 0 {
+        if (type == NGHTTP2_HEADERS || type == NGHTTP2_DATA) && (flags & NGHTTP2_FLAG_END_STREAM) != 0 {
             st.end? = true
         }
         0
@@ -617,7 +575,7 @@ pub class H2Conn : Multiplexed {
         match __streams[id] {
             nil => {
                 if let $s = __session {
-                    nghttp2_session_consume_connection(s, len)
+                    h2-consume(s, 0, len)
                 }
             },
             st => {
@@ -643,30 +601,9 @@ pub class H2Conn : Multiplexed {
         0
     }
 
-    cb-read(id: Int, buf: Ptr, length: Int, flags: Ptr) -> Int {
+    cb-read(id: Int, max: Int) -> (Blob, Int, Int, Bool) | Int {
         let $st = __streams[id] or return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE
-        let n = min(length, st.pending)
-        if n > 0 {
-            st.touched? = true
-            memcpy(buf, st.out.ptr() + st.pos, n)
-            st.pos += n
-            if st.pos == #st.out {
-                st.out.clear()
-                st.pos = 0
-            } else if st.pos > 65536 && st.pos * 2 > #st.out {
-                st.out.clear(0, st.pos)
-                st.pos = 0
-            }
-        }
-        if st.pending == 0 {
-            if st.eof? {
-                c.store(c.u32, flags, c.load(c.u32, flags) | NGHTTP2_DATA_FLAG_EOF)
-            } else if n == 0 {
-                st.deferred? = true
-                return NGHTTP2_ERR_DEFERRED
-            }
-        }
-        n
+        st.take(max)
     }
 }
 

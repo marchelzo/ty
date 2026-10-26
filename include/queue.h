@@ -64,6 +64,8 @@ SharedQueue *shared_queue_new(Ty *ty, usize nlanes, bool work);
 void shared_queue_free(Ty *ty, SharedQueue *q);
 
 void queue_mark(Ty *ty, Queue *q);
+void queue_extend(Ty *ty, Queue *q, Value xs);
+Queue *QueueClone(Ty *ty, Queue const *q);
 void shared_queue_mark(Ty *ty, SharedQueue *q);
 
 void build_queue_method_table(void);

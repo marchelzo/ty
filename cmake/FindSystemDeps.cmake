@@ -5,7 +5,7 @@
 # CMakeLists.txt (i.e. the vcpkg target names).
 #
 # Statically links: libffi, mimalloc, pcre2, xxhash
-# Dynamically links: utf8proc, sqlite3 (no .a available on FreeBSD)
+# Dynamically links: utf8proc, sqlite3, nghttp2, zlib, zstd (no .a available on FreeBSD)
 #
 
 include(FindPkgConfig)
@@ -65,3 +65,14 @@ add_library(utf8proc::utf8proc ALIAS PkgConfig::_utf8proc)
 # --- sqlite3 (shared) ---
 pkg_check_modules(_sqlite3 REQUIRED IMPORTED_TARGET sqlite3)
 add_library(unofficial::sqlite3::sqlite3 ALIAS PkgConfig::_sqlite3)
+
+# --- nghttp2 (shared) ---
+pkg_check_modules(_nghttp2 REQUIRED IMPORTED_TARGET libnghttp2)
+add_library(nghttp2::nghttp2 ALIAS PkgConfig::_nghttp2)
+
+# --- zlib (shared, base system) ---
+find_package(ZLIB REQUIRED)
+
+# --- zstd (shared) ---
+pkg_check_modules(_zstd REQUIRED IMPORTED_TARGET libzstd)
+add_library(zstd::libzstd ALIAS PkgConfig::_zstd)

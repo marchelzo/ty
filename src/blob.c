@@ -390,8 +390,8 @@ badutf8(Ty *ty, char const *name)
         vmE(&exc);
 }
 
-static Value
-lossystr(Ty *ty, u8 const *s, isize n)
+Value
+LossyString(Ty *ty, u8 const *s, isize n)
 {
         u8 *str = value_string_alloc(ty, 3 * n);
         isize i = 0;
@@ -432,7 +432,7 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
         }
 
         if (!IsNone(lossy) && lossy.boolean) {
-                return lossystr(ty, s, n);
+                return LossyString(ty, s, n);
         }
 
         badutf8(ty, "Blob.str(): invalid UTF-8");

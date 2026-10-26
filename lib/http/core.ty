@@ -5,6 +5,7 @@ import http.status (status-name)
 import time
 import http.codec (Encoder)
 import http.wire (Request, BodySource)
+import http.scheduler as scheduler (Scheduler)
 
 pub import http.cookies (parse-cookies, http-date, format-set-cookie)
 pub import http.sse (event-chunk)
@@ -173,14 +174,12 @@ pub class Config {
 pub tag Suspend;
 pub tag Raise;
 
-pub trait EventLoop {
+pub trait EventLoop < Scheduler {
     config -> Config;
     post(f: () -> _) -> Bool;
     later(f: () -> _);
     resume(t: Task, v: _ = nil);
     timer(seconds: Int | Float, f: () -> _);
-    sleep(seconds: Int | Float);
-    blocking[a](f: (*_) -> a, *args: _) -> a;
     spawn(name: String, f: (*_) -> _, *args: _, %kwargs: _) -> Task;
     read-at(fd: Int, n: Int, offset: Int) -> Blob;
 }
@@ -206,17 +205,14 @@ pub trait Exchange {
 pub class Task {
     loop:     EventLoop
     name:     String
-    done?:    Bool
-    parked?:  Bool
-    canceled: Bool
+    done?:    Bool = false
+    parked?:  Bool = false
+    canceled: Bool = false
     gen:      Generator[Suspend, _]
 
     init(loop: EventLoop, name: String, f: (*_) -> _, args: Array[_], kwargs: Dict[String, _]) {
         self.loop = loop
         self.name = name
-        done?     = false
-        parked?   = false
-        canceled  = false
         gen       = task-body(self, f, args, kwargs)
     }
 }
@@ -257,12 +253,14 @@ pub fn step(t: Task, v: _ = nil) {
         return
     }
     let prev = current-task
+    let outer = scheduler.enter(t.loop)
     current-task = t
     t.parked? = false
     try {
         (t.gen)(v)
     } finally {
         current-task = prev
+        scheduler.enter(outer)
     }
 }
 
@@ -297,41 +295,36 @@ pub const MODE_STREAMING = 1
 pub const MODE_DONE      = 2
 
 pub class Response {
-    status-code:   Int
-    headers:       Dict[String, String | Array[String]]
-    body:          Blob
-    content-type:  String | nil
+    status-code:   Int = 200
+    headers:       Dict[String, String | Array[String]] = %{}
+    body:          Blob = Blob()
+    content-type:  String | nil = 'text/html; charset=utf-8'
     stream-length: Int | nil
 
     __x:         Exchange | nil
     __encoder:   Encoder | nil
-    __mode:      Int
-    __hooks:     Array[(Response) -> _]
-    __streaming: Bool
+    __mode:      Int = MODE_BUFFERED
+    __hooks:     Array[(Response) -> _] | nil
+    __streaming: Bool = false
 
     init(x: Exchange | nil) {
-        __x           = x
-        __mode        = MODE_BUFFERED
-        __hooks       = []
-        __streaming   = false
-        __encoder     = nil
-        status-code   = 200
-        headers       = %{}
-        body          = Blob()
-        content-type  = 'text/html; charset=utf-8'
-        stream-length = nil
+        __x = x
     }
 
     /// Runs `f(rsp)` just before the response head is sent.
     on-headers(f: (Response) -> _) {
-        __hooks.push(f)
+        match __hooks {
+            nil => __hooks = [f],
+            xs  => xs.push(f)
+        }
     }
 
     __fire() {
-        let hs = __hooks
-        __hooks = []
-        for f in hs {
-            f(self)
+        if let $hs = __hooks {
+            __hooks = nil
+            for f in hs {
+                f(self)
+            }
         }
     }
 
@@ -424,9 +417,8 @@ pub class Response {
     }
 
     __find(k: String) -> String | nil {
-        let want = k.lower()
         for name, _ in headers {
-            if name.lower() == want {
+            if name.ieq?(k) {
                 return name
             }
         }
@@ -434,7 +426,7 @@ pub class Response {
     }
 
     header(k: String, v: Any = nil) -> String | Array[String] | nil {
-        if k.lower() == 'content-type' {
+        if k.ieq?('content-type') {
             if v != nil {
                 content-type = header-safe!(str(v))
             }
@@ -466,7 +458,7 @@ pub class Response {
     }
 
     remove-header(k: String) {
-        if k.lower() == 'content-type' {
+        if k.ieq?('content-type') {
             content-type = nil
         } else if let $name = __find(k) {
             headers.remove(name)
@@ -574,15 +566,13 @@ pub fn set-file-sender(f: FileSender) {
 /// elsewhere never block, and a peer whose backlog exceeds
 /// `max-write-buffer` is disconnected.
 pub class BodyWriter {
-    bytes:   Int
+    bytes:   Int = 0
     encoder: Encoder | nil
 
     __x: Exchange
 
     init(x: Exchange) {
-        __x     = x
-        bytes   = 0
-        encoder = nil
+        __x = x
     }
 
     closed? -> Bool {
@@ -722,21 +712,16 @@ pub class EventStream < BodyWriter {
 /// event loop; read from the handler's task.
 pub class BodyQueue : BodySource {
     loop:  EventLoop
-    total: Int
+    total: Int = 0
 
-    __buf:     Blob
-    __done?:   Bool
+    __buf:     Blob = Blob()
+    __done?:   Bool = false
     __error:   RuntimeError | nil
     __waiting: Task | nil
     __pull:    () -> _
 
     init(loop: EventLoop, pull: () -> _) {
         self.loop = loop
-        total     = 0
-        __buf     = Blob()
-        __done?   = false
-        __error   = nil
-        __waiting = nil
         __pull    = pull
     }
 

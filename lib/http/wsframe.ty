@@ -1,6 +1,8 @@
 import hash
 import base64
 
+pub import _http (ws-frame as frame, ws-frame-into as frame-into, ws-close-payload as close-payload)
+
 pub const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 pub const OP_CONT   = 0x0
@@ -29,36 +31,4 @@ pub fn valid-close-code?(code: Int) -> Bool {
     (code >= 1000 && code <= 1003)
  || (code >= 1007 && code <= 1011)
  || (code >= 3000 && code <= 4999)
-}
-
-pub fn frame(op: Int, payload: String | Blob, fin: Bool = true, mask: Blob | nil = nil, rsv1: Bool = false) -> Blob {
-    let n = payload.size()
-    let out = Blob()
-    out.push((fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | op)
-
-    let m = (mask != nil) ? 0x80 : 0
-
-    if n < 126 {
-        out.push(m | n)
-    } else if n < 65536 {
-        out.push(m | 126)
-        out.push((n >> 8) & 0xFF)
-        out.push(n & 0xFF)
-    } else {
-        out.push(m | 127)
-        for i in ..8 {
-            out.push((n >> (56 - 8 * i)) & 0xFF)
-        }
-    }
-
-    if let $key = mask {
-        out.push(key)
-        let body = Blob(payload)
-        body.xor(key)
-        out.push(body)
-    } else {
-        out.push(payload)
-    }
-
-    out
 }

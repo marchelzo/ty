@@ -1,5 +1,5 @@
 import log
-import ffi as c
+import _http as hc
 import http.core (
     ConnectionClosed,
     Task,
@@ -32,7 +32,9 @@ pub import http.wsframe (
     CLOSE_INTERNAL,
     accept-key,
     valid-close-code?,
-    frame
+    frame,
+    frame-into,
+    close-payload
 )
 
 const CLOSE_GRACE = 5.0
@@ -51,8 +53,6 @@ pub class WebSocket {
         __proto       = proto
         self.request  = request
         self.protocol = protocol
-        close-code    = nil
-        close-reason  = nil
     }
 
     closed? -> Bool {
@@ -102,35 +102,26 @@ pub class WebSocket {
 pub class WSProto : Proto {
     conn:    Conn
     ws:      WebSocket
-    closed?: Bool
+    closed?: Bool = false
 
-    __inbox:      Array[String | Blob]
-    __inbox-size: Int
-    __waiting:    Array[Task]
-    __closers:    Array[() -> _]
+    __inbox:      Queue[String | Blob] = Queue()
+    __inbox-size: Int = 0
+    __waiting:    Queue[Task] = Queue()
+    __closers:    Array[() -> _] = []
     __frag:       Blob | nil
-    __frag-op:    Int
-    __close-sent: Bool
+    __frag-op:    Int = 0
+    __close-sent: Bool = false
     __ping:       Timer
-    __stopped?:   Bool
+    __stopped?:   Bool = false
     __pmd:        PerMessage | nil
-    __frag-z?:    Bool
+    __frag-z?:    Bool = false
+    __hdr:        Array[Int] = [0, 0, 0, 0, 0]
 
     init(conn: Conn, request: Request, protocol: String | nil, pmd: PerMessage | nil = nil) {
-        self.conn     = conn
-        ws            = WebSocket(self, request, protocol)
-        closed?       = false
-        __inbox       = []
-        __inbox-size  = 0
-        __waiting     = []
-        __closers     = []
-        __frag        = nil
-        __frag-op     = 0
-        __close-sent  = false
-        __stopped?    = false
-        __pmd         = pmd
-        __frag-z?     = false
-        __ping        = Timer(-> __keepalive())
+        self.conn = conn
+        ws        = WebSocket(self, request, protocol)
+        __pmd     = pmd
+        __ping    = Timer(-> __keepalive())
 
         let cfg = conn.config
         if cfg.ws-ping-interval > 0.0 {
@@ -160,7 +151,7 @@ pub class WSProto : Proto {
             suspend()
         }
 
-        let msg = __inbox.pop(0)
+        let msg = __inbox.pop()
         __inbox-size -= msg.size()
         if !closed? && !conn.reading? && __inbox-size < conn.config.ws-max-message {
             conn.want-read()
@@ -223,11 +214,7 @@ pub class WSProto : Proto {
         }
 
         __close-sent = true
-        let payload = Blob((code >> 8) & 0xFF, code & 0xFF).push(reason)
-        if #payload > 125 {
-            payload.clear(125)
-        }
-        conn.write(frame(OP_CLOSE, payload))
+        conn.write(frame(OP_CLOSE, close-payload(code, reason)))
         conn.timeout(READ, CLOSE_GRACE)
         __wake-all()
     }
@@ -253,20 +240,18 @@ pub class WSProto : Proto {
     __deliver(msg: String | Blob) {
         __inbox.push(msg)
         __inbox-size += msg.size()
-        if #__waiting > 0 {
-            conn.loop.resume(__waiting.pop(0))
-        }
-    }
-
-    __wake-all() {
-        let ws = __waiting
-        __waiting = []
-        for t in ws {
+        if let Some(t) = __waiting.tryPop() {
             conn.loop.resume(t)
         }
     }
 
-    __message(op: Int, payload: Blob, compressed?: Bool = false) -> Bool {
+    __wake-all() {
+        while let Some(t) = __waiting.tryPop() {
+            conn.loop.resume(t)
+        }
+    }
+
+    __message(op: Int, payload: String | Blob, compressed?: Bool = false) -> Bool {
         if compressed? {
             let $z = __pmd or do {
                 __fail(CLOSE_PROTOCOL_ERROR, 'unexpected compressed frame')
@@ -280,7 +265,10 @@ pub class WSProto : Proto {
             }
         }
         if op == OP_TEXT {
-            let text = payload.str!()
+            let text = match payload {
+                s: String => s,
+                b: Blob   => b.str!()
+            }
             if !text.utf8? {
                 __fail(CLOSE_INVALID_DATA, 'invalid UTF-8')
                 return false
@@ -292,7 +280,7 @@ pub class WSProto : Proto {
         true
     }
 
-    __frame(op: Int, fin: Bool, payload: Blob, rsv1: Bool = false) -> Bool {
+    __frame(op: Int, fin: Bool, payload: String | Blob, rsv1: Bool = false) -> Bool {
         let max = conn.config.ws-max-message
 
         match op {
@@ -301,7 +289,7 @@ pub class WSProto : Proto {
                     __fail(CLOSE_PROTOCOL_ERROR, 'unexpected continuation')
                     return false
                 }
-                if #frag + #payload > max {
+                if #frag + payload.size() > max {
                     __fail(CLOSE_TOO_BIG)
                     return false
                 }
@@ -320,7 +308,10 @@ pub class WSProto : Proto {
                 if fin {
                     return __message(op, payload, rsv1)
                 }
-                __frag = payload
+                __frag = match payload {
+                    b: Blob   => b,
+                    s: String => Blob(s)
+                }
                 __frag-op = op
                 __frag-z? = rsv1
             },
@@ -336,17 +327,22 @@ pub class WSProto : Proto {
             OP_CLOSE => {
                 let code = CLOSE_NO_STATUS
                 let reason = ''
-                if #payload == 1 {
+                let body = match payload {
+                    s: String => s,
+                    b: Blob   => b.str!()
+                }
+                let n = body.size()
+                if n == 1 {
                     __fail(CLOSE_PROTOCOL_ERROR)
                     return false
                 }
-                if #payload >= 2 {
-                    code = (payload[0] << 8) | payload[1]
+                if n >= 2 {
+                    code = ((body.byte(0)!) << 8) | (body.byte(1)!)
                     if !valid-close-code?(code) {
                         __fail(CLOSE_PROTOCOL_ERROR, 'invalid close code')
                         return false
                     }
-                    reason = payload.str!(2, #payload - 2)
+                    reason = body.bslice(2)
                     if !reason.utf8? {
                         __fail(CLOSE_INVALID_DATA, 'invalid UTF-8')
                         return false
@@ -356,8 +352,7 @@ pub class WSProto : Proto {
                 ws.close-reason = reason
                 if !__close-sent {
                     __close-sent = true
-                    let echo = (code == CLOSE_NO_STATUS) ? Blob() : Blob((code >> 8) & 0xFF, code & 0xFF)
-                    conn.write(frame(OP_CLOSE, echo))
+                    conn.write(frame(OP_CLOSE, (code == CLOSE_NO_STATUS) ? '' : close-payload(code)))
                 }
                 __wake-all()
                 conn.close-after-flush()
@@ -374,67 +369,34 @@ pub class WSProto : Proto {
     }
 
     on-data() {
-        let b = conn.buf
         let max = conn.config.ws-max-message
 
         while !closed? && conn.available >= 2 {
-            let h   = conn.head
-            let b0  = b[h]
-            let b1  = b[h + 1]
-            let fin = (b0 & 0x80) != 0
-            let op  = b0 & 0x0F
+            let hdr = __hdr
+            let next = hc.ws-next(conn.buf, conn.head, conn.filled, true, __pmd != nil, max, hdr)
 
-            let rsv1 = (b0 & 0x40) != 0
-
-            if (b0 & 0x30) != 0 || (rsv1 && (__pmd == nil || (op != OP_TEXT && op != OP_BINARY))) {
-                return __fail(CLOSE_PROTOCOL_ERROR, 'reserved bits set')
-            }
-
-            if (b1 & 0x80) == 0 {
-                return __fail(CLOSE_PROTOCOL_ERROR, 'unmasked client frame')
-            }
-
-            let len = b1 & 0x7F
-            let hdr = 2
-
-            if len == 126 {
-                if conn.available < 4 {
+            if next == 0 {
+                if hdr[3] == 0 {
                     break
                 }
-                len = (b[h + 2] << 8) | b[h + 3]
-                hdr = 4
-            } else if len == 127 {
-                if conn.available < 10 {
-                    break
-                }
-                if (b[h + 2] & 0x80) != 0 {
-                    return __fail(CLOSE_PROTOCOL_ERROR, 'invalid length')
-                }
-                len = 0
-                for i in ..8 {
-                    len = (len << 8) | b[h + 2 + i]
-                }
-                hdr = 10
-            }
-
-            if op >= 0x8 && (len > 125 || !fin) {
-                return __fail(CLOSE_PROTOCOL_ERROR, 'invalid control frame')
-            }
-
-            if len > max {
-                return __fail(CLOSE_TOO_BIG)
-            }
-
-            let total = hdr + 4 + len
-            if conn.available < total {
                 conn.timeout(READ, conn.config.ws-idle-timeout)
-                return conn.want-read(total)
+                return conn.want-read(hdr[3])
             }
 
-            let at = h + hdr + 4
-            let payload = b[at;at + len]
-            payload.xor(c.load(c.u32, b.ptr() + at - 4), 4)
-            conn.consume(total)
+            let payload = match next {
+                s: String => s,
+                b: Blob   => b,
+                -1 => return __fail(CLOSE_PROTOCOL_ERROR, 'reserved bits set'),
+                -2 => return __fail(CLOSE_PROTOCOL_ERROR, 'unmasked client frame'),
+                -3 => return __fail(CLOSE_PROTOCOL_ERROR, 'invalid length'),
+                -4 => return __fail(CLOSE_PROTOCOL_ERROR, 'invalid control frame'),
+                _  => return __fail(CLOSE_TOO_BIG)
+            }
+
+            let op   = hdr[0]
+            let fin  = hdr[1] != 0
+            let rsv1 = hdr[2] != 0
+            conn.consume(hdr[3])
 
             if __close-sent && op != OP_CLOSE {
                 continue
@@ -505,15 +467,10 @@ pub class WSProto : Proto {
     }
 }
 
-pub fn handshake-response(key: String, protocol: String | nil, extra: Dict[String, String] = %{}) -> Blob {
-    let out = Blob('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n')
-    out.push("Sec-WebSocket-Accept: {accept-key(key)}\r\n")
-    if protocol != nil {
-        out.push("Sec-WebSocket-Protocol: {protocol}\r\n")
-    }
+pub fn handshake-response(key: String, protocol: String | nil, extra: Dict[String, String] = %{}) -> String {
+    let more = (protocol == nil) ? '' : "Sec-WebSocket-Protocol: {protocol}\r\n"
     for k, v in extra {
-        out.push("{k}: {v}\r\n")
+        more = "{more}{k}: {v}\r\n"
     }
-    out.push('\r\n')
-    out
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept-key(key)}\r\n{more}\r\n"
 }

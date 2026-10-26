@@ -34,6 +34,61 @@ full(Queue const *q)
         return (q->max != 0) && (queue_count((Queue *)q) == q->max);
 }
 
+inline static void
+push_one(Ty *ty, Queue *q, Value v)
+{
+        if (full(q)) {
+                q->head = (q->head + 1) % q->cap;
+        }
+        _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, v);
+}
+
+inline static Value *
+at(Queue const *q, usize i)
+{
+        return &q->items[(q->head + i) % q->cap];
+}
+
+void
+queue_extend(Ty *ty, Queue *q, Value xs)
+{
+        Value x;
+
+        switch (xs.type) {
+        case VALUE_ARRAY:
+                for (usize i = 0; i < vN(*xs.array); ++i) {
+                        push_one(ty, q, v__(*xs.array, i));
+                }
+                break;
+
+        case VALUE_QUEUE:
+        {
+                usize n = queue_count(xs.queue);
+                if (xs.queue == q && full(q)) {
+                        Value snap = QUEUE(QueueClone(ty, q));
+                        gP(&snap);
+                        queue_extend(ty, q, snap);
+                        gX();
+                        break;
+                }
+                for (usize i = 0; i < n; ++i) {
+                        push_one(ty, q, *at(xs.queue, i));
+                }
+                break;
+        }
+
+        default:
+                gP(&xs);
+                vm_iter_begin(ty, xs);
+                while (vm_iter_next(ty, &x)) {
+                        push_one(ty, q, x);
+                }
+                gX();
+        }
+
+        CheckUsed(ty);
+}
+
 static Value
 queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
 {
@@ -42,13 +97,176 @@ queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
         Queue *q = self->queue;
 
         for (int i = 0; i < argc; ++i) {
-                if (full(q)) {
-                        q->head = (q->head + 1) % q->cap;
-                }
-                _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
+                push_one(ty, q, ARG(i));
         }
 
         CheckUsed(ty);
+
+        return *self;
+}
+
+static Value
+queue_extend_m(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.extend()", 1);
+        queue_extend(ty, self->queue, ARG(0));
+        return *self;
+}
+
+Queue *
+QueueClone(Ty *ty, Queue const *q)
+{
+        Queue *c = queue_new(ty);
+        usize  n = queue_count((Queue *)q);
+
+        c->max = q->max;
+
+        if (n > 0) {
+                NOGC(c);
+                c->cap   = n + 1;
+                c->items = uA(c->cap * sizeof (Value));
+                for (usize i = 0; i < n; ++i) {
+                        c->items[i] = *at(q, i);
+                }
+                c->tail = n;
+                OKGC(c);
+        }
+
+        return c;
+}
+
+static Value
+queue_clone(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.clone()", 0);
+        return QUEUE(QueueClone(ty, self->queue));
+}
+
+static Value
+queue_shift(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.shift()", 0, 1);
+
+        Queue *q = self->queue;
+        usize  n = queue_count(q);
+
+        if (argc == 0) {
+                if (n == 0) {
+                        bP("empty queue");
+                }
+                Value v = q->items[q->head];
+                q->head = (q->head + 1) % q->cap;
+                return v;
+        }
+
+        imax k = INT_ARG(0);
+
+        if (k < 0) {
+                bP("negative count: %"PRIiMAX, k);
+        }
+
+        k = min(k, (imax)n);
+
+        Array *a = vAn(k);
+
+        for (imax i = 0; i < k; ++i) {
+                a->items[i] = *at(q, i);
+        }
+        a->count = k;
+
+        if (k > 0) {
+                q->head = (q->head + k) % q->cap;
+        }
+
+        return ARRAY(a);
+}
+
+static Value
+queue_shift_while(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.shift-while()", 1);
+
+        Queue *q = self->queue;
+        Value  f = ARG(0);
+        Value  out = ARRAY(vA());
+
+        gP(&out);
+
+        while (queue_count(q) > 0) {
+                Value x = q->items[q->head];
+                vmP(&x);
+                Value keep = vmC(&f, 1);
+                if (!value_truthy(ty, &keep)) {
+                        break;
+                }
+                q->head = (q->head + 1) % q->cap;
+                vAp(out.array, x);
+        }
+
+        gX();
+
+        return out;
+}
+
+static Value
+queue_filter_mut(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.filter!()", 1);
+
+        Queue *q = self->queue;
+        Value  f = ARG(0);
+        usize  n = queue_count(q);
+        usize  k = 0;
+
+        for (usize i = 0; i < n; ++i) {
+                Value x = *at(q, i);
+                vmP(&x);
+                Value keep = vmC(&f, 1);
+                if (value_truthy(ty, &keep)) {
+                        *at(q, k++) = x;
+                }
+        }
+
+        if (q->cap > 0) {
+                q->tail = (q->head + k) % q->cap;
+        }
+
+        return *self;
+}
+
+static Value
+queue_remove(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.remove()", 1);
+
+        Queue *q = self->queue;
+        Value  x = ARG(0);
+        usize  n = queue_count(q);
+
+        for (usize i = 0; i < n; ++i) {
+                if (value_test_equality(ty, at(q, i), &x)) {
+                        for (usize j = i; j + 1 < n; ++j) {
+                                *at(q, j) = *at(q, j + 1);
+                        }
+                        q->tail = (q->tail - 1 + q->cap) % q->cap;
+                        return BOOLEAN(true);
+                }
+        }
+
+        return BOOLEAN(false);
+}
+
+static Value
+queue_reverse_mut(Ty *ty, Value *self, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Queue.reverse!()", 0);
+
+        Queue *q = self->queue;
+        usize  n = queue_count(q);
+
+        for (usize i = 0; i < n / 2; ++i) {
+                SWAP(Value, *at(q, i), *at(q, n - 1 - i));
+        }
 
         return *self;
 }
@@ -201,12 +419,6 @@ queue_len(Ty *ty, Value *self, int argc, Value *kwargs)
         return INTEGER(_queue_count(self->queue->head, self->queue->tail, self->queue->cap));
 }
 
-inline static Value *
-at(Queue const *q, usize i)
-{
-        return &q->items[(q->head + i) % q->cap];
-}
-
 Value *
 queue_index(Queue const *q, imax i)
 {
@@ -315,6 +527,13 @@ queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
 
 DEFINE_METHOD_TABLE(
         queue,
+        { .name = "clone",       .func = queue_clone         },
+        { .name = "extend",      .func = queue_extend_m      },
+        { .name = "filter!",     .func = queue_filter_mut    },
+        { .name = "remove",      .func = queue_remove        },
+        { .name = "shift",       .func = queue_shift         },
+        { .name = "shiftWhile",  .func = queue_shift_while   },
+        { .name = "reverse!",    .func = queue_reverse_mut   },
         { .name = "clear",       .func = queue_clear         },
         { .name = "contains?",   .func = queue_contains      },
         { .name = "empty?",      .func = queue_empty         },

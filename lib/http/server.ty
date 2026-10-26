@@ -24,7 +24,6 @@ import http.loop (
     HAVE_KQUEUE
 )
 import http.h1 (H1)
-import http.native as native
 import http.deflate as deflate
 import os hiding (sleep, spawn)
 import thread
@@ -33,9 +32,7 @@ import log
 import ssl
 import time
 
-#|if native.nghttp2?()
 import http.h2 (session as h2-session)
-#|]
 
 const NO_PARAMS: Dict[String, String] = %{}
 
@@ -53,16 +50,7 @@ pub use ErrorHandler   = (Request, Response, RuntimeError) -> _;
 use H2Session = (Conn, Host) -> Proto;
 
 fn compressible-type?(ctype: String) -> Bool {
-    let t = ctype.split(';')[0].strip().lower()
-    t.starts?('text/')
- || t.ends?('+json')
- || t.ends?('+xml')
- || t == 'application/json'
- || t == 'application/javascript'
- || t == 'application/xml'
- || t == 'application/wasm'
- || t == 'application/x-ndjson'
- || t == 'image/svg+xml'
+    ctype :: /^\s*(?:text\/[^;\s]*|[^;\s]*\+(?:json|xml)|application\/(?:json|javascript|xml|wasm|x-ndjson))\s*(?:;|$)/i
 }
 
 let probe-lock = Mutex()
@@ -89,21 +77,11 @@ fn make-pattern(route: String) -> (Array[String], RegexV) {
 class Endpoint {
     fun:     RequestHandler
     stream?: Bool
-
-    init(fun: RequestHandler, stream?: Bool) {
-        self.fun     = fun
-        self.stream? = stream?
-    }
 }
 
 class Socket {
     fun:       SocketHandler
     protocols: Array[String]
-
-    init(fun: SocketHandler, protocols: Array[String]) {
-        self.fun       = fun
-        self.protocols = protocols
-    }
 }
 
 use Route[H] = {
@@ -114,13 +92,8 @@ use Route[H] = {
 };
 
 class Routes[H] {
-    exact:   Dict[String, Dict[String, H]]
-    dynamic: Dict[String, Array[Route[H]]]
-
-    init() {
-        exact   = %{}
-        dynamic = %{}
-    }
+    exact:   Dict[String, Dict[String, H]] = %{}
+    dynamic: Dict[String, Array[Route[H]]] = %{}
 
     copy() -> Routes[H] {
         let r = Routes()
@@ -179,18 +152,10 @@ class Routes[H] {
 
 class Table {
     owner:      Server
-    version:    Int
-    routes:     Routes[Endpoint]
-    sockets:    Routes[Socket]
-    middleware: Array[Middleware]
-
-    init(owner: Server) {
-        self.owner = owner
-        version    = 0
-        routes     = Routes()
-        sockets    = Routes()
-        middleware = []
-    }
+    version:    Int = 0
+    routes:     Routes[Endpoint] = Routes()
+    sockets:    Routes[Socket] = Routes()
+    middleware: Array[Middleware] = []
 
     next() -> Table {
         let t = Table(owner)
@@ -215,20 +180,20 @@ pub class Server : Host {
     __sock:       Int
     __owns-sock:  Bool
     __table:      Table
-    __version:    Atomic
-    __lock:       Mutex
-    __loops:      Array[Loop]
-    __active:     Atomic
-    __served:     Atomic
-    __running:    Atomic
-    __stopping:   Atomic
-    __streams:    Atomic
+    __version:    Atomic = Atomic(0)
+    __lock:       Mutex = Mutex()
+    __loops:      Array[Loop] = []
+    __active:     Atomic = Atomic(0)
+    __served:     Atomic = Atomic(0)
+    __running:    Atomic = Atomic(0)
+    __stopping:   Atomic = Atomic(0)
+    __streams:    Atomic = Atomic(0)
     __h2:         H2Session | nil
     __not-found:  RequestHandler | nil
     __on-error:   ErrorHandler | nil
-    __metrics:    Metrics
-    __rid:        String
-    __log-mtx:    Mutex
+    __metrics:    Metrics = Metrics()
+    __rid:        String = ssl.random-bytes(4).hex()
+    __log-mtx:    Mutex = Mutex()
 
     init(
         *args: Int | String,
@@ -237,33 +202,15 @@ pub class Server : Host {
         sock: Int | nil = nil,
         %kwargs: _
     ) {
-        self.config  = config ?? Config(**kwargs)
-        __table      = Table(self)
-        __version    = Atomic(0)
-        __lock       = Mutex()
-        __loops      = []
-        __active     = Atomic(0)
-        __served     = Atomic(0)
-        __running    = Atomic(0)
-        __stopping   = Atomic(0)
-        __streams    = Atomic(0)
-        __not-found  = nil
-        __on-error   = nil
-        __h2         = nil
-        __metrics    = Metrics()
-        __rid        = ssl.random-bytes(4).hex()
-        __log-mtx    = Mutex()
+        self.config = config ?? Config(**kwargs)
+        __table     = Table(self)
 
         if self.config.access-log == 'log' {
             log.default-level('http.access', log.INFO)
         }
 
         if self.config.h2 {
-#|if __defined__(h2-session)
             __h2 = h2-session
-#|else
-            log::warn!("HTTP/2 disabled", reason: 'libnghttp2 is not installed')
-#|]
         }
 
         if self.config.backend == 'auto' && default-backend() == 'io_uring' {
@@ -867,7 +814,7 @@ pub class Server : Host {
         }
 
         let $upgrade = req.header('upgrade') or return false
-        if !upgrade.lower().contains?('websocket') {
+        if !(upgrade :: /websocket/i) {
             return false
         }
 
@@ -882,10 +829,9 @@ pub class Server : Host {
 
         let (s, params, route) = found ?? return reject(404)
 
-        let connection = (req.header('connection') ?? '').lower()
         let $key = req.header('sec-websocket-key') or return reject(400)
 
-        if !connection.contains?('upgrade') || key.size() != 24 {
+        if !((req.header('connection') ?? '') :: /upgrade/i) || key.size() != 24 {
             return reject(400)
         }
 

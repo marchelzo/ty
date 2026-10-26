@@ -260,6 +260,8 @@ fn -(a: String, b: Int | Bool) -> String;
 
 fn +[T, U](a: Array[T], b: Array[U]) -> Array[T | U];
 fn +(a: Blob, b: Blob) -> Blob;
+fn +[T, U](a: Queue[T], b: Array[U] | Queue[U]) -> Queue[T | U];
+fn +=[T](a: Queue[T], b: Array[T] | Queue[T]) -> Queue[T];
 fn *[T](a: Array[T], b: Int) -> Array[T];
 
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
@@ -568,6 +570,8 @@ class Array[T] : Iterable[T] {
     ptr() -> Ptr[Any];
     push(x: T) -> nil;
     pop(i: ?Int) -> T;
+    shift() -> T;
+    shift(n: Int) -> Array[T];
     remove!(x: Any) -> Array[T];
     remove![U](x: nil) -> Array[U] where T: nil | U;
     remove(x: Any) -> Array[T];
@@ -1384,6 +1388,12 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
     upper() -> String;
     lower() -> String;
 
+    /// Whether the strings are equal ignoring case.
+    ieq?(other: String) -> Bool;
+
+    starts?(prefix: String) -> Bool;
+    ends?(suffix: String) -> Bool;
+
     contains?(pattern: String | Regex | RegexV, offset: ?Int) -> Bool;
 
     title() -> String {
@@ -1506,14 +1516,6 @@ class String : Iterable[String], IntoPtr[Int], PathLike {
 
     num? {
         return match?(/^\d+(?:\.\d+)?$/)
-    }
-
-    ends?(end: String) -> Bool {
-        (end == '') || (bslice(-end.size()) == end)
-    }
-
-    starts?(start: String) -> Bool {
-        (bslice(0, start.size()) == start)
     }
 
     splice(i: Int, j: Int) {
@@ -3645,7 +3647,21 @@ trait Iter[T] < Iterable[T] {
 }
 
 class Queue[T] : Iterable[T] {
-    init(max-len: ?Int);
+    init(xs: ?Iterable[T], max-len: ?Int);
+
+    static from[U](xs: Iterable[U], max-len: ?Int) -> Queue[U] {
+        Queue(xs, max-len: max-len)
+    }
+
+    extend(xs: Iterable[T]) -> Queue[T];
+    clone() -> Queue[T];
+    filter!(pred: T -> Any) -> Queue[T];
+    remove(x: Any) -> Bool;
+    reverse!() -> Queue[T];
+    shift() -> T;
+    shift(n: Int) -> Array[T];
+    shift-while(p: T -> Any) -> Array[T];
+    []=(i: Int, x: T) -> T;
     __iter__*() -> Generator[T] {
         for x in self {
             yield x

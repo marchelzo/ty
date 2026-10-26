@@ -16,33 +16,18 @@ fn fmt-float(x: Float) -> String {
 /// Server-wide counters, updated with atomics so every event loop can record
 /// without locking; read them with `snapshot()` or `prometheus()`.
 pub class Metrics {
-    requests:          Atomic
-    by-class:          Array[Atomic]
-    bytes-out:         Atomic
-    errors:            Atomic
-    aborted:           Atomic
-    in-flight:         Atomic
-    websockets:        Atomic
-    websockets-total:  Atomic
-    connections-total: Atomic
-    rejected:          Atomic
-    latency:           Array[Atomic]
-    latency-sum-us:    Atomic
-
-    init() {
-        requests          = Atomic(0)
-        by-class          = counters(6)
-        bytes-out         = Atomic(0)
-        errors            = Atomic(0)
-        aborted           = Atomic(0)
-        in-flight         = Atomic(0)
-        websockets        = Atomic(0)
-        websockets-total  = Atomic(0)
-        connections-total = Atomic(0)
-        rejected          = Atomic(0)
-        latency           = counters(#BUCKETS + 1)
-        latency-sum-us    = Atomic(0)
-    }
+    requests:          Atomic = Atomic(0)
+    by-class:          Array[Atomic] = counters(6)
+    bytes-out:         Atomic = Atomic(0)
+    errors:            Atomic = Atomic(0)
+    aborted:           Atomic = Atomic(0)
+    in-flight:         Atomic = Atomic(0)
+    websockets:        Atomic = Atomic(0)
+    websockets-total:  Atomic = Atomic(0)
+    connections-total: Atomic = Atomic(0)
+    rejected:          Atomic = Atomic(0)
+    latency:           Array[Atomic] = counters(#BUCKETS + 1)
+    latency-sum-us:    Atomic = Atomic(0)
 
     observe(status: Int, seconds: Float, bytes: Int) {
         requests.fetch-add(1)

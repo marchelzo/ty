@@ -5666,6 +5666,15 @@ interface_default_type(T2Checker *checker, Expr const *function, usize index)
              : t2_primitive(checker->universe, T2_TYPE_DYNAMIC);
 }
 
+inline static bool
+field_initializer_default(Expr const *function, Expr const *value)
+{
+        return (value->type == EXPRESSION_NIL)
+            && (function->fn->body == NULL)
+            && (function->fn->class != NULL)
+            && s_eq(function->fn->name, "init");
+}
+
 static void
 append_default_predicates(
         T2Checker             *checker,
@@ -5680,6 +5689,7 @@ append_default_predicates(
                 Expr const *value = v__(function->fn->dflts, (int)i);
                 if (
                         (value == NULL)
+                     || field_initializer_default(function, value)
                      || !defers_default(
                                 checker,
                                 declared_parameter_annotation(function, i),
@@ -24667,6 +24677,9 @@ infer_single_function(T2Checker *checker, Expr const *function)
                      && (value->type == EXPRESSION_NIL)
                      && (LocS(value->start) == NULL)
                 ) {
+                        continue;
+                }
+                if (field_initializer_default(function, value)) {
                         continue;
                 }
                 T2ParameterSpec parameter;

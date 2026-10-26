@@ -114,7 +114,7 @@ fn accepts?(req: Request, coding: String) -> Bool {
     let $ae = req.header('accept-encoding') or return false
     for part in ae.split(',') {
         let fields = part.split(';').map(\_.strip())
-        if fields[0].lower() == coding {
+        if fields[0].ieq?(coding) {
             return !fields.drop(1).any?(\_.match?(/^q\s*=\s*0(\.0*)?$/))
         }
     }

@@ -1,0 +1,23 @@
+/**
+ * The hook `http.client` uses to cooperate with a server event loop: while a
+ * server task runs on this thread, `running()` is the loop running it, and
+ * the client sleeps and does blocking I/O through that loop instead of
+ * stalling it.
+ */
+pub trait Scheduler {
+    sleep(seconds: Int | Float);
+    blocking[a](f: (*_) -> a, *args: _) -> a;
+}
+
+let __tls::current: Scheduler | nil = nil
+
+pub fn running() -> Scheduler | nil {
+    current
+}
+
+/// Makes `s` the running scheduler of this thread; returns the previous one.
+pub fn enter(s: Scheduler | nil) -> Scheduler | nil {
+    let prev = current
+    current = s
+    prev
+}

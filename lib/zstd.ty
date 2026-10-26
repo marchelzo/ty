@@ -1,222 +1,85 @@
-import ffi as c (C!)
+/**
+ * Zstandard (built in): one-shot and streaming compression.
+ */
+import _codec as native
 
-if not let $zstd = c.open('zstd') {
-    throw 'failed to open zstd library'
-}
+pub VERSION = native.zstd-version()
 
-const size_t = c.u64
-
-C! zstd fn {
-    int ZSTD_isError(size_t code);
-    const char* ZSTD_getErrorName(size_t code);
-
-    size_t ZSTD_compress(
-        void* dst,
-        size_t dstCapacity,
-        const void* src,
-        size_t srcSize,
-        int compressionLevel
-    );
-
-    size_t ZSTD_decompress(
-        void* dst,
-        size_t dstCapacity,
-        const void* src,
-        size_t compressedSize
-    );
-
-    size_t ZSTD_compressBound(size_t srcSize);
-
-    long long ZSTD_getFrameContentSize(const void* src, size_t srcSize);
-
-    unsigned ZSTD_maxCLevel(void);
-
-    size_t ZSTD_versionNumber(void);
-    const char* ZSTD_versionString(void);
-
-    ZSTD_CCtx* ZSTD_createCCtx(void);
-    size_t ZSTD_freeCCtx(ZSTD_CCtx* cctx);
-
-    ZSTD_DCtx* ZSTD_createDCtx(void);
-    size_t ZSTD_freeDCtx(ZSTD_DCtx* dctx);
-
-    size_t ZSTD_compressCCtx(
-        ZSTD_CCtx* cctx,
-        void* dst,
-        size_t dstCapacity,
-        const void* src,
-        size_t srcSize,
-        int compressionLevel
-    );
-
-    size_t ZSTD_decompressDCtx(
-        ZSTD_DCtx* dctx,
-        void* dst,
-        size_t dstCapacity,
-        const void* src,
-        size_t compressedSize
-    );
-
-    size_t ZSTD_CStreamInSize(void);
-    size_t ZSTD_CStreamOutSize(void);
-    size_t ZSTD_DStreamInSize(void);
-    size_t ZSTD_DStreamOutSize(void);
-
-    size_t ZSTD_compressStream2(
-        ZSTD_CCtx* cctx,
-        ZSTD_outBuffer* output,
-        ZSTD_inBuffer* input,
-        int endOp
-    );
-
-    size_t ZSTD_decompressStream(
-        ZSTD_DCtx* zds,
-        ZSTD_outBuffer* output,
-        ZSTD_inBuffer* input
-    );
-
-    size_t ZSTD_CCtx_setParameter(ZSTD_CCtx* cctx, int param, int value);
-    size_t ZSTD_CCtx_reset(ZSTD_CCtx* cctx, int reset);
-    size_t ZSTD_DCtx_reset(ZSTD_DCtx* dctx, int reset);
-}
-
-C! struct ZSTD_inBuffer {
-    const void* src;
-    size_t size;
-    size_t pos;
-}
-
-C! struct ZSTD_outBuffer {
-    void* dst;
-    size_t size;
-    size_t pos;
-}
-
-const ZSTD_e_continue = 0
-const ZSTD_e_flush    = 1
-const ZSTD_e_end      = 2
-
-const ZSTD_reset_session_and_parameters = 3
-const ZSTD_c_compressionLevel = 100
-
-fn check!(rc) {
-    if ZSTD_isError(rc) != 0 {
-        throw RuntimeError("zstd: {c.as_str(ZSTD_getErrorName(rc))}")
-    }
-    rc
+pub class ZstdError < RuntimeError {
 }
 
 pub fn compress(data: String | Blob, level: Int = 3) -> Blob {
-    let bound = ZSTD_compressBound(data.size())
-    let buf = c.alloc(bound)
-    defer c.free(buf)
-
-    let size = check!(ZSTD_compress(buf, bound, data, data.size(), level))
-
-    let out = Blob()
-    out.push(buf, size)
-    return out
+    native.zstd-compress(data, level)
 }
 
 pub fn content-size(data: String | Blob) -> Int {
-    match ZSTD_getFrameContentSize(data, data.size()) {
-        -1 => throw RuntimeError('zstd: the frame does not record its content size'),
-        -2 => throw RuntimeError('zstd: not a zstd frame'),
+    match native.zstd-content-size(data) {
+        -1 => throw ZstdError('zstd: the frame does not record its content size'),
+        -2 => throw ZstdError('zstd: not a zstd frame'),
         n  => n
     }
 }
 
 pub fn decompress(data: String | Blob, originalSize: Int = content-size(data)) -> Blob {
-    let buf = c.alloc(originalSize)
-    defer c.free(buf)
-
-    let size = check!(ZSTD_decompress(buf, originalSize, data, data.size()))
-
-    let out = Blob()
-    out.push(buf, size)
-    return out
+    native.zstd-decompress(data, originalSize)
 }
 
+fn open(encode: Bool, level: Int = 0) -> Ptr {
+    match native.open('zstd', encode, level) {
+        z: Ptr => z,
+        why    => throw ZstdError("zstd: {why}")
+    }
+}
+
+/// Streaming compressor: `write` buffers compressed output, `flush` ends
+/// the frame and returns it, after which the compressor starts a new one.
 pub class Compressor {
-    __cctx: _
+    __z:   Ptr
     __out: Blob
-    __buf-size: Int
-    __buf: _
 
     init(level: Int = 3) {
-        __cctx = ZSTD_createCCtx()
-        check!(ZSTD_CCtx_setParameter(__cctx, ZSTD_c_compressionLevel, level))
+        __z   = open(true, level)
         __out = Blob()
-        __buf-size = ZSTD_CStreamOutSize()
-        __buf = c.alloc(__buf-size)
     }
 
     write(data: String | Blob) {
-        let input = ZSTD_inBuffer(src: data, size: data.size(), pos: 0)
-        while input.pos < input.size {
-            let output = ZSTD_outBuffer(dst: __buf, size: __buf-size, pos: 0)
-            check!(ZSTD_compressStream2(__cctx, output, input, ZSTD_e_continue))
-            if output.pos > 0 {
-                __out.push(__buf, output.pos)
-            }
+        if native.run(__z, data, __out, 0) != 0 {
+            throw ZstdError("zstd: {native.message(__z)}")
         }
     }
 
     flush() -> Blob {
-        let input = ZSTD_inBuffer(src: nil, size: 0, pos: 0)
-        for (;;) {
-            let output = ZSTD_outBuffer(dst: __buf, size: __buf-size, pos: 0)
-            let remaining = check!(ZSTD_compressStream2(__cctx, output, input, ZSTD_e_end))
-            if output.pos > 0 {
-                __out.push(__buf, output.pos)
-            }
-            break if remaining == 0
+        if native.run(__z, nil, __out, 2) != 0 {
+            throw ZstdError("zstd: {native.message(__z)}")
         }
         let result = __out
         __out = Blob()
-        check!(ZSTD_CCtx_reset(__cctx, ZSTD_reset_session_and_parameters))
-        return result
-    }
-
-    __drop__() {
-        ZSTD_freeCCtx(__cctx)
-        c.free(__buf)
+        native.reset(__z)
+        result
     }
 }
 
+/// Streaming decompressor: `write` feeds compressed data, `flush` returns
+/// the output so far and starts over.
 pub class Decompressor {
-    __dctx: _
+    __z:   Ptr
     __out: Blob
-    __buf-size: Int
-    __buf: _
 
     init() {
-        __dctx = ZSTD_createDCtx()
+        __z   = open(false)
         __out = Blob()
-        __buf-size = ZSTD_DStreamOutSize()
-        __buf = c.alloc(__buf-size)
     }
 
     write(data: String | Blob) {
-        let input = ZSTD_inBuffer(src: data, size: data.size(), pos: 0)
-        while input.pos < input.size {
-            let output = ZSTD_outBuffer(dst: __buf, size: __buf-size, pos: 0)
-            check!(ZSTD_decompressStream(__dctx, output, input))
-            if output.pos > 0 {
-                __out.push(__buf, output.pos)
-            }
+        if native.run(__z, data, __out) != 0 {
+            throw ZstdError("zstd: {native.message(__z)}")
         }
     }
 
     flush() -> Blob {
         let result = __out
         __out = Blob()
-        check!(ZSTD_DCtx_reset(__dctx, ZSTD_reset_session_and_parameters))
-        return result
-    }
-
-    __drop__() {
-        ZSTD_freeDCtx(__dctx)
-        c.free(__buf)
+        native.reset(__z)
+        result
     }
 }

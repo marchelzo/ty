@@ -1,5 +1,5 @@
 /**
- * HTTP server: HTTP/1.1, HTTP/2 (via libnghttp2), TLS (via `ssl`),
+ * HTTP server: HTTP/1.1, HTTP/2 (via nghttp2, built in), TLS (via `ssl`),
  * WebSockets and Server-Sent Events, on io_uring (Linux) or kqueue
  * (macOS/BSD; Linux with libkqueue) event loops.
  *

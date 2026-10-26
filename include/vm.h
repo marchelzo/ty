@@ -468,6 +468,10 @@ vm_jit_pop_target(Ty *ty);
 Value
 vm_jit_bind_method(Ty *ty, Value *f, Value *v);
 
+enum {
+        LOOP_PAIRS = 1 << 16
+};
+
 void
 vm_iter_begin(Ty *ty, Value xs);
 

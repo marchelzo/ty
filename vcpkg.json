@@ -9,7 +9,10 @@
         "jit"
       ]
     },
+    "nghttp2",
     "xxhash",
+    "zlib",
+    "zstd",
     "mimalloc",
     {
       "name": "gperf",

@@ -26,10 +26,9 @@ pub use HeaderValue  = String | Int | Float | Bool | Array[String | Int | Float]
 pub use HeaderSource = Headers | Dict[String, _] | Array[(String, _)] | nil
 
 pub class Headers {
-    __items: Array[(String, String)]
+    __items: Array[(String, String)] = []
 
     init(src: HeaderSource = nil) {
-        __items = []
         if src != nil {
             update(src)
         }
@@ -50,9 +49,8 @@ pub class Headers {
     }
 
     __index(name: String) -> Int | nil {
-        let want = name.lower()
         for (k, _); i in __items {
-            if k.lower() == want {
+            if k.ieq?(name) {
                 return i
             }
         }
@@ -70,10 +68,9 @@ pub class Headers {
     }
 
     get(name: String, default: String | nil = nil) -> String | nil {
-        let want = name.lower()
         let found = nil
         for (k, v) in __items {
-            if k.lower() == want {
+            if k.ieq?(name) {
                 found = (found == nil) ? v : "{found}, {v}"
             }
         }
@@ -90,14 +87,12 @@ pub class Headers {
 
     /// Every value of `name`, in order.
     all(name: String) -> Array[String] {
-        let want = name.lower()
-        [v for (k, v) in __items if k.lower() == want]
+        [v for (k, v) in __items if k.ieq?(name)]
     }
 
     /// Replaces every field named `name` with one field. `nil` removes it;
     /// an Array sets one field per element.
     set(name: String, value: HeaderValue) -> Headers {
-        let want = name.lower()
         match __index(name) {
             nil => {
                 if value != nil {
@@ -106,12 +101,12 @@ pub class Headers {
             },
             i => {
                 let k = __items[i].0
-                __items = [p for p; j in __items if j < i || p.0.lower() != want]
+                let tail = __items.splice(i, #__items - i)
+                tail.filter!(p -> !p.0.ieq?(name))
                 if value != nil {
-                    let tail = __items.splice(i, #__items - i)
                     __push(k, value)
-                    __items += tail
                 }
+                __items.push(*tail)
             }
         }
         self
@@ -138,8 +133,7 @@ pub class Headers {
     }
 
     remove(name: String) -> Headers {
-        let want = name.lower()
-        __items = [p for p in __items if p.0.lower() != want]
+        __items.filter!(p -> !p.0.ieq?(name))
         self
     }
 
@@ -163,11 +157,12 @@ pub class Headers {
             __items = [p for p in fresh if p.1 != nil]
             return self
         }
-        let names = %{}
-        for (k, _) in fresh {
-            names[k.lower()] = true
+        __items.filter!(p -> !fresh.any?(q -> q.0.ieq?(p.0)))
+        for p in fresh {
+            if p.1 != nil {
+                __items.push(p)
+            }
         }
-        __items = [p for p in __items if names[p.0.lower()] == nil] + [p for p in fresh if p.1 != nil]
         self
     }
 
@@ -202,12 +197,15 @@ pub class Headers {
         [*__items]
     }
 
+    /// The fields as stored, without copying. Do not modify the array.
+    pairs -> Array[(String, String)] {
+        __items
+    }
+
     names() -> Array[String] {
-        let seen = %{}
         let out = []
         for (k, _) in __items {
-            if seen[k.lower()] == nil {
-                seen[k.lower()] = true
+            if !out.any?(\_.ieq?(k)) {
                 out.push(k)
             }
         }
@@ -264,10 +262,20 @@ pub class Headers {
     }
 
     ==(other: Any) -> Bool {
-        match other {
-            h: Headers => __items.map(p -> (p.0.lower(), p.1)) == h.items().map(p -> (p.0.lower(), p.1)),
-            _          => false
+        let h = match other {
+            h: Headers => h,
+            _          => return false
         }
+        if #__items != #h.__items {
+            return false
+        }
+        for (k, v); i in __items {
+            let (k2, v2) = h.__items[i]
+            if v != v2 || !k.ieq?(k2) {
+                return false
+            }
+        }
+        true
     }
 
     __str__() -> String {

@@ -14,16 +14,10 @@ pub class DeflateError < RuntimeError {
 /// Per-connection permessage-deflate state (RFC 7692) negotiated with
 /// no_context_takeover in both directions, so each message is independent.
 pub class PerMessage {
-    level: Int
+    level: Int = 6
 
     __def: codec.Encoder | nil
     __inf: codec.Decoder | nil
-
-    init(level: Int = 6) {
-        self.level = level
-        __def = nil
-        __inf = nil
-    }
 
     compress(data: String | Blob) -> Blob {
         let e = match __def {
@@ -42,7 +36,7 @@ pub class PerMessage {
         out
     }
 
-    decompress(data: Blob, limit: Int) -> Blob {
+    decompress(data: String | Blob, limit: Int) -> Blob {
         let d = match __inf {
             nil => (__inf = codec.decoder('raw-deflate', limit)!),
             d   => do { d.reset(); d }

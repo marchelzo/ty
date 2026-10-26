@@ -8,17 +8,10 @@ import json
 /// One received event. `data` is the joined `data:` lines; `id` is the last
 /// event id seen on the stream (it persists across events, as in browsers).
 pub class Event {
-    event: String
-    data:  String
+    event: String = 'message'
+    data:  String = ''
     id:    String | nil
     retry: Int | nil
-
-    init(event: String = 'message', data: String = '', id: String | nil = nil, retry: Int | nil = nil) {
-        self.event = event
-        self.data  = data
-        self.id    = id
-        self.retry = retry
-    }
 
     /// `data` decoded as JSON.
     json() -> _ {
@@ -72,23 +65,12 @@ pub class Parser {
     last-id: String | nil
     retry:   Int | nil
 
-    __buf:   Blob
-    __event: String
-    __data:  Array[String]
-    __any?:  Bool
-    __bom?:  Bool
-    __cr?:   Bool
-
-    init(last-id: String | nil = nil) {
-        self.last-id = last-id
-        retry   = nil
-        __buf   = Blob()
-        __event = ''
-        __data  = []
-        __any?  = false
-        __bom?  = true
-        __cr?   = false
-    }
+    __buf:   Blob = Blob()
+    __event: String = ''
+    __data:  Array[String] = []
+    __any?:  Bool = false
+    __bom?:  Bool = true
+    __cr?:   Bool = false
 
     feed(chunk: String | Blob) -> Array[Event] {
         __buf.push(chunk)

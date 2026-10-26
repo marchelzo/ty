@@ -1079,19 +1079,29 @@ TY_BUILTIN_RAW(blob)
 Value
 builtin_queue(Ty *ty, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Queue()", 0);
+        ASSERT_ARGC("Queue()", 0, 1, 2);
 
-        Queue *q   = queue_new(ty);
         Value *max = NAMED("maxLen");
+        Value  out = QUEUE(queue_new(ty));
+
+        if (argc == 2) {
+                max = &ARG(1);
+        }
 
         if (max != NULL && !IsNil(*max)) {
                 if (max->type != VALUE_INTEGER || max->z < 1) {
                         zP("Queue(): max-len must be a positive Int, got %s", VSC(max));
                 }
-                q->max = max->z;
+                out.queue->max = max->z;
         }
 
-        return QUEUE(q);
+        if (argc >= 1 && !IsNil(ARG(0))) {
+                gP(&out);
+                queue_extend(ty, out.queue, ARG(0));
+                gX();
+        }
+
+        return out;
 }
 
 Value
@@ -6102,7 +6112,8 @@ TY_BUILTIN_RAW(os_accept)
         return conn;
 }
 
-// os.recvfrom(sock: Int, n: Int, flags: Int) -> (Blob, Blob)
+// os.recvfrom(sock: Int, n: Int, flags: Int) -> (Blob, Blob) | nil
+// os.recvfrom(sock: Int, buf: Blob, n: Int, flags: Int) -> (Blob, Blob) | nil
 //
 // See recvfrom(2). Receives up to `n` bytes and returns the data together with
 // the sender's address, or nil on failure. Pass a Blob before `n` to receive
@@ -6160,10 +6171,19 @@ TY_BUILTIN_RAW(os_recvfrom)
         return result;
 }
 
-// os.sendto(sock: Int, data: Any, flags: Int, addr: ?Blob) -> Int
+// os.sendto(
+//     sock: Int,
+//     data: String | Blob,
+//     flags: Int,
+//     addr: ?Blob = nil,
+//     off: Int = 0,
+//     n: ?Int = nil
+// ) -> Int
+// os.sendto(sock: Int, data: Ptr, flags: Int, addr: ?Blob = nil, n: Int) -> Int
 //
 // See sendto(2). `addr` is a socket address such as the `address` of an
-// AddrInfo returned by `getaddrinfo`.
+// AddrInfo returned by `getaddrinfo`. Sends the `n` bytes of `data` starting
+// at `off` (by default all of them); a Ptr needs `n`.
 //
 //     let sock = socket(AF_INET, SOCK_DGRAM, 0)
 //     let Ok([{address, *}, *]) = getaddrinfo('localhost', 3000, AF_INET, SOCK_DGRAM, 0)
@@ -6178,20 +6198,37 @@ TY_BUILTIN_RAW(os_sendto)
         int fd = INT_ARG(0);
 
         u8 const *data;
-        usize len;
+        isize len;
 
-        Value buffer = ARGx(1, VALUE_BLOB, VALUE_STRING);
+        Value buffer = ARGx(1, VALUE_BLOB, VALUE_STRING, VALUE_PTR);
+        Value _off   = KWARG("off", INTEGER);
+        Value _n     = KWARG("n",   INTEGER);
 
         switch (buffer.type) {
         case VALUE_BLOB:
                 data = vv(*buffer.blob);
-                len = vN(*buffer.blob);
+                len  = vN(*buffer.blob);
                 break;
 
         case VALUE_STRING:
                 data = ss(buffer);
-                len = sN(buffer);
+                len  = sN(buffer);
                 break;
+
+        case VALUE_PTR:
+                if (IsNone(_n)) {
+                        zP("os.sendto(): sending from a Ptr needs `n`");
+                }
+                data = buffer.ptr;
+                len  = _n.z;
+                break;
+        }
+
+        isize off = IsNone(_off) ? 0         : _off.z;
+        isize n   = IsNone(_n)   ? len - off : _n.z;
+
+        if (off < 0 || n < 0 || off + n > len) {
+                zP("os.sendto(): range [%zd, %zd) is out of bounds (%zd bytes)", off, off + n, len);
         }
 
         int flags = INT_ARG(2);
@@ -6199,14 +6236,14 @@ TY_BUILTIN_RAW(os_sendto)
         struct sockaddr *sa = NULL;
         socklen_t sa_len = 0;
 
-        if (argc == 4) {
+        if (argc == 4 && ARG_T(3) != VALUE_NIL) {
                 Blob *addr = ARGx(3, VALUE_BLOB).blob;
                 sa = (struct sockaddr *)vv(*addr);
                 sa_len = vN(*addr);
         }
 
         UnlockTy();
-        isize ret = sendto(fd, data, len, flags, sa, sa_len);
+        isize ret = sendto(fd, data + off, n, flags, sa, sa_len);
         LockTy();
 
         return INTEGER(ret);

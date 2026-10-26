@@ -256,16 +256,41 @@ pub class LogRecord {
 pub class LogSpan {
     parent: LogSpan | nil
     name:   String | nil
-    path:   Array[String]
-    fields: Array[(String, _)]
+
+    __own:    Array[(String, _)]
+    __path:   Array[String] | nil
+    __fields: Array[(String, _)] | nil
 
     init(parent: LogSpan | nil, name: String | nil, fields: Array[(String, _)]) {
         self.parent = parent
         self.name   = name
-        self.path   = (parent == nil) ? [] : parent.path
-        self.fields = (parent == nil) ? fields : (parent.fields + fields)
-        if name != nil {
-            self.path = self.path + [name]
+        __own       = fields
+    }
+
+    /// Names of the enclosing spans, outermost first (computed when first
+    /// needed, since most spans never log anything).
+    path -> Array[String] {
+        if let $known = __path {
+            return known
+        }
+        let base = match parent {
+            nil => [],
+            p   => p.path
+        }
+        __path = match name {
+            nil => base,
+            n   => base + [n]
+        }
+    }
+
+    /// Fields of this span and its parents.
+    fields -> Array[(String, _)] {
+        if let $known = __fields {
+            return known
+        }
+        __fields = match parent {
+            nil => __own,
+            p   => p.fields + __own
         }
     }
 

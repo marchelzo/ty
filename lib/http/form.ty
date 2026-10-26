@@ -1,5 +1,6 @@
 import path (Path)
 import ssl
+import _http as hc
 
 pub const MIME: Dict[String, String] = %{
     'html':  'text/html; charset=utf-8',
@@ -116,8 +117,8 @@ pub fn multipart*(boundary: String) {
             if not let [k, v] = line.split(': ', 1) {
                 yield MultipartError
             }
-            match k.lower() {
-                'content-disposition' => {
+            match k {
+                /^content-disposition$/i => {
                     let disposition: Dict[String, String] = %{k: v for [_, k, v] in v.scan(/(\w+)="([^"]+)"/)}
 
                     name     = disposition['name']
@@ -135,7 +136,7 @@ pub fn multipart*(boundary: String) {
                     }
                 },
 
-                'content-type' => {
+                /^content-type$/i => {
                     mime = v
                 },
 
@@ -178,37 +179,26 @@ pub fn multipart*(boundary: String) {
 }
 
 pub fn urldecode(s: String) -> String {
-    s.sub('+', ' ')
-     .sub(/%([[:xdigit:]]{2})/, [_, h] -> chr(int(h, 16)))
-     .sub('\r\n', '\n')
-     .sub('\r', '\n')
+    hc.percent-decode(s, plus: true, form: true)
 }
 
 pub fn decode-query(query: String) -> Dict[String, String | Array[String | nil] | nil] {
-    let params = %{}
-
-    for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(urldecode)) {
-        match params[k] {
-            nil         => { params[k] = v        },
-            one: String => { params[k] = [one, v] },
-            many        => { many.push(v)         }
-        }
-    }
-
-    params
+    hc.decode-query(query)
 }
 
 pub fn urlencode(s: String) -> String {
-    s.sub(/[^A-Za-z0-9\-._~]/, (c: String) -> c.bytes().map(b -> "%{b:02X}").join(''))
+    hc.percent-encode(s)
 }
 
-pub fn encode-query(params: Dict[String, _]) -> String {
-    [ "{urlencode(str(k))}={urlencode(str(v))}" for k, v in params ].join('&')
+/// `k=v` pairs joined by `&`; Array values repeat the key and nil values
+/// give a bare key.
+pub fn encode-query(params: Dict[String, _] | Array[(String, _)]) -> String {
+    hc.encode-query(params)
 }
 
 /// Decodes %XX escapes only (no `+` → space), for URL paths.
 pub fn percent-decode(s: String) -> String {
-    s.sub(/(?:%[0-9A-Fa-f]{2})+/, run -> Blob(*run.split('%').drop(1).map(int@(_, 16))).str!())
+    hc.percent-decode(s)
 }
 
 fn quote-param(s: String) -> String {

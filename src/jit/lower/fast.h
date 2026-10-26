@@ -505,6 +505,7 @@ fast_loop(BcLir *c, BcLirNode const *node)
 
         if (
                 (check->op != INSTR_LOOP_CHECK)
+             || check->pairs
              || (check->label != LIR_NONE)
              || (check->member < 1 || check->member > 2)
              || (c->nodes[check->target].label == LIR_NONE)

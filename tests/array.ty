@@ -33,3 +33,18 @@ pub fn postfix-bang-ends-a-subscript() {
     assert(xs[at('0')!;at('2')!] == [10, 20])
     assert([1, 2, 3].map(\_ * 2)[at('2')!] == 6)
 }
+
+pub fn shift() {
+    let xs = [1, 2, 3, 4, 5, 6, 7]
+    let alias = xs
+    assert(xs.shift() == 1)
+    assert(xs.shift(2) == [2, 3])
+    assert(xs.shift(0) == [])
+    assert(alias == [4, 5, 6, 7])
+    assert(xs.shift(10) == [4, 5, 6, 7])
+    assert(xs == [])
+    assert(xs.shift(3) == [])
+    let threw = false
+    try { xs.shift() } catch _ { threw = true }
+    assert(threw)
+}

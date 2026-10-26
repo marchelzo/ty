@@ -1,4 +1,3 @@
-import ffi as c
 import log
 import http.core (
     BodyWriter,
@@ -9,26 +8,11 @@ import http.core (
     ConnectionClosed,
     Task,
     task,
-    suspend,
-    this-loop
+    suspend
 )
 import http.wire (Request)
 import http.loop (Conn, Loop, LoopExchange, Host, Proto, READ)
 import http.nghttp2 (..)
-
-fn session-of(user: Ptr | nil) -> H2 | nil {
-    let l = this-loop()
-    match (l :: Loop) ? l.slot-proto(int(user ?? 0)) : nil {
-        h: H2 => h,
-        _     => nil
-    }
-}
-
-let __tls::cb-cache: Callbacks | nil = nil
-
-fn callbacks() -> Callbacks {
-    cb-cache ?? (cb-cache = Callbacks(session-of))
-}
 
 class Stream {
     id:          Int
@@ -36,49 +20,47 @@ class Stream {
     path:        String | nil
     scheme:      String | nil
     authority:   String | nil
-    headers:     Dict[String, String | Array[String]]
-    head-size:   Int
+    headers:     Dict[String, String | Array[String]] = %{}
+    head-size:   Int = 0
     body:        Blob | nil
-    dispatched?: Bool
-    rejected?:   Bool
-    closed?:     Bool
-    out:         Blob
-    pos:         Int
-    eof?:        Bool
-    deferred?:   Bool
-    submitted?:  Bool
+    dispatched?: Bool = false
+    rejected?:   Bool = false
+    closed?:     Bool = false
+    out:         Blob = Blob()
+    pos:         Int = 0
+    eof?:        Bool = false
+    deferred?:   Bool = false
+    submitted?:  Bool = false
     x:           H2Exchange | nil
-    prd:         Blob | nil
     queue:       BodyQueue | nil
-
-    init(id: Int) {
-        self.id     = id
-        method      = nil
-        path        = nil
-        scheme      = nil
-        authority   = nil
-        headers     = %{}
-        head-size   = 0
-        body        = nil
-        dispatched? = false
-        rejected?   = false
-        closed?     = false
-        out         = Blob()
-        pos         = 0
-        eof?        = false
-        deferred?   = false
-        submitted?  = false
-        x           = nil
-        prd         = nil
-        queue       = nil
-    }
 
     pending -> Int {
         #out - pos
     }
+
+    /// Hands nghttp2 up to `max` bytes (see `_http`'s `cb-read`). The bytes
+    /// are copied after this returns, so consumed data is dropped on the
+    /// next call instead of now.
+    take(max: Int) -> (Blob, Int, Int, Bool) | Int {
+        if pos == #out {
+            out.clear()
+            pos = 0
+        } else if pos > 65536 && pos * 2 > #out {
+            out.clear(0, pos)
+            pos = 0
+        }
+        let n = min(max, pending)
+        if n == 0 && !eof? {
+            deferred? = true
+            return NGHTTP2_ERR_DEFERRED
+        }
+        let at = pos
+        pos += n
+        (out, at, n, eof? && pos == #out)
+    }
 }
 
-fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String, server-name: String | nil) -> (Blob, Int, Blob) {
+fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String, server-name: String | nil) -> Array[(String, String)] {
     let pairs = [(':status', str(status)), ('date', date)]
 
     if server-name != nil {
@@ -105,7 +87,7 @@ fn header-list(rsp: Response | nil, status: Int, length: Int | nil, date: String
         pairs.push(('content-length', str(length)))
     }
 
-    nv-list(pairs)
+    pairs
 }
 
 pub class H2Exchange : LoopExchange {
@@ -113,21 +95,16 @@ pub class H2Exchange : LoopExchange {
     stream:  Stream
 
     __request: Request
-    __closed?: Bool
+    __closed?: Bool = false
     __writer:  BodyWriter | nil
-    __closers: Array[() -> _]
-    __waiting: Array[Task]
-    __drain:   Array[Task]
+    __closers: Array[() -> _] | nil
+    __waiting: Array[Task] | nil
+    __drain:   Array[Task] | nil
 
     init(proto: H2, stream: Stream, request: Request) {
-        self.proto   = proto
-        self.stream  = stream
-        __request    = request
-        __closed?    = false
-        __writer     = nil
-        __closers    = []
-        __waiting    = []
-        __drain      = []
+        self.proto  = proto
+        self.stream = stream
+        __request   = request
     }
 
     loop -> Loop {
@@ -213,7 +190,10 @@ pub class H2Exchange : LoopExchange {
     wait-drain(below: Int = -1) {
         let limit = (below < 0) ? proto.conn.config.write-high-water / 2 : below
         while !closed? && buffered > limit {
-            __drain.push(task()!)
+            match __drain {
+                nil => __drain = [task()!],
+                xs  => xs.push(task()!)
+            }
             suspend()
         }
         if closed? {
@@ -222,9 +202,8 @@ pub class H2Exchange : LoopExchange {
     }
 
     drained() {
-        if __drain {
-            let ws = __drain
-            __drain = []
+        if let $ws = __drain {
+            __drain = nil
             for t in ws {
                 proto.conn.loop.resume(t)
             }
@@ -233,7 +212,10 @@ pub class H2Exchange : LoopExchange {
 
     wait-closed() {
         while !closed? {
-            __waiting.push(task()!)
+            match __waiting {
+                nil => __waiting = [task()!],
+                xs  => xs.push(task()!)
+            }
             suspend()
         }
     }
@@ -242,7 +224,10 @@ pub class H2Exchange : LoopExchange {
         if closed? {
             f()
         } else {
-            __closers.push(f)
+            match __closers {
+                nil => __closers = [f],
+                xs  => xs.push(f)
+            }
         }
     }
 
@@ -252,21 +237,29 @@ pub class H2Exchange : LoopExchange {
         }
         __closed? = true
 
-        let cs = __closers
-        __closers = []
-        for f in cs {
-            try {
-                f()
-            } catch e {
-                log::error!("error in on-close callback", err: e)
+        if let $cs = __closers {
+            __closers = nil
+            for f in cs {
+                try {
+                    f()
+                } catch e {
+                    log::error!("error in on-close callback", err: e)
+                }
             }
         }
 
-        let ws = __waiting + __drain
-        __waiting = []
-        __drain = []
-        for t in ws {
-            proto.conn.loop.resume(t)
+        if let $ws = __waiting {
+            __waiting = nil
+            for t in ws {
+                proto.conn.loop.resume(t)
+            }
+        }
+
+        if let $ws = __drain {
+            __drain = nil
+            for t in ws {
+                proto.conn.loop.resume(t)
+            }
         }
     }
 }
@@ -276,52 +269,28 @@ pub class H2 : Proto {
     server: Host
 
     __session:  Ptr | nil
-    __streams:  Dict[Int, Stream]
-    __pumping?: Bool
-    __out:      Ptr
-    __goaway?:  Bool
-    __dead?:    Bool
+    __streams:  Dict[Int, Stream] = %{}
+    __pumping?: Bool = false
+    __out:      Blob = Blob()
+    __goaway?:  Bool = false
+    __dead?:    Bool = false
 
     init(conn: Conn, server: Host) {
         self.conn   = conn
         self.server = server
-        __streams   = %{}
-        __pumping?  = false
-        __goaway?   = false
-        __dead?     = false
-        __out       = c.new-auto(c.ptr)
-
-        let cb  = callbacks()
-        let opt = c.new-auto(c.ptr)
-        nghttp2_option_new(opt)
-        let option = c.load(c.ptr, opt)
-        nghttp2_option_set_max_settings(option, 64)
-
-        let out = c.new-auto(c.ptr)
-        let ud = c.new-auto(c.u64)
-        c.store(c.u64, ud, conn.slot)
-        let rc = nghttp2_session_server_new2(out, cb.cbs, c.load(c.ptr, ud), option)
-        nghttp2_option_del(option)
-
-        if rc != 0 {
-            throw RuntimeError("http.h2: nghttp2_session_server_new2: {strerror(rc)}")
-        }
-
-        __session = c.load(c.ptr, out)
+        let s       = h2-new(true)
+        __session   = s
 
         let cfg = conn.config
-        let iv = c.pack(
-            Blob(),
-            '=8I',
+        h2-settings(s, [
             SETTINGS_MAX_CONCURRENT_STREAMS, cfg.h2-max-concurrent-streams,
             SETTINGS_INITIAL_WINDOW_SIZE,    cfg.h2-initial-window,
             SETTINGS_MAX_HEADER_LIST_SIZE,   cfg.max-header-size,
             SETTINGS_MAX_FRAME_SIZE,         max(16384, min(cfg.h2-max-frame, 16777215))
-        )
-        nghttp2_submit_settings(__session, 0, iv, 4)
+        ])
 
         let window = max(cfg.h2-initial-window * 4, 65535)
-        nghttp2_session_set_local_window_size(__session, 0, 0, min(window, 0x7FFFFFFF))
+        h2-local-window(s, min(window, 0x7FFFFFFF))
 
         conn.timeout(READ, cfg.idle-timeout)
         __schedule()
@@ -345,7 +314,7 @@ pub class H2 : Proto {
         let high = conn.config.write-high-water
 
         while conn.buffered < high {
-            let n = nghttp2_session_mem_send(s, __out)
+            let n = h2-send(s, self, __out, high - conn.buffered)
             if n < 0 {
                 log::debug!("nghttp2_session_mem_send failed", error: strerror(n))
                 return conn.close()
@@ -353,7 +322,8 @@ pub class H2 : Proto {
             if n == 0 {
                 break
             }
-            conn.write-raw(c.load(c.ptr, __out), n)
+            conn.write(__out)
+            __out.clear()
         }
 
         for _, st in __streams {
@@ -364,7 +334,7 @@ pub class H2 : Proto {
             }
         }
 
-        if nghttp2_session_want_read(s) == 0 && nghttp2_session_want_write(s) == 0 {
+        if !h2-want-read(s) && !h2-want-write(s) {
             __dead? = true
             return conn.close-after-flush()
         }
@@ -382,26 +352,22 @@ pub class H2 : Proto {
         }
     }
 
-    cb-begin(frame: Ptr) -> Int {
-        if frame-type(frame) != NGHTTP2_HEADERS || frame-cat(frame) != NGHTTP2_HCAT_REQUEST {
+    cb-begin(id: Int, cat: Int) -> Int {
+        if cat != NGHTTP2_HCAT_REQUEST {
             return 0
         }
-        let id = frame-id(frame)
         __streams[id] = Stream(id)
         __idle()
         0
     }
 
-    cb-header(frame: Ptr, name: Ptr, namelen: Int, value: Ptr, valuelen: Int) -> Int {
-        let $st = __streams[frame-id(frame)] or return 0
+    cb-header(id: Int, k: String, v: String) -> Int {
+        let $st = __streams[id] or return 0
 
-        st.head-size += namelen + valuelen + 32
+        st.head-size += k.size() + v.size() + 32
         if st.head-size > conn.config.max-header-size {
             return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE
         }
-
-        let k = c.str(name, namelen)
-        let v = c.str(value, valuelen)
 
         match k {
             ':method'    => st.method = v,
@@ -449,13 +415,12 @@ pub class H2 : Proto {
         0
     }
 
-    cb-frame(frame: Ptr) -> Int {
-        let type = frame-type(frame)
+    cb-frame(id: Int, type: Int, flags: Int, aux: Int) -> Int {
         if type != NGHTTP2_HEADERS && type != NGHTTP2_DATA {
             return 0
         }
-        let end? = (frame-flags(frame) & NGHTTP2_FLAG_END_STREAM) != 0
-        let $st = __streams[frame-id(frame)] or return 0
+        let end? = (flags & NGHTTP2_FLAG_END_STREAM) != 0
+        let $st = __streams[id] or return 0
 
         if let $q = st.queue {
             if end? {
@@ -506,32 +471,9 @@ pub class H2 : Proto {
         0
     }
 
-    cb-read(id: Int, buf: Ptr, length: Int, flags: Ptr) -> Int {
+    cb-read(id: Int, max: Int) -> (Blob, Int, Int, Bool) | Int {
         let $st = __streams[id] or return NGHTTP2_ERR_CALLBACK_FAILURE
-
-        let n = min(length, st.pending)
-        if n > 0 {
-            memcpy(buf, st.out.ptr() + st.pos, n)
-            st.pos += n
-            if st.pos == #st.out {
-                st.out.clear()
-                st.pos = 0
-            } else if st.pos > 65536 && st.pos * 2 > #st.out {
-                st.out.clear(0, st.pos)
-                st.pos = 0
-            }
-        }
-
-        if st.pending == 0 {
-            if st.eof? {
-                c.store(c.u32, flags, c.load(c.u32, flags) | NGHTTP2_DATA_FLAG_EOF)
-            } else if n == 0 {
-                st.deferred? = true
-                return NGHTTP2_ERR_DEFERRED
-            }
-        }
-
-        n
+        st.take(max)
     }
 
     __reject(st: Stream, status: Int) {
@@ -588,20 +530,15 @@ pub class H2 : Proto {
     }
 
     submit(st: Stream, rsp: Response | nil, status: Int, length: Int | nil, body?: Bool) {
-        if st.closed? || st.submitted? || __session == nil {
+        let $s = __session or return
+        if st.closed? || st.submitted? {
             return
         }
         st.submitted? = true
 
-        let (nva, n, strs) = header-list(rsp, status, length, conn.loop.date, conn.config.server-name)
+        let pairs = header-list(rsp, status, length, conn.loop.date, conn.config.server-name)
 
-        let prd = if body? {
-            let p = callbacks().provider(st.id)
-            st.prd = p
-            p
-        }
-
-        let rc = nghttp2_submit_response(__session, st.id, nva, n, prd)
+        let rc = h2-response(s, st.id, pairs, body?)
         if rc != 0 {
             log::debug!("nghttp2_submit_response failed", error: strerror(rc))
             return reset(st, NGHTTP2_INTERNAL_ERROR)
@@ -611,21 +548,23 @@ pub class H2 : Proto {
     }
 
     resume(st: Stream) {
-        if st.closed? || __session == nil {
+        let $s = __session or return
+        if st.closed? {
             return
         }
         if st.deferred? {
             st.deferred? = false
-            nghttp2_session_resume_data(__session, st.id)
+            h2-resume(s, st.id)
         }
         __schedule()
     }
 
     reset(st: Stream, code: Int) {
-        if st.closed? || __session == nil {
+        let $s = __session or return
+        if st.closed? {
             return
         }
-        nghttp2_submit_rst_stream(__session, 0, st.id, code)
+        h2-rst(s, st.id, code)
         __schedule()
     }
 
@@ -633,7 +572,7 @@ pub class H2 : Proto {
         let s = __session ?? return
 
         if conn.available > 0 {
-            let n = nghttp2_session_mem_recv(s, conn.buf.ptr() + conn.head, conn.available)
+            let n = h2-recv(s, self, conn.buf, conn.head, conn.available)
             if n < 0 {
                 log::debug!("nghttp2_session_mem_recv failed", error: strerror(n))
                 __pump()
@@ -663,18 +602,12 @@ pub class H2 : Proto {
     }
 
     on-shutdown() {
-        if __goaway? || __session == nil {
+        let $s = __session or return
+        if __goaway? {
             return
         }
         __goaway? = true
-        nghttp2_submit_goaway(
-            __session,
-            0,
-            nghttp2_session_get_last_proc_stream_id(__session),
-            NGHTTP2_NO_ERROR,
-            nil,
-            0
-        )
+        h2-goaway(s, NGHTTP2_NO_ERROR)
         __schedule()
         if #__streams == 0 {
             conn.loop.later(-> conn.close-after-flush())
@@ -692,7 +625,7 @@ pub class H2 : Proto {
         __streams = %{}
         if let $s = __session {
             __session = nil
-            nghttp2_session_del(s)
+            h2-del(s)
         }
     }
 }

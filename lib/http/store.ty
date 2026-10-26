@@ -12,18 +12,11 @@ pub trait Store {
 /// Server-side session storage kept in process memory. Thread-safe; data is
 /// stored as JSON so sessions never share mutable objects between threads.
 pub class MemoryStore : Store {
-    max-sessions: Int
+    max-sessions: Int = 100000
 
-    __mtx:  Mutex
-    __data: Dict[String, (Float, String)]
-    __ops:  Int
-
-    init(max-sessions: Int = 100000) {
-        self.max-sessions = max-sessions
-        __mtx  = Mutex()
-        __data = %{}
-        __ops  = 0
-    }
+    __mtx:  Mutex = Mutex()
+    __data: Dict[String, (Float, String)] = %{}
+    __ops:  Int = 0
 
     size -> Int {
         let ^_ = __mtx.lock()
@@ -69,22 +62,16 @@ pub class MemoryStore : Store {
 
 pub class Session {
     id:         String | nil
-    new?:       Bool
-    dirty?:     Bool
-    destroyed?: Bool
+    new?:       Bool = true
+    dirty?:     Bool = false
+    destroyed?: Bool = false
 
     __data:     SessionData | nil
     __loader:   () -> (String | nil, SessionData | nil)
-    __rotate?:  Bool
+    __rotate?:  Bool = false
 
     init(loader: () -> (String | nil, SessionData | nil)) {
-        __loader   = loader
-        __data     = nil
-        __rotate?  = false
-        id         = nil
-        new?       = true
-        dirty?     = false
-        destroyed? = false
+        __loader = loader
     }
 
     __load() -> SessionData {

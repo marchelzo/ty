@@ -45,18 +45,18 @@ import os
 import errno
 import time
 import json
-import log
 import ssl
 import path (Path)
 import base64 as b64
-import http.core as core
+import http.scheduler as scheduler
+import _http as hc
 import http.codec as codec
 import http.wire as wire (ResponseHead, NeedMore, Invalid, Dechunker)
 import http.status (status-name)
 import http.display as display
-import http.native as native
 import http.wsframe (
     frame,
+    close-payload,
     accept-key,
     valid-close-code?,
     OP_CONT,
@@ -108,9 +108,7 @@ pub import http.transport as trans (
     stream-chunks
 )
 
-#|if native.nghttp2?()
 import http.h2client (connect as h2-connect)
-#|]
 
 pub const VERSION    = '1.0'
 pub const USER_AGENT = "ty-http/{VERSION}"
@@ -118,8 +116,10 @@ pub const USER_AGENT = "ty-http/{VERSION}"
 const MAX_HEAD    = 256 * 1024
 
 const IDEMPOTENT_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'TRACE']
-const IDEMPOTENT = %{*IDEMPOTENT_METHODS}
-const REDIRECTS  = %{301, 302, 303, 307, 308}
+const IDEMPOTENT = %[*IDEMPOTENT_METHODS]
+const REDIRECTS  = %[301, 302, 303, 307, 308]
+
+const REQUEST_KEYS = %['method', 'url']
 
 
 /// Raised by `Response.raise-for-status()` for 4xx and 5xx responses.
@@ -231,7 +231,7 @@ fn nap(secs: Float) {
     if secs <= 0.0 {
         return
     }
-    if core.task() != nil and let $l = core.loop() {
+    if let $l = scheduler.running() {
         l.sleep(secs)
     } else {
         os.sleep(secs)
@@ -249,20 +249,20 @@ pub class Response {
     http-version: String
     url:          URL
     request:      Request | nil
-    history:      Array[Response]
-    elapsed:      Float
-    extensions:   Dict[String, String]
+    history:      Array[Response] = []
+    elapsed:      Float = 0.0
+    extensions:   Dict[String, String] = %{}
 
     __body:     Body | nil
     __content:  Blob | nil
     __decoder:  codec.Decoder | nil
-    __started?: Bool
-    __closed?:  Bool
-    __pend:     Blob
-    __off:      Int
+    __started?: Bool = false
+    __closed?:  Bool = false
+    __pend:     Blob = Blob()
+    __off:      Int = 0
     __limit:    Int | nil
-    __start:    Float
-    __on-close: Array[() -> _]
+    __start:    Float = time.now()
+    __on-close: Array[() -> _] = []
     __cookies:  Dict[String, String] | nil
 
     init(
@@ -287,20 +287,7 @@ pub class Response {
             u: URL    => u,
             s: String => URL(s)
         }
-        history      = []
-        elapsed      = 0.0
-        extensions   = %{}
-        __body       = stream
-        __content    = nil
-        __decoder    = nil
-        __started?   = false
-        __closed?    = false
-        __pend       = Blob()
-        __off        = 0
-        __limit      = nil
-        __start      = time.now()
-        __on-close   = []
-        __cookies    = nil
+        __body = stream
 
         if json != nil {
             __content = Blob(json::encode(json))
@@ -676,7 +663,7 @@ pub class Response {
     /// Lines of text without their terminators (`\n` or `\r\n`).
     lines() -> Chunks[String] {
         let src = text-chunks()
-        let queue: Array[String] = []
+        let queue: Queue[String] = Queue()
         let pend = ['']
         let done = [false]
         Chunks(fn () {
@@ -701,7 +688,7 @@ pub class Response {
                     }
                 }
             }
-            queue.pop(0)
+            queue.pop()
         })
     }
 
@@ -709,7 +696,7 @@ pub class Response {
     events() -> Chunks[Event] {
         let src = bytes()
         let p = sse.Parser()
-        let queue: Array[Event] = []
+        let queue: Queue[Event] = Queue()
         let done = [false]
         Chunks(fn () {
             while #queue == 0 {
@@ -719,14 +706,18 @@ pub class Response {
                 match src.next() {
                     nil => {
                         done[0] = true
-                        queue += p.finish()
+                        for ev in p.finish() {
+                            queue.push(ev)
+                        }
                     },
                     chunk => {
-                        queue += p.feed(chunk)
+                        for ev in p.feed(chunk) {
+                            queue.push(ev)
+                        }
                     }
                 }
             }
-            queue.pop(0)
+            queue.pop()
         })
     }
 
@@ -800,8 +791,7 @@ pub class Response {
             __body = nil
             try {
                 b.close()
-            } catch e {
-                log::debug!("error closing response body", err: e)
+            } catch _ {
             }
         }
         if elapsed == 0.0 {
@@ -875,12 +865,11 @@ fn utf8-boundary(b: Blob) -> Int {
 pub class Chunks[T] : Iter[T] {
     __f:     () -> T | nil
     __close: (() -> _) | nil
-    __done?: Bool
+    __done?: Bool = false
 
     init(f: () -> T | nil, close: (() -> _) | nil = nil) {
         __f     = f
         __close = close
-        __done? = false
     }
 
     close() {
@@ -921,25 +910,14 @@ pub class Chunks[T] : Iter[T] {
 }
 
 class EventState {
-    rsp:       Response | nil
-    src:       Chunks[Blob]
-    parser:    sse.Parser
-    queue:     Array[Event]
-    last-id:   String | nil
     delay:     Float
-    failures:  Int
-    finished?: Bool
-
-    init(delay: Float) {
-        rsp       = nil
-        src       = Chunks(-> nil)
-        parser    = sse.Parser()
-        queue     = []
-        last-id   = nil
-        self.delay = delay
-        failures  = 0
-        finished? = false
-    }
+    rsp:       Response | nil
+    src:       Chunks[Blob] = Chunks(-> nil)
+    parser:    sse.Parser = sse.Parser()
+    queue:     Queue[Event] = Queue()
+    last-id:   String | nil
+    failures:  Int = 0
+    finished?: Bool = false
 
     close() {
         if let $r = rsp {
@@ -1025,11 +1003,6 @@ pub class BasicAuth : Auth {
     username: String
     password: String
 
-    init(username: String, password: String) {
-        self.username = username
-        self.password = password
-    }
-
     apply(req: Request) -> Request {
         req.headers['Authorization'] = "Basic {b64.encode("{username}:{password}")}"
         req
@@ -1044,10 +1017,6 @@ pub class BasicAuth : Auth {
 pub class BearerAuth : Auth {
     token: String
 
-    init(token: String) {
-        self.token = token
-    }
-
     apply(req: Request) -> Request {
         req.headers['Authorization'] = "Bearer {token}"
         req
@@ -1059,10 +1028,10 @@ pub class BearerAuth : Auth {
 }
 
 fn digest-hash(algorithm: String, s: String) -> String {
-    match algorithm.upper().comb(/-SESS$/) {
-        'MD5'                => md5(s),
-        'SHA-256', 'SHA256'  => sha256(s),
-        other                => throw RequestError("http: unsupported digest algorithm {other}")
+    match algorithm {
+        /^md5(?:-sess)?$/i       => md5(s),
+        /^sha-?256(?:-sess)?$/i  => sha256(s),
+        other                    => throw RequestError("http: unsupported digest algorithm {other}")
     }
 }
 
@@ -1082,16 +1051,8 @@ pub class DigestAuth : Auth {
     password: String
 
     __challenge: Dict[String, String] | nil
-    __count:     Int
-    __lock:      Mutex
-
-    init(username: String, password: String) {
-        self.username = username
-        self.password = password
-        __challenge   = nil
-        __count       = 0
-        __lock        = Mutex()
-    }
+    __count:     Int = 0
+    __lock:      Mutex = Mutex()
 
     __header(req: Request, ch: Dict[String, String]) -> String {
         let realm = ch['realm'] ?? ''
@@ -1109,7 +1070,7 @@ pub class DigestAuth : Auth {
         let uri = req.url.target
 
         let ha1 = digest-hash(algorithm, "{username}:{realm}:{password}")
-        if algorithm.upper().ends?('-SESS') {
+        if algorithm :: /-sess$/i {
             ha1 = digest-hash(algorithm, "{ha1}:{nonce}:{cnonce}")
         }
         let ha2 = digest-hash(algorithm, "{req.method}:{uri}")
@@ -1148,9 +1109,9 @@ pub class DigestAuth : Auth {
         if rsp.status-code != 401 {
             return nil
         }
-        let $www = rsp.headers.all('www-authenticate').find(\_.lower().starts?('digest')) or return nil
+        let $www = rsp.headers.all('www-authenticate').find(\_ :: /^digest/i) or return nil
         let ch = parse-challenge(www.bslice(6))
-        let stale? = (ch['stale'] ?? '').lower() == 'true'
+        let stale? = (ch['stale'] ?? '').ieq?('true')
         if req.headers['authorization'] != nil && !stale? {
             return nil
         }
@@ -1164,10 +1125,6 @@ pub class DigestAuth : Auth {
 /// Wraps a plain function `f(req) -> req` as an auth.
 class FunctionAuth : Auth {
     f: (Request) -> Request | nil
-
-    init(f: (Request) -> Request | nil) {
-        self.f = f
-    }
 
     apply(req: Request) -> Request {
         f(req) ?? req
@@ -1196,11 +1153,11 @@ fn head-bytes(req: Request, target: String, extra: Array[(String, String)]) -> B
     if req.headers['host'] == nil {
         out.push("Host: {req.url.authority}\r\n")
     }
-    for (k, v) in req.headers.items() {
-        out.push("{k}: {v}\r\n")
+    for (k, v) in req.headers.pairs {
+        out.push(k).push(': ').push(v).push('\r\n')
     }
     for (k, v) in extra {
-        out.push("{k}: {v}\r\n")
+        out.push(k).push(': ').push(v).push('\r\n')
     }
     out.push('\r\n')
     out
@@ -1324,31 +1281,23 @@ class H1Body : Body {
 pub class H1Conn : Connection {
     sock:       Socket
     pool:       Pool | nil
-    buf:        Blob
-    pos:        Int
-    marks:      Array[Int]
-    idle-since: Float
-    closed?:    Bool
+    buf:        Blob = Blob()
+    pos:        Int = 0
+    marks:      Array[Int] = wire.marks(256)
+    idle-since: Float = time.now()
+    closed?:    Bool = false
     forward?:   Bool
-    timeout:    Timeout
-    got?:       Bool
+    timeout:    Timeout = Timeout()
+    got?:       Bool = false
 
     __key:      String
-    __requests: Int
+    __requests: Int = 0
 
     init(sock: Socket, key: String, pool: Pool | nil, forward?: Bool = false) {
         self.sock     = sock
         self.pool     = pool
         self.forward? = forward?
-        buf           = Blob()
-        pos           = 0
-        marks         = wire.marks(256)
-        idle-since    = time.now()
-        closed?       = false
-        timeout       = Timeout()
-        got?          = false
         __key         = key
-        __requests    = 0
     }
 
     key -> String {
@@ -1442,14 +1391,14 @@ pub class H1Conn : Connection {
             }
         } else if body != nil {
             if req.headers['content-length'] == nil {
-                framing.push(('Content-Length', str(#body)))
+                framing.push(('Content-Length', str(body.size())))
             }
         } else if req.method == 'POST' || req.method == 'PUT' || req.method == 'PATCH' {
             framing.push(('Content-Length', '0'))
         }
 
         let head = head-bytes(req, target, extra + framing)
-        if body != nil && #body <= 65536 {
+        if body != nil && body.size() <= 65536 {
             head.push(body)
             body = nil
         }
@@ -1474,7 +1423,7 @@ pub class H1Conn : Connection {
         let h = read-head()
         let status = h.status
         let no-body? = req.method == 'HEAD' || status == 204 || status == 304 || (status >= 100 && status < 200)
-        let reuse? = h.reusable? && !(req.header('connection') ?? '').lower().contains?('close')
+        let reuse? = h.reusable? && !((req.header('connection') ?? '') :: /close/i)
         let body-stream = if status == 101 {
             H1Body(self, 0, 0, false)
         } else if no-body? {
@@ -1522,26 +1471,15 @@ pub class H1Conn : Connection {
 pub class Pool : ConnPool {
     limits: Limits
 
-    __lock:    Mutex
-    __cv:      CondVar
-    __idle:    Dict[String, Array[H1Conn]]
-    __h2:      Dict[String, Array[Multiplexed]]
-    __total:   Int
-    __probing: Dict[String, Bool]
-    __proto:   Dict[String, String]
-    __closed?: Bool
-
-    init(limits: Limits) {
-        self.limits = limits
-        __lock    = Mutex()
-        __cv      = CondVar()
-        __idle    = %{}
-        __h2      = %{}
-        __total   = 0
-        __probing = %{}
-        __proto   = %{}
-        __closed? = false
-    }
+    __lock:    Mutex = Mutex()
+    __cv:      CondVar = CondVar()
+    __idle:    Dict[String, Queue[H1Conn]] = %{}
+    __nidle:   Int = 0
+    __h2:      Dict[String, Array[Multiplexed]] = %{}
+    __total:   Int = 0
+    __probing: Set[String] = %[]
+    __proto:   Dict[String, String] = %{}
+    __closed?: Bool = false
 
     connections -> Int {
         let ^_ = __lock.lock()
@@ -1550,26 +1488,22 @@ pub class Pool : ConnPool {
 
     idle-connections -> Int {
         let ^_ = __lock.lock()
-        __idle.values().map(\#_).sum(0)
+        __nidle
     }
 
     __usable-h2(key: String) -> Multiplexed | nil {
         let conns = __h2[key] ?? return nil
-        let live: Array[Multiplexed] = []
-        for conn in conns {
-            if conn.usable? {
-                live.push(conn)
-            } else if conn.idle? {
-                __total -= 1
-                conn.close()
-            } else {
-                live.push(conn)
+        conns.filter!(fn (conn) {
+            if conn.usable? || !conn.idle? {
+                return true
             }
-        }
-        __h2[key] = live
+            __total -= 1
+            conn.close()
+            false
+        })
         let best: Multiplexed | nil = nil
         let fewest = 0
-        for conn in live {
+        for conn in conns {
             if conn.usable? && (best == nil || conn.active < fewest) {
                 best   = conn
                 fewest = conn.active
@@ -1579,9 +1513,9 @@ pub class Pool : ConnPool {
     }
 
     __evict-one() -> Bool {
-        for k, conns in __idle {
-            if #conns > 0 {
-                let conn = conns.pop(0)
+        for _, conns in __idle {
+            if let Some(conn) = conns.tryPop() {
+                __nidle -= 1
                 __total -= 1
                 conn.close()
                 return true
@@ -1602,7 +1536,7 @@ pub class Pool : ConnPool {
             if let $conn = __usable-h2(key) {
                 let spread? = conn.active > 0
                            && #(__h2[key] ?? []) < limits.http2-connections
-                           && __probing[key] == nil
+                           && !__probing.contains?(key)
                            && __total < limits.max-connections
                 if !spread? {
                     conn.reserve()
@@ -1610,9 +1544,8 @@ pub class Pool : ConnPool {
                 }
             }
 
-            let idle = __idle[key] ?? []
-            while #idle > 0 {
-                let conn = idle.pop()
+            while let $idle = __idle[key] and let Some(conn) = idle.tryPopBack() {
+                __nidle -= 1
                 if time.now() - conn.idle-since > limits.keepalive-expiry || !conn.reusable? {
                     __total -= 1
                     conn.close()
@@ -1621,7 +1554,7 @@ pub class Pool : ConnPool {
                 return conn
             }
 
-            if h2? && __probing[key] != nil {
+            if h2? && __probing.contains?(key) {
                 if !__cv.wait(__lock, trans.left(until) ?? 3600.0) && until != nil && trans.left(until) == 0.0 {
                     throw PoolTimeout("http: timed out waiting for a connection to {key}")
                 }
@@ -1632,7 +1565,7 @@ pub class Pool : ConnPool {
                 __total += 1
                 let probe? = h2? && (__proto[key] == nil || __proto[key] == 'HTTP/2')
                 if probe? {
-                    __probing[key] = true
+                    __probing.add(key)
                 }
                 __lock.unlock()
                 let conn = try {
@@ -1684,7 +1617,9 @@ pub class Pool : ConnPool {
         }
         conn.unreserve()
         if !conn.usable? && conn.idle? {
-            __h2[conn.key] = (__h2[conn.key] ?? []).filter(\_ != conn)
+            if let $list = __h2[conn.key] {
+                list.filter!(\_ != conn)
+            }
             __total -= 1
             conn.close()
         }
@@ -1696,11 +1631,10 @@ pub class Pool : ConnPool {
             conn.close()
             return
         }
-        let idle = __idle[conn.key] ?? (__idle[conn.key] = [])
-        let count = __idle.values().map(\#_).sum(0)
-        if reuse? && !__closed? && count < limits.max-keepalive {
+        if reuse? && __nidle < limits.max-keepalive {
             conn.idle-since = time.now()
-            idle.push(conn)
+            (__idle[conn.key] ?? (__idle[conn.key] = Queue())).push(conn)
+            __nidle += 1
         } else {
             __total -= 1
             conn.close()
@@ -1717,9 +1651,8 @@ pub class Pool : ConnPool {
         }
         match conn {
             m: Multiplexed => {
-                let list = __h2[m.key] ?? []
-                if list.contains?(m) {
-                    __h2[m.key] = list.filter(\_ != m)
+                if let $list = __h2[m.key] and list.contains?(m) {
+                    list.filter!(\_ != m)
                     __total -= 1
                 }
             },
@@ -1742,8 +1675,9 @@ pub class Pool : ConnPool {
                 conn.close()
             }
         }
-        __idle = %{}
-        __h2 = %{}
+        __idle.clear()
+        __h2.clear()
+        __nidle = 0
         __total = 0
         __cv.broadcast()
     }
@@ -1825,7 +1759,7 @@ pub class HTTPTransport : Transport {
 
     __ctx:     ssl.Context | nil
     __ctx-h1:  ssl.Context | nil
-    __lock:    Mutex
+    __lock:    Mutex = Mutex()
 
     init(
         http1: Bool = true,
@@ -1852,21 +1786,13 @@ pub class HTTPTransport : Transport {
         self.uds           = uds
         self.local-address = local-address
         pool               = Pool(limits)
-        __ctx              = nil
-        __ctx-h1           = nil
-        __lock             = Mutex()
     }
 
     __h2-module() -> H2Connect | nil {
         if !http2 {
             return nil
         }
-#|if __defined__(h2-connect)
         h2-connect
-#|else
-        log::warn!("HTTP/2 disabled", reason: 'libnghttp2 is not installed', @once)
-        nil
-#|]
     }
 
     __context(h2: Bool) -> ssl.Context {
@@ -2065,7 +1991,7 @@ pub class HTTPTransport : Transport {
             throw ProxyError('http: SOCKS5 proxy sent an invalid reply')
         }
         if reply[1] != 0 {
-            let why = ['succeeded', 'general failure', 'not allowed by ruleset', 'network unreachable', 'host unreachable', 'connection refused', 'TTL expired', 'command not supported', 'address type not supported']
+            let why = static!(['succeeded', 'general failure', 'not allowed by ruleset', 'network unreachable', 'host unreachable', 'connection refused', 'TTL expired', 'command not supported', 'address type not supported'])
             throw ProxyError("http: SOCKS5 proxy: {(reply[1] < #why) ? why[reply[1]] : "error {reply[1]}"}")
         }
         let total = match reply[3] {
@@ -2236,10 +2162,6 @@ pub class HTTPTransport : Transport {
 class MemoryBody : Body {
     data: Blob | nil
 
-    init(data: Blob) {
-        self.data = data
-    }
-
     read() -> Blob | nil {
         let d = data
         data = nil
@@ -2256,10 +2178,6 @@ class MemoryBody : Body {
 /// `(status, body)` / `(status, headers, body)` tuple, or a JSON-able value.
 pub class MockTransport : Transport {
     handler: (Request) -> _
-
-    init(handler: (Request) -> _) {
-        self.handler = handler
-    }
 
     handle(req: Request, t: Timeout) -> Response {
         let rsp = match handler(req) {
@@ -2288,11 +2206,11 @@ pub class MockTransport : Transport {
 
 
 fn in-server-task?() -> Bool {
-    core.task() != nil && core.loop() != nil
+    scheduler.running() != nil
 }
 
 fn offload[a](f: () -> a) -> a {
-    if core.task() != nil and let $l = core.loop() {
+    if let $l = scheduler.running() {
         return l.blocking(f)
     }
     f()
@@ -2300,10 +2218,6 @@ fn offload[a](f: () -> a) -> a {
 
 class LoopBody : Body {
     inner: Body
-
-    init(inner: Body) {
-        self.inner = inner
-    }
 
     read() -> Blob | nil {
         offload(-> inner.read())
@@ -2422,7 +2336,7 @@ pub class Client {
     raise-for-status:  Bool
     trace:             Tracer | nil
 
-    __closed?: Bool
+    __closed?: Bool = false
 
     init(
         base-url: String | URL | nil = nil,
@@ -2492,7 +2406,6 @@ pub class Client {
             local-address: local-address,
             limits: limits
         )
-        __closed? = false
 
         if compress != nil && !codec.encodable?(compress) {
             throw ValueError("http: cannot compress request bodies with {compress}")
@@ -2535,11 +2448,11 @@ pub class Client {
         let hs = self.headers.copy()
         hs.update(headers)
 
-        let body: Blob | nil = nil
+        let body: String | Blob | nil = nil
         let stream: BodySource | nil = nil
 
         if json != nil {
-            body = Blob(json::encode(json))
+            body = json::encode(json)
             hs.setdefault('Content-Type', 'application/json')
         } else if files != nil {
             let (b, ctype) = encode-multipart(data, files)
@@ -2547,10 +2460,10 @@ pub class Client {
             hs.set('Content-Type', ctype)
         } else if data != nil {
             match data {
-                s: String => body = Blob(s),
+                s: String => body = s,
                 b: Blob   => body = b,
                 d         => {
-                    body = Blob(form-encode(d))
+                    body = form-encode(d)
                     hs.setdefault('Content-Type', 'application/x-www-form-urlencoded')
                 }
             }
@@ -2558,7 +2471,7 @@ pub class Client {
 
         match content {
             nil       => {},
-            s: String => body = Blob(s),
+            s: String => body = s,
             b: Blob   => body = b,
             other     => stream = other
         }
@@ -2676,7 +2589,7 @@ pub class Client {
         hs.remove('cookie')
         hs.remove('host')
 
-        let ext = %{k: v for k, v in req.extensions}
+        let ext = req.extensions.clone()
         if !next.same-origin?(req.url) {
             ext.remove('cookies')
         }
@@ -2876,7 +2789,7 @@ pub class Client {
         let hs = Headers(kwargs['headers'])
         hs.set('Accept', 'text/event-stream')
         hs.set('Cache-Control', 'no-cache')
-        let opts = %{k: v for k, v in kwargs if k != 'headers' && k != 'timeout'}
+        let opts = kwargs - static!(%['headers', 'timeout'])
         let timeout = kwargs['timeout'] ?? Timeout(self.timeout.connect ?? 5.0, read: false)
 
         let st = EventState(float(retry-delay))
@@ -2893,8 +2806,7 @@ pub class Client {
 
         let next = fn () {
             while true {
-                if #st.queue > 0 {
-                    let ev = st.queue.pop(0)
+                if let Some(ev) = st.queue.tryPop() {
                     st.last-id = ev.id
                     if let $r = ev.retry {
                         st.delay = float(r) / 1000.0
@@ -2922,7 +2834,7 @@ pub class Client {
                     }
                     try {
                         rsp.raise-for-status()
-                        if !(rsp.content-type ?? '').lower().starts?('text/event-stream') {
+                        if !((rsp.content-type ?? '') :: /^text\/event-stream/i) {
                             throw ProtocolError("http: expected text/event-stream, got {rsp.content-type}", rsp.request)
                         }
                     } catch e {
@@ -2951,7 +2863,9 @@ pub class Client {
                 let evs = st.parser.feed(chunk)
                 if #evs > 0 {
                     st.failures = 0
-                    st.queue += evs
+                    for ev in evs {
+                        st.queue.push(ev)
+                    }
                 }
             }
             nil
@@ -3042,7 +2956,7 @@ pub class Client {
         let chosen = rsp.header('sec-websocket-protocol')
 
         if (
-            (rsp.header('upgrade') ?? '').lower() != 'websocket'
+            !(rsp.header('upgrade') ?? '').ieq?('websocket')
          || rsp.header('sec-websocket-accept') != accept-key(key)
          || (chosen != nil && !(chosen in protocols))
         ) {
@@ -3071,10 +2985,10 @@ pub class Client {
                     match items[i] {
                         u: String | URL => get(u),
                         r: Request      => send(r),
-                        d: Dict         => request(d['method'] ?? 'GET', d['url'], **%{k: v for k, v in d if k != 'method' && k != 'url'}),
+                        d: Dict         => request(d['method'] ?? 'GET', d['url'], **(d - REQUEST_KEYS)),
                         r               => do {
                             let d = members(r)
-                            request(d['method'] ?? 'GET', d['url'], **%{k: v for k, v in d if k != 'method' && k != 'url'})
+                            request(d['method'] ?? 'GET', d['url'], **(d - REQUEST_KEYS))
                         }
                     }
                 } catch e {
@@ -3132,23 +3046,18 @@ pub class WebSocket {
     __host:        String
     __buf:         Blob
     __frag:        Blob | nil
-    __frag-op:     Int
-    __lock:        Mutex
-    __close-sent?: Bool
+    __frag-op:     Int = OP_TEXT
+    __lock:        Mutex = Mutex()
+    __close-sent?: Bool = false
+    __hdr:         Array[Int] = [0, 0, 0, 0, 0]
 
     init(sock: Socket, rest: Blob, response: Response, protocol: String | nil, max-message: Int) {
         self.response    = response
         self.protocol    = protocol
         self.max-message = max-message
-        close-code       = nil
-        close-reason     = nil
         __sock           = sock
         __host           = sock.host
         __buf            = rest
-        __frag           = nil
-        __frag-op        = OP_TEXT
-        __lock           = Mutex()
-        __close-sent?    = false
     }
 
     /// The socket's descriptor, for `os.poll`. TLS may already hold data
@@ -3212,7 +3121,7 @@ pub class WebSocket {
 
         try {
             if !__close-sent? {
-                __send(OP_CLOSE, __close-payload(code, reason), timeout)
+                __send(OP_CLOSE, close-payload(code, reason), timeout)
             }
             let until = trans.deadline(trans.seconds(timeout))
             while close-code == nil && recv(timeout: trans.left(until)) != nil {
@@ -3232,13 +3141,6 @@ pub class WebSocket {
         "<WebSocket {response.url}{closed? ? ' closed' : ''}>"
     }
 
-    __close-payload(code: Int, reason: String) -> Blob {
-        let payload = Blob((code >> 8) & 0xFF, code & 0xFF).push(reason)
-        if #payload > 125 {
-            payload.clear(125)
-        }
-        payload
-    }
 
     __send(op: Int, payload: String | Blob, timeout: Int | Float | nil) {
         let ^_ = __lock.lock()
@@ -3251,12 +3153,12 @@ pub class WebSocket {
             __close-sent? = true
         }
 
-        __sock.send(frame(op, payload, mask: random(4)), trans.deadline(trans.seconds(timeout)))
+        __sock.send(frame(op, payload, mask: true), trans.deadline(trans.seconds(timeout)))
     }
 
     __failure(code: Int, reason: String) -> ProtocolError {
         try {
-            __send(OP_CLOSE, __close-payload(code, ''), 1.0)
+            __send(OP_CLOSE, close-payload(code, ''), 1.0)
         } catch _ {
         }
 
@@ -3266,70 +3168,31 @@ pub class WebSocket {
         ProtocolError("http: {reason} on the WebSocket to {__host}")
     }
 
-    __next() -> (Int, Bool, Blob) | nil {
-        let b = __buf
-        let n = #b
-
-        if n < 2 {
-            return nil
+    __next() -> (Int, Bool, String | Blob) | nil {
+        let hdr = __hdr
+        match hc.ws-next(__buf, 0, #__buf, false, false, max-message, hdr) {
+            s: String => do {
+                __buf.clear(0, hdr[3])
+                (hdr[0], hdr[1] != 0, s)
+            },
+            b: Blob => do {
+                __buf.clear(0, hdr[3])
+                (hdr[0], hdr[1] != 0, b)
+            },
+            0  => nil,
+            -1 => throw __failure(CLOSE_PROTOCOL_ERROR, 'reserved bits set'),
+            -2 => throw __failure(CLOSE_PROTOCOL_ERROR, 'masked frame from the server'),
+            -3 => throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid frame length'),
+            -4 => throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid control frame'),
+            _  => throw __failure(CLOSE_TOO_BIG, "{hdr[4]}-byte frame over max-message")
         }
-
-        let fin = (b[0] & 0x80) != 0
-        let op  = b[0] & 0x0F
-        let len = b[1] & 0x7F
-        let hdr = 2
-
-        if (b[0] & 0x70) != 0 {
-            throw __failure(CLOSE_PROTOCOL_ERROR, 'reserved bits set')
-        }
-
-        if (b[1] & 0x80) != 0 {
-            throw __failure(CLOSE_PROTOCOL_ERROR, 'masked frame from the server')
-        }
-
-        if len == 126 {
-            if n < 4 {
-                return nil
-            }
-            len = (b[2] << 8) | b[3]
-            hdr = 4
-        } else if len == 127 {
-            if n < 10 {
-                return nil
-            }
-            if (b[2] & 0x80) != 0 {
-                throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid frame length')
-            }
-            len = 0
-            for i in ..8 {
-                len = (len << 8) | b[2 + i]
-            }
-            hdr = 10
-        }
-
-        if op >= 0x8 && (len > 125 || !fin) {
-            throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid control frame')
-        }
-
-        if len > max-message {
-            throw __failure(CLOSE_TOO_BIG, "{len}-byte frame over max-message")
-        }
-
-        if n < hdr + len {
-            return nil
-        }
-
-        let payload = b[hdr;hdr + len]
-        b.clear(0, hdr + len)
-
-        (op, fin, payload)
     }
 
-    __take(op: Int, fin: Bool, payload: Blob) -> String | Blob | nil {
+    __take(op: Int, fin: Bool, payload: String | Blob) -> String | Blob | nil {
         match op {
             OP_CONT => {
                 let $frag = __frag or throw __failure(CLOSE_PROTOCOL_ERROR, 'unexpected continuation frame')
-                if #frag + #payload > max-message {
+                if #frag + payload.size() > max-message {
                     throw __failure(CLOSE_TOO_BIG, 'message over max-message')
                 }
                 frag.push(payload)
@@ -3346,7 +3209,10 @@ pub class WebSocket {
                 if fin {
                     return __message(op, payload)
                 }
-                __frag    = payload
+                __frag = match payload {
+                    b: Blob   => b,
+                    s: String => Blob(s)
+                }
                 __frag-op = op
             },
 
@@ -3361,15 +3227,20 @@ pub class WebSocket {
             OP_CLOSE => {
                 let code   = CLOSE_NO_STATUS
                 let reason = ''
-                if #payload == 1 {
+                let body   = match payload {
+                    s: String => s,
+                    b: Blob   => b.str!()
+                }
+                let n = body.size()
+                if n == 1 {
                     throw __failure(CLOSE_PROTOCOL_ERROR, 'truncated close frame')
                 }
-                if #payload >= 2 {
-                    code = (payload[0] << 8) | payload[1]
+                if n >= 2 {
+                    code = ((body.byte(0)!) << 8) | (body.byte(1)!)
                     if !valid-close-code?(code) {
                         throw __failure(CLOSE_PROTOCOL_ERROR, "invalid close code {code}")
                     }
-                    reason = payload.str!(2, #payload - 2)
+                    reason = body.bslice(2)
                     if !reason.utf8? {
                         throw __failure(CLOSE_INVALID_DATA, 'invalid UTF-8 in a close reason')
                     }
@@ -3378,7 +3249,7 @@ pub class WebSocket {
                 close-reason = reason
                 if !__close-sent? {
                     try {
-                        __send(OP_CLOSE, (code == CLOSE_NO_STATUS) ? Blob() : __close-payload(code, ''), 1.0)
+                        __send(OP_CLOSE, (code == CLOSE_NO_STATUS) ? '' : close-payload(code), 1.0)
                     } catch _ {
                     }
                 }
@@ -3391,12 +3262,12 @@ pub class WebSocket {
         nil
     }
 
-    __message(op: Int, payload: Blob) -> String | Blob {
-        if op == OP_BINARY {
-            return payload
+    __message(op: Int, payload: String | Blob) -> String | Blob {
+        let text = match payload {
+            b: Blob and op == OP_BINARY => return b,
+            b: Blob                     => b.str!(),
+            s: String                   => s
         }
-
-        let text = payload.str!()
 
         if !text.utf8? {
             throw __failure(CLOSE_INVALID_DATA, 'invalid UTF-8 in a text message')
@@ -3407,24 +3278,11 @@ pub class WebSocket {
 }
 
 fn form-encode(d: _) -> String {
-    let pairs = match d {
-        x: Dict  => x.list(),
-        a: Array => a,
-        r        => members(r).list()
+    match d {
+        x: Dict  => hc.encode-query(x, blank: true),
+        a: Array => hc.encode-query(a, blank: true),
+        r        => hc.encode-query(members(r), blank: true)
     }
-    let out = []
-    for (k, v) in pairs {
-        for one in ((v :: Array) ? v : [v]) {
-            let s = match one {
-                nil   => '',
-                true  => 'true',
-                false => 'false',
-                x     => str(x)
-            }
-            out.push("{urlencode(str(k))}={urlencode(s)}")
-        }
-    }
-    out.join('&')
 }
 
 fn compress-stream*(src: BodySource, coding: String) {
@@ -3447,11 +3305,11 @@ fn compress-stream*(src: BodySource, coding: String) {
 let default-lock = Mutex()
 let default-client: Client | nil = nil
 
-const CLIENT_OPTIONS = %{
+const CLIENT_OPTIONS = %[
     'baseUrl', 'verify', 'cert', 'http1', 'http2', 'proxy', 'trustEnv', 'limits',
     'retries', 'uds', 'localAddress', 'transport', 'mounts', 'eventHooks',
     'userAgent', 'decode', 'maxResponseSize', 'raiseForStatus', 'trace', 'retry'
-}
+]
 
 fn shared() -> Client {
     let ^_ = default-lock.lock()
@@ -3462,8 +3320,8 @@ fn shared() -> Client {
 /// client keywords (`verify`, `http2`, `proxy`, `trace`, ...) create a
 /// one-off client, otherwise a shared pooled client is used.
 pub fn request(method: String, url: String | URL, %kwargs) -> Response {
-    let client-opts = %{k: v for k, v in kwargs if CLIENT_OPTIONS.contains?(k)}
-    let req-opts = %{k: v for k, v in kwargs if !CLIENT_OPTIONS.contains?(k)}
+    let client-opts = kwargs & CLIENT_OPTIONS
+    let req-opts    = kwargs - CLIENT_OPTIONS
     if #client-opts == 0 {
         return shared().request(method, url, **req-opts)
     }
@@ -3505,8 +3363,8 @@ pub fn events(url: String | URL, %kwargs) -> Chunks[Event] {
 /// Opens a WebSocket; see `Client.websocket`. Client keywords (`verify`,
 /// `proxy`, ...) apply to this connection alone.
 pub fn websocket(url: String | URL, %kwargs) -> WebSocket {
-    let client-opts = %{k: v for k, v in kwargs if CLIENT_OPTIONS.contains?(k)}
-    let ws-opts     = %{k: v for k, v in kwargs if !CLIENT_OPTIONS.contains?(k)}
+    let client-opts = kwargs & CLIENT_OPTIONS
+    let ws-opts     = kwargs - CLIENT_OPTIONS
 
     if #client-opts == 0 {
         return shared().websocket(url, **ws-opts)

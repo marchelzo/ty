@@ -31,6 +31,7 @@ typedef struct bc_lir_node {
         i32         global;
         i32         nkw;
         i32         member;
+        bool        pairs;
         char const *kw_ip;
         LirLabel    label;
         LirLabel    deopt;
@@ -1168,6 +1169,10 @@ decode_operands(BcLir *c, Value const *f, BcLirNode *node, i32 off)
                         node->member = (u8)ip[5];
                 } else if (node->next - off >= 9) {
                         node->member = load_i32(ip + 5);
+                        if (node->op == INSTR_LOOP_CHECK && (node->member & LOOP_PAIRS)) {
+                                node->member &= ~LOOP_PAIRS;
+                                node->pairs   = true;
+                        }
                 }
                 node->target = off + 5 + load_i32(ip + 1);
                 node->branch = true;

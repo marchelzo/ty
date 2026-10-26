@@ -10,7 +10,7 @@ pub const NAME = 'io_uring'
 pub class Backend : backend.Backend {
     __ring:  IoUring
     __wake:  Int
-    __wbuf:  Blob
+    __wbuf:  Blob = Blob.zeros(8)
 
     init(entries: Int = 1024) {
         __ring = IoUring(entries: entries, cq-size: entries * 4)
@@ -18,8 +18,7 @@ pub class Backend : backend.Backend {
             __ring.close()
             throw IoUringError(errno.ENOSYS, 'io_uring: kernel lacks IORING_FEAT_EXT_ARG')
         }
-        __wake  = os.eventfd(0, os.EFD_NONBLOCK | os.EFD_CLOEXEC)
-        __wbuf  = Blob.zeros(8)
+        __wake = os.eventfd(0, os.EFD_NONBLOCK | os.EFD_CLOEXEC)
     }
 
     name -> String {
@@ -54,7 +53,7 @@ pub class Backend : backend.Backend {
     }
 
     wake() {
-        os.write(__wake, Blob(1, 0, 0, 0, 0, 0, 0, 0))
+        os.write(__wake, '\x01\x00\x00\x00\x00\x00\x00\x00')
     }
 
     wait(timeout: Float | nil, f: (Int, Int, Int) -> _) -> Int {

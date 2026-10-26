@@ -413,7 +413,7 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
 
         case INSTR_LOOP_CHECK: {
-                BcArg  member = imm32(node->member);
+                BcArg  member = imm32(node->member | (node->pairs ? LOOP_PAIRS : 0));
                 LirReg r      = tycall(c, jit_rt_loop_check, LT_I32, member, preg(last));
                 jnz(c, r, dest(c, node));
                 return;

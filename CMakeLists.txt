@@ -56,6 +56,19 @@ else()
   find_package(xxHash CONFIG REQUIRED)
   # defines target(s): mimalloc, mimalloc-static
   find_package(mimalloc CONFIG REQUIRED)
+  # defines target(s): nghttp2::nghttp2 (the port installs no CMake config)
+  find_path(_nghttp2_inc NAMES nghttp2/nghttp2.h REQUIRED)
+  find_library(_nghttp2_lib NAMES libnghttp2.a nghttp2 REQUIRED)
+  add_library(nghttp2::nghttp2 STATIC IMPORTED)
+  set_target_properties(nghttp2::nghttp2 PROPERTIES
+    IMPORTED_LOCATION "${_nghttp2_lib}"
+    INTERFACE_INCLUDE_DIRECTORIES "${_nghttp2_inc}"
+    INTERFACE_COMPILE_DEFINITIONS NGHTTP2_STATICLIB
+  )
+  # defines target(s): ZLIB::ZLIB
+  find_package(ZLIB REQUIRED)
+  # defines target(s): zstd::libzstd
+  find_package(zstd CONFIG REQUIRED)
   set_target_properties(mimalloc-static PROPERTIES
     IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
   )
@@ -320,6 +333,9 @@ set(_gen_builtins_sources
   src/functions.c
   src/ffi.c
   src/sqlite.c
+  src/http.c
+  src/codec.c
+  src/ssl.c
   src/screen.c
   src/jit/mod.c
   src/syntax.c
@@ -488,6 +504,9 @@ set(_src_files
   src/shared_queue.c
   src/spawn.c
   src/sqlite.c
+  src/http.c
+  src/codec.c
+  src/ssl.c
   src/str.c
   src/syntax.c
   src/table.c
@@ -662,6 +681,9 @@ target_link_libraries(${_tgt_ty_link}
     libmd::md
     dtoa
     unofficial::sqlite3::sqlite3
+    nghttp2::nghttp2
+    ZLIB::ZLIB
+    zstd::libzstd
     $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
@@ -691,7 +713,7 @@ else()
   )
   target_link_options(${_tgt_ty_link} INTERFACE
     -rdynamic
-    -Wl,--exclude-libs,libffi.a:libmimalloc.a:libpcre2-8.a:libsqlite3.a:libutf8proc.a:libxxhash.a:libdtoa.a:liblibco.a:libmd.a:libnsync.a
+    -Wl,--exclude-libs,libffi.a:libmimalloc.a:libpcre2-8.a:libsqlite3.a:libnghttp2.a:libz.a:libzstd.a:libutf8proc.a:libxxhash.a:libdtoa.a:liblibco.a:libmd.a:libnsync.a
   )
 endif()
 

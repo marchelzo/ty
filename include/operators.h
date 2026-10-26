@@ -8,6 +8,7 @@
 #include "ty.h"
 #include "dict.h"
 #include "set.h"
+#include "queue.h"
 #include "str.h"
 #include "value.h"
 #include "xd.h"
@@ -115,6 +116,16 @@ op_builtin_add(Ty *ty)
                 uvPn(*b, vv(*left->blob), vN(*left->blob));
                 uvPn(*b, vv(*right->blob), vN(*right->blob));
                 COMPLETE(BLOB(b));
+        }
+
+        case PAIR_OF(VALUE_QUEUE):
+        case PACK_TYPES(VALUE_QUEUE, VALUE_ARRAY):
+        {
+                Queue *q = QueueClone(ty, left->queue);
+                NOGC(q);
+                queue_extend(ty, q, *right);
+                OKGC(q);
+                COMPLETE(QUEUE(q));
         }
 
         case PAIR_OF(VALUE_DICT):

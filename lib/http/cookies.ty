@@ -172,7 +172,7 @@ pub class Cookie {
     http-only?:  Bool
     host-only?:  Bool
     same-site:   String | nil
-    created:     Float
+    created:     Float = time.utc()
 
     init(
         name: String,
@@ -194,7 +194,6 @@ pub class Cookie {
         self.http-only? = http-only
         self.host-only? = host-only
         self.same-site  = same-site
-        created         = time.utc()
     }
 
     expired?(now: Float = time.utc()) -> Bool {
@@ -203,6 +202,12 @@ pub class Cookie {
 
     session? -> Bool {
         expires == nil
+    }
+
+    /// Whether `other` is the same cookie (name, domain and path), which a
+    /// jar keeps only once.
+    same?(other: Cookie) -> Bool {
+        name == other.name && domain == other.domain && path == other.path
     }
 
     matches?(url: URL) -> Bool {
@@ -268,30 +273,30 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
 
     for attr in parts.drop(1) {
         let (k, v) = match attr.split('=', 1) {
-            [k, v] => (k.strip().lower(), v.strip()),
-            _      => (attr.strip().lower(), '')
+            [k, v] => (k.strip(), v.strip()),
+            _      => (attr.strip(), '')
         }
         match k {
-            'expires' => {
+            /^expires$/i => {
                 expires = parse-cookie-date(v) ?? expires
             },
-            'max-age' => {
+            /^max-age$/i => {
                 if v.match?(/^-?\d+$/) {
                     max-age = int(v, 10)
                 }
             },
-            'domain' => {
+            /^domain$/i => {
                 if v != '' {
                     domain = v.comb(/^\./).lower()
                 }
             },
-            'path' => {
+            /^path$/i => {
                 path = v.starts?('/') ? v : nil
             },
-            'secure'   => secure = true,
-            'httponly' => http-only = true,
-            'samesite' => same-site = v.lower(),
-            _          => {}
+            /^secure$/i   => secure = true,
+            /^httponly$/i => http-only = true,
+            /^samesite$/i => same-site = v.lower(),
+            _             => {}
         }
     }
 
@@ -350,12 +355,10 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
 pub use CookieSource = CookieJar | Dict[String, _] | Array[Cookie] | nil
 
 pub class CookieJar {
-    __cookies: Array[Cookie]
-    __lock:    Mutex
+    __cookies: Array[Cookie] = []
+    __lock:    Mutex = Mutex()
 
     init(src: CookieSource = nil) {
-        __cookies = []
-        __lock    = Mutex()
         match src {
             nil           => {},
             jar: CookieJar => for ck in jar.cookies() { __store(ck) },
@@ -366,7 +369,7 @@ pub class CookieJar {
     }
 
     __store(ck: Cookie) {
-        __cookies = [old for old in __cookies if !(old.name == ck.name && old.domain == ck.domain && old.path == ck.path)]
+        __cookies.filter!(old -> !ck.same?(old))
         if !ck.expired?() {
             __cookies.push(ck)
         }
@@ -400,7 +403,7 @@ pub class CookieJar {
         let ^_ = __lock.lock()
         let now = time.utc()
         for ck in __cookies {
-            if ck.name == name && !ck.expired?(now) && (domain == nil || ck.domain == domain.lower()) && (path == nil || ck.path == path) {
+            if ck.name == name && !ck.expired?(now) && (domain == nil || ck.domain.ieq?(domain)) && (path == nil || ck.path == path) {
                 return ck.value
             }
         }
@@ -418,24 +421,27 @@ pub class CookieJar {
 
     remove(name: String, domain: String | nil = nil, path: String | nil = nil) {
         let ^_ = __lock.lock()
-        __cookies = [ck for ck in __cookies if !(ck.name == name && (domain == nil || ck.domain == domain.lower()) && (path == nil || ck.path == path))]
+        __cookies.filter!(ck -> !(ck.name == name && (domain == nil || ck.domain.ieq?(domain)) && (path == nil || ck.path == path)))
     }
 
     clear(domain: String | nil = nil) {
         let ^_ = __lock.lock()
-        __cookies = (domain == nil) ? [] : [ck for ck in __cookies if ck.domain != domain.lower()]
+        match domain {
+            nil => __cookies.clear(),
+            d   => __cookies.filter!(ck -> !ck.domain.ieq?(d))
+        }
     }
 
     /// Drops session cookies (those without an expiry).
     clear-session() {
         let ^_ = __lock.lock()
-        __cookies = [ck for ck in __cookies if !ck.session?]
+        __cookies.filter!(ck -> !ck.session?)
     }
 
     cookies() -> Array[Cookie] {
         let ^_ = __lock.lock()
         let now = time.utc()
-        __cookies = [ck for ck in __cookies if !ck.expired?(now)]
+        __cookies.filter!(ck -> !ck.expired?(now))
         [*__cookies]
     }
 
@@ -475,7 +481,7 @@ pub class CookieJar {
             if let $ck = parse-set-cookie(v, u, now) {
                 let ^_ = __lock.lock()
                 if ck.expired?(now) {
-                    __cookies = [old for old in __cookies if !(old.name == ck.name && old.domain == ck.domain && old.path == ck.path)]
+                    __cookies.filter!(old -> !ck.same?(old))
                 } else {
                     __store(ck)
                 }
@@ -542,9 +548,9 @@ pub class CookieJar {
                 domain: f[0],
                 path: f[2],
                 expires: (exp == 0) ? nil : exp,
-                secure: f[3].upper() == 'TRUE',
+                secure: f[3].ieq?('TRUE'),
                 http-only: http-only,
-                host-only: f[1].upper() != 'TRUE'
+                host-only: !f[1].ieq?('TRUE')
             ))
         }
         self

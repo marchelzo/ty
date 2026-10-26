@@ -211,6 +211,41 @@ array_pop(Ty *ty, Value *array, int argc, Value *kwargs)
 }
 
 static Value
+array_shift(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Array.shift()", 0, 1);
+
+        Array *a = array->array;
+        Value  v;
+
+        if (argc == 0) {
+                if (vN(*a) == 0) {
+                        bP("empty array");
+                }
+                v = v__(*a, 0);
+                vvXi(*a, 0);
+        } else {
+                imax n = INT_ARG(0);
+                if (n < 0) {
+                        bP("negative count: %"PRIiMAX, n);
+                }
+                n = min(n, (imax)vN(*a));
+                Array *out = vAn(n);
+                memcpy(vv(*out), vv(*a), n * sizeof (Value));
+                vN(*out) = n;
+                memmove(vv(*a), vv(*a) + n, (vN(*a) - n) * sizeof (Value));
+                vN(*a) -= n;
+                v = ARRAY(out);
+        }
+
+        gP(&v);
+        shrink(ty, array);
+        gX();
+
+        return v;
+}
+
+static Value
 array_clear(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Array.clear()", 0);
@@ -2413,6 +2448,7 @@ DEFINE_METHOD_TABLE(
         { .name = "partition",         .func = array_partition_no_mut        },
         { .name = "partition!",        .func = array_partition               },
         { .name = "pop",               .func = array_pop                     },
+        { .name = "shift",             .func = array_shift                   },
         { .name = "ptr",               .func = array_ptr                     },
         { .name = "push",              .func = array_push                    },
         { .name = "remove",            .func = array_remove_no_mut           },

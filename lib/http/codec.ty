@@ -4,153 +4,12 @@
  * compression), the server (response compression) and WebSocket
  * permessage-deflate.
  *
- * zlib is required; brotli and zstd are used when their libraries load
+ * zlib and zstd are built in; brotli is used when its libraries load
  * (`available()` lists what is usable).
  */
-import ffi as c (C!)
+import _codec as native
 
-if not let $libz = c.open('z', versions: [1, nil], env: 'TY_LIBZ') {
-    throw RuntimeError('http.codec: failed to load zlib')
-}
-
-let libbrotlidec = c.open('brotlidec', versions: [1, nil], env: 'TY_LIBBROTLIDEC')
-let libbrotlienc = c.open('brotlienc', versions: [1, nil], env: 'TY_LIBBROTLIENC')
-let libzstd      = c.open('zstd', versions: [1, nil], env: 'TY_LIBZSTD')
-
-C! struct ZStream {
-    void *next_in;
-    unsigned avail_in;
-    unsigned long total_in;
-    void *next_out;
-    unsigned avail_out;
-    unsigned long total_out;
-    char const *msg;
-    void *state;
-    void *zalloc;
-    void *zfree;
-    void *opaque;
-    int data_type;
-    unsigned long adler;
-    unsigned long reserved;
-}
-
-C! fn {
-    void *calloc(uint64_t n, uint64_t size);
-    void free(void *p);
-}
-
-fn zstream() -> ZStream {
-    let p = calloc(1, c.size(ZStream_C))
-    if p == nil {
-        throw RuntimeError('http.codec: out of memory')
-    }
-    ZStream(p)
-}
-
-C! pub libz fn {
-    char const *zlibVersion(void);
-    int deflateInit2_(void *strm, int level, int method, int windowBits, int memLevel, int strategy, char const *version, int size);
-    int deflate(void *strm, int flush);
-    int deflateReset(void *strm);
-    int deflateEnd(void *strm);
-    int inflateInit2_(void *strm, int windowBits, char const *version, int size);
-    int inflate(void *strm, int flush);
-    int inflateReset(void *strm);
-    int inflateEnd(void *strm);
-}
-
-let brdec: _ = if libbrotlidec != nil {
-    C! libbrotlidec fn {
-        void *BrotliDecoderCreateInstance(void *alloc, void *free, void *opaque);
-        void BrotliDecoderDestroyInstance(void *state);
-        int BrotliDecoderDecompressStream(void *state, void *avail_in, void *next_in, void *avail_out, void *next_out, void *total_out);
-        int BrotliDecoderGetErrorCode(void *state);
-        char const *BrotliDecoderErrorString(int code);
-    }
-    {
-        create:  BrotliDecoderCreateInstance,
-        destroy: BrotliDecoderDestroyInstance,
-        stream:  BrotliDecoderDecompressStream,
-        code:    BrotliDecoderGetErrorCode,
-        error:   BrotliDecoderErrorString
-    }
-}
-
-let brenc: _ = if libbrotlienc != nil {
-    C! libbrotlienc fn {
-        void *BrotliEncoderCreateInstance(void *alloc, void *free, void *opaque);
-        void BrotliEncoderDestroyInstance(void *state);
-        int BrotliEncoderSetParameter(void *state, int param, uint32_t value);
-        int BrotliEncoderCompressStream(void *state, int op, void *avail_in, void *next_in, void *avail_out, void *next_out, void *total_out);
-        int BrotliEncoderHasMoreOutput(void *state);
-    }
-    {
-        create:  BrotliEncoderCreateInstance,
-        destroy: BrotliEncoderDestroyInstance,
-        param:   BrotliEncoderSetParameter,
-        stream:  BrotliEncoderCompressStream,
-        more:    BrotliEncoderHasMoreOutput
-    }
-}
-
-let zstd: _ = if libzstd != nil {
-    C! libzstd fn {
-        uint32_t ZSTD_isError(uint64_t code);
-        char const *ZSTD_getErrorName(uint64_t code);
-        void *ZSTD_createDCtx(void);
-        uint64_t ZSTD_freeDCtx(void *dctx);
-        uint64_t ZSTD_DCtx_setParameter(void *dctx, int param, int value);
-        uint64_t ZSTD_decompressStream(void *dctx, void *output, void *input);
-        void *ZSTD_createCCtx(void);
-        uint64_t ZSTD_freeCCtx(void *cctx);
-        uint64_t ZSTD_CCtx_setParameter(void *cctx, int param, int value);
-        uint64_t ZSTD_compressStream2(void *cctx, void *output, void *input, int op);
-    }
-    {
-        error?:     ZSTD_isError,
-        error:      ZSTD_getErrorName,
-        dctx:       ZSTD_createDCtx,
-        free-dctx:  ZSTD_freeDCtx,
-        dparam:     ZSTD_DCtx_setParameter,
-        decompress: ZSTD_decompressStream,
-        cctx:       ZSTD_createCCtx,
-        free-cctx:  ZSTD_freeCCtx,
-        cparam:     ZSTD_CCtx_setParameter,
-        compress:   ZSTD_compressStream2
-    }
-}
-
-pub const Z_OK          = 0
-pub const Z_STREAM_END  = 1
-pub const Z_NEED_DICT   = 2
-pub const Z_BUF_ERROR   = -5
-pub const Z_NO_FLUSH    = 0
-pub const Z_SYNC_FLUSH  = 2
-pub const Z_FINISH      = 4
-pub const Z_DEFLATED    = 8
-
-const BROTLI_ERROR             = 0
-const BROTLI_SUCCESS           = 1
-const BROTLI_NEEDS_MORE_INPUT  = 2
-const BROTLI_NEEDS_MORE_OUTPUT = 3
-
-const BROTLI_OP_PROCESS = 0
-const BROTLI_OP_FLUSH   = 1
-const BROTLI_OP_FINISH  = 2
-
-const BROTLI_PARAM_QUALITY = 1
-const BROTLI_PARAM_LGWIN   = 2
-
-const ZSTD_e_continue = 0
-const ZSTD_e_flush    = 1
-const ZSTD_e_end      = 2
-
-const ZSTD_d_windowLogMax     = 100
-const ZSTD_c_compressionLevel = 100
-
-const CHUNK = 64 * 1024
-
-pub ZLIB_VERSION = zlibVersion()
+pub ZLIB_VERSION = native.zlib-version()
 
 pub class CodecError < RuntimeError {
     coding:   String
@@ -166,36 +25,32 @@ pub class CodecError < RuntimeError {
 /// Content codings usable in this process, most preferred first.
 pub fn available() -> Array[String] {
     let out = []
-    if libzstd != nil {
-        out.push('zstd')
-    }
-    if libbrotlidec != nil {
+    out.push('zstd')
+    if native.has?('brotlidec') {
         out.push('br')
     }
     out + ['gzip', 'deflate']
 }
 
 pub fn supported?(coding: String) -> Bool {
-    match coding.lower() {
-        'gzip', 'x-gzip', 'deflate', 'identity' => true,
-        'br'                                     => libbrotlidec != nil,
-        'zstd'                                   => libzstd != nil,
-        _                                        => false
+    match coding {
+        /^(?:x-gzip|gzip|deflate|identity|zstd)$/i => true,
+        /^br$/i                                    => native.has?('brotlidec'),
+        _                                          => false
     }
 }
 
 pub fn encodable?(coding: String) -> Bool {
-    match coding.lower() {
-        'gzip', 'x-gzip', 'deflate', 'identity' => true,
-        'br'                                     => libbrotlienc != nil,
-        'zstd'                                   => libzstd != nil,
-        _                                        => false
+    match coding {
+        /^(?:x-gzip|gzip|deflate|identity|zstd)$/i => true,
+        /^br$/i                                    => native.has?('brotlienc'),
+        _                                          => false
     }
 }
 
 /// An `Accept-Encoding` value covering every available coding.
 pub fn accept-encoding() -> String {
-    ['gzip', 'deflate', *(libbrotlidec != nil ? ['br'] : []), *(libzstd != nil ? ['zstd'] : [])].join(', ')
+    ['gzip', 'deflate', *(native.has?('brotlidec') ? ['br'] : []), 'zstd'].join(', ')
 }
 
 fn blob(data: String | Blob) -> Blob {
@@ -209,13 +64,7 @@ fn blob(data: String | Blob) -> Blob {
 pub class Decoder {
     coding: String
     limit:  Int | nil
-    total:  Int
-
-    init(coding: String, limit: Int | nil = nil) {
-        self.coding = coding
-        self.limit  = limit
-        total       = 0
-    }
+    total:  Int = 0
 
     __count(out: Blob) -> Blob {
         total += #out
@@ -242,284 +91,42 @@ pub class Decoder {
     }
 }
 
-class Inflater < Decoder {
-    __z:     ZStream | nil
-    __buf:   Blob
-    __bits:  Int
-    __end?:  Bool
-    __first: Bool
+class NativeDecoder < Decoder {
+    __z: Ptr
 
     init(coding: String, limit: Int | nil) {
         super(coding, limit)
-        __buf   = Blob.zeros(CHUNK)
-        __bits  = match coding { 'deflate' => 15, 'raw-deflate' => -15, _ => 31 }
-        __end?  = false
-        __first = true
-        __z     = nil
-    }
-
-    __open(bits: Int) {
-        let z = zstream()
-        if inflateInit2_(z.get(), bits, ZLIB_VERSION, c.size(ZStream_C)) != Z_OK {
-            free(z.get())
-            throw CodecError(coding, 'inflateInit2 failed')
+        __z = match native.open(coding, false) {
+            z: Ptr => z,
+            why    => throw CodecError(coding, why)
         }
-        __z = z
     }
 
     feed(data: String | Blob) -> Blob {
-        let input = blob(data)
         let out = Blob()
-        if #input == 0 {
-            return out
+        match native.run(__z, data, out, 0, limit ?? -1) {
+            0  => nil,
+            -2 => throw CodecError(coding, "decoded body exceeds {limit} bytes", true),
+            _  => throw CodecError(coding, native.message(__z))
         }
-
-        if __first {
-            __first = false
-            if coding == 'deflate' && #input >= 2 {
-                let cmf = input[0]
-                let flg = input[1]
-                if (cmf & 0x0F) != 8 || ((cmf << 8) | flg) % 31 != 0 {
-                    __bits = -15
-                }
-            }
-            __open(__bits)
-        }
-
-        let $z = __z or throw CodecError(coding, 'data after end of stream')
-
-        let off = 0
-        while off < #input {
-            if __end? {
-                if coding == 'raw-deflate' {
-                    break
-                }
-                if coding != 'gzip' {
-                    throw CodecError(coding, 'data after end of stream')
-                }
-                if input[off] != 0x1F {
-                    break
-                }
-                inflateReset(z.get())
-                __end? = false
-            }
-            z.next_in = input.ptr() + off
-            z.avail_in = #input - off
-            while true {
-                z.next_out = __buf.ptr()
-                z.avail_out = CHUNK
-                let rc = inflate(z.get(), Z_NO_FLUSH)
-                if rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR {
-                    close()
-                    throw CodecError(coding, "invalid compressed data ({rc})")
-                }
-                let n = CHUNK - z.avail_out
-                if n > 0 {
-                    out.push(__buf.ptr(), n)
-                    total += n
-                    if limit != nil && total > limit {
-                        close()
-                        throw CodecError(coding, "decoded body exceeds {limit} bytes", true)
-                    }
-                }
-                if rc == Z_STREAM_END {
-                    __end? = true
-                    break
-                }
-                if z.avail_in == 0 && z.avail_out != 0 {
-                    break
-                }
-                if rc == Z_BUF_ERROR && n == 0 {
-                    break
-                }
-            }
-            off = #input - z.avail_in
-        }
-
+        total += #out
         out
     }
 
     reset() {
-        total  = 0
-        __end? = false
-        if let $z = __z {
-            inflateReset(z.get())
-        }
+        total = 0
+        native.reset(__z)
     }
 
     finish() -> Blob {
-        let ok = __end? || __first
-        close()
-        if !ok {
+        if !native.finish(__z) {
             throw CodecError(coding, 'truncated stream')
         }
         Blob()
     }
 
     close() {
-        if let $z = __z {
-            __z = nil
-            inflateEnd(z.get())
-            free(z.get())
-        }
-    }
-}
-
-class BrotliDecoder < Decoder {
-    __s:    Ptr | nil
-    __buf:  Blob
-    __ain:  Ptr
-    __nin:  Ptr
-    __aout: Ptr
-    __nout: Ptr
-    __end?: Bool
-    __any?: Bool
-
-    init(coding: String, limit: Int | nil) {
-        super(coding, limit)
-        __s = brdec.create(nil, nil, nil)
-        if __s == nil {
-            throw CodecError(coding, 'BrotliDecoderCreateInstance failed')
-        }
-        __buf  = Blob.zeros(CHUNK)
-        __ain  = c.new-auto(c.u64)
-        __nin  = c.new-auto(c.ptr)
-        __aout = c.new-auto(c.u64)
-        __nout = c.new-auto(c.ptr)
-        __end? = false
-        __any? = false
-    }
-
-    feed(data: String | Blob) -> Blob {
-        let out = Blob()
-        if data.size() == 0 {
-            return out
-        }
-        __any? = true
-        let $s = __s or throw CodecError(coding, 'data after end of stream')
-        if __end? {
-            throw CodecError(coding, 'data after end of stream')
-        }
-        c.store(c.u64, __ain, data.size())
-        c.store(c.ptr, __nin, data.ptr())
-        while true {
-            c.store(c.u64, __aout, CHUNK)
-            c.store(c.ptr, __nout, __buf.ptr())
-            let rc = brdec.stream(s, __ain, __nin, __aout, __nout, nil)
-            let n = CHUNK - c.load(c.u64, __aout)
-            if n > 0 {
-                out.push(__buf.ptr(), n)
-                total += n
-                if limit != nil && total > limit {
-                    close()
-                    throw CodecError(coding, "decoded body exceeds {limit} bytes", true)
-                }
-            }
-            match rc {
-                BROTLI_SUCCESS => {
-                    __end? = true
-                    if c.load(c.u64, __ain) != 0 {
-                        close()
-                        throw CodecError(coding, 'data after end of stream')
-                    }
-                    break
-                },
-                BROTLI_NEEDS_MORE_OUTPUT => continue,
-                BROTLI_NEEDS_MORE_INPUT  => break,
-                _ => {
-                    let msg = c.str(brdec.error(brdec.code(s)))
-                    close()
-                    throw CodecError(coding, "invalid compressed data ({msg})")
-                }
-            }
-        }
-        out
-    }
-
-    finish() -> Blob {
-        let ok = __end? || !__any?
-        close()
-        if !ok {
-            throw CodecError(coding, 'truncated stream')
-        }
-        Blob()
-    }
-
-    close() {
-        if let $s = __s {
-            __s = nil
-            brdec.destroy(s)
-        }
-    }
-}
-
-class ZstdDecoder < Decoder {
-    __d:     Ptr | nil
-    __buf:   Blob
-    __in:    Blob
-    __out:   Blob
-    __left:  Int
-
-    init(coding: String, limit: Int | nil) {
-        super(coding, limit)
-        __d = zstd.dctx()
-        if __d == nil {
-            throw CodecError(coding, 'ZSTD_createDCtx failed')
-        }
-        zstd.dparam(__d, ZSTD_d_windowLogMax, 27)
-        __buf  = Blob.zeros(CHUNK)
-        __in   = Blob.zeros(24)
-        __out  = Blob.zeros(24)
-        __left = 0
-    }
-
-    feed(data: String | Blob) -> Blob {
-        let out = Blob()
-        if data.size() == 0 {
-            return out
-        }
-        let $d = __d or throw CodecError(coding, 'decoder is closed')
-        c.pack(__in.ptr(), '=QQQ', int(data.ptr()), data.size(), 0)
-        while true {
-            c.pack(__out.ptr(), '=QQQ', int(__buf.ptr()), CHUNK, 0)
-            let rc = zstd.decompress(d, __out.ptr(), __in.ptr())
-            if zstd.error?(rc) != 0 {
-                let msg = c.str(zstd.error(rc))
-                close()
-                throw CodecError(coding, "invalid compressed data ({msg})")
-            }
-            __left = rc
-            let (_, _, n) = c.unpack('=QQQ', __out.ptr())
-            if n > 0 {
-                out.push(__buf.ptr(), n)
-                total += n
-                if limit != nil && total > limit {
-                    close()
-                    throw CodecError(coding, "decoded body exceeds {limit} bytes", true)
-                }
-            }
-            let (_, size, pos) = c.unpack('=QQQ', __in.ptr())
-            if pos == size && n < CHUNK {
-                break
-            }
-        }
-        out
-    }
-
-    finish() -> Blob {
-        let ok = __left == 0
-        close()
-        if !ok {
-            throw CodecError(coding, 'truncated stream')
-        }
-        Blob()
-    }
-
-    close() {
-        if let $d = __d {
-            __d = nil
-            zstd.free-dctx(d)
-        }
+        native.close(__z)
     }
 }
 
@@ -558,21 +165,21 @@ pub class Chain < Decoder {
 
 /// A decoder for one coding, or nil when it is not supported.
 pub fn decoder(coding: String, limit: Int | nil = nil) -> Decoder | nil {
-    match coding.strip().lower() {
-        'identity', ''    => Decoder('identity', limit),
-        'gzip', 'x-gzip'  => Inflater('gzip', limit),
-        'deflate'         => Inflater('deflate', limit),
-        'raw-deflate'     => Inflater('raw-deflate', limit),
-        'br'              => (libbrotlidec == nil) ? nil : BrotliDecoder('br', limit),
-        'zstd'            => (libzstd == nil) ? nil : ZstdDecoder('zstd', limit),
-        _                 => nil
+    match coding {
+        /^\s*(?:identity)?\s*$/i  => Decoder('identity', limit),
+        /^\s*(?:x-)?gzip\s*$/i    => NativeDecoder('gzip', limit),
+        /^\s*deflate\s*$/i        => NativeDecoder('deflate', limit),
+        /^\s*raw-deflate\s*$/i    => NativeDecoder('raw-deflate', limit),
+        /^\s*br\s*$/i             => native.has?('brotlidec') ? NativeDecoder('br', limit) : nil,
+        /^\s*zstd\s*$/i           => NativeDecoder('zstd', limit),
+        _                         => nil
     }
 }
 
 /// A decoder for a `Content-Encoding` header value. Throws `CodecError`
 /// for unsupported codings.
 pub fn decoder-for(header: String | nil, limit: Int | nil = nil) -> Decoder {
-    let names = (header ?? '').split(',').map(\_.strip().lower()).filter(n -> n != '' && n != 'identity')
+    let names = (header ?? '').matches(/[^\s,]+/).filter!(n -> !n.ieq?('identity'))
     match names {
         [] => Decoder('identity', limit),
         [one] => decoder(one, limit) ?? throw CodecError(one, 'unsupported content coding'),
@@ -598,11 +205,6 @@ pub class Encoder {
     coding: String
     level:  Int
 
-    init(coding: String, level: Int) {
-        self.coding = coding
-        self.level  = level
-    }
-
     write(data: String | Blob, flush: Bool = false) -> Blob {
         blob(data)
     }
@@ -618,180 +220,41 @@ pub class Encoder {
     }
 }
 
-class Deflater < Encoder {
-    __z:   ZStream | nil
-    __buf: Blob
+class NativeEncoder < Encoder {
+    __z: Ptr
 
     init(coding: String, level: Int) {
         super(coding, level)
-        __buf = Blob.zeros(CHUNK)
-        let z = zstream()
-        let bits = match coding { 'deflate' => 15, 'raw-deflate' => -15, _ => 31 }
-        if deflateInit2_(z.get(), level, Z_DEFLATED, bits, 8, 0, ZLIB_VERSION, c.size(ZStream_C)) != Z_OK {
-            free(z.get())
-            throw CodecError(coding, 'deflateInit2 failed')
+        __z = match native.open(coding, true, level) {
+            z: Ptr => z,
+            why    => throw CodecError(coding, why)
         }
-        __z = z
     }
 
-    __run(input: String | Blob, mode: Int) -> Blob {
-        let $z = __z or throw CodecError(coding, 'encoder is closed')
+    __run(input: String | Blob, op: Int) -> Blob {
         let out = Blob()
-        z.next_in = input.ptr()
-        z.avail_in = input.size()
-        while true {
-            z.next_out = __buf.ptr()
-            z.avail_out = CHUNK
-            let rc = deflate(z.get(), mode)
-            if rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR {
-                throw CodecError(coding, "deflate failed ({rc})")
-            }
-            out.push(__buf.ptr(), CHUNK - z.avail_out)
-            if rc == Z_STREAM_END || (z.avail_out != 0 && z.avail_in == 0 && mode != Z_FINISH) {
-                break
-            }
+        if native.run(__z, input, out, op) != 0 {
+            throw CodecError(coding, native.message(__z))
         }
         out
     }
 
     write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(data, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH)
+        __run(data, flush ? 1 : 0)
     }
 
     reset() {
-        if let $z = __z {
-            deflateReset(z.get())
-        }
+        native.reset(__z)
     }
 
     finish() -> Blob {
-        let out = __run(Blob(), Z_FINISH)
+        let out = __run(Blob(), 2)
         close()
         out
     }
 
     close() {
-        if let $z = __z {
-            __z = nil
-            deflateEnd(z.get())
-            free(z.get())
-        }
-    }
-}
-
-class BrotliEncoder < Encoder {
-    __s:    Ptr | nil
-    __buf:  Blob
-    __ain:  Ptr
-    __nin:  Ptr
-    __aout: Ptr
-    __nout: Ptr
-
-    init(coding: String, level: Int) {
-        super(coding, level)
-        __s = brenc.create(nil, nil, nil)
-        if __s == nil {
-            throw CodecError(coding, 'BrotliEncoderCreateInstance failed')
-        }
-        brenc.param(__s, BROTLI_PARAM_QUALITY, max(0, min(level, 11)))
-        brenc.param(__s, BROTLI_PARAM_LGWIN, 22)
-        __buf  = Blob.zeros(CHUNK)
-        __ain  = c.new-auto(c.u64)
-        __nin  = c.new-auto(c.ptr)
-        __aout = c.new-auto(c.u64)
-        __nout = c.new-auto(c.ptr)
-    }
-
-    __run(input: String | Blob, op: Int) -> Blob {
-        let $s = __s or throw CodecError(coding, 'encoder is closed')
-        let out = Blob()
-        c.store(c.u64, __ain, input.size())
-        c.store(c.ptr, __nin, input.ptr())
-        while true {
-            c.store(c.u64, __aout, CHUNK)
-            c.store(c.ptr, __nout, __buf.ptr())
-            if brenc.stream(s, op, __ain, __nin, __aout, __nout, nil) == 0 {
-                throw CodecError(coding, 'BrotliEncoderCompressStream failed')
-            }
-            out.push(__buf.ptr(), CHUNK - c.load(c.u64, __aout))
-            if c.load(c.u64, __ain) == 0 && brenc.more(s) == 0 {
-                break
-            }
-        }
-        out
-    }
-
-    write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(data, flush ? BROTLI_OP_FLUSH : BROTLI_OP_PROCESS)
-    }
-
-    finish() -> Blob {
-        let out = __run(Blob(), BROTLI_OP_FINISH)
-        close()
-        out
-    }
-
-    close() {
-        if let $s = __s {
-            __s = nil
-            brenc.destroy(s)
-        }
-    }
-}
-
-class ZstdEncoder < Encoder {
-    __c:   Ptr | nil
-    __buf: Blob
-    __in:  Blob
-    __out: Blob
-
-    init(coding: String, level: Int) {
-        super(coding, level)
-        __c = zstd.cctx()
-        if __c == nil {
-            throw CodecError(coding, 'ZSTD_createCCtx failed')
-        }
-        zstd.cparam(__c, ZSTD_c_compressionLevel, level)
-        __buf = Blob.zeros(CHUNK)
-        __in  = Blob.zeros(24)
-        __out = Blob.zeros(24)
-    }
-
-    __run(input: String | Blob, op: Int) -> Blob {
-        let $cc = __c or throw CodecError(coding, 'encoder is closed')
-        let out = Blob()
-        c.pack(__in.ptr(), '=QQQ', int(input.ptr()), input.size(), 0)
-        while true {
-            c.pack(__out.ptr(), '=QQQ', int(__buf.ptr()), CHUNK, 0)
-            let rc = zstd.compress(cc, __out.ptr(), __in.ptr(), op)
-            if zstd.error?(rc) != 0 {
-                throw CodecError(coding, c.str(zstd.error(rc)))
-            }
-            let (_, _, n) = c.unpack('=QQQ', __out.ptr())
-            out.push(__buf.ptr(), n)
-            let (_, size, pos) = c.unpack('=QQQ', __in.ptr())
-            if (op == ZSTD_e_continue && pos == size) || (op != ZSTD_e_continue && rc == 0) {
-                break
-            }
-        }
-        out
-    }
-
-    write(data: String | Blob, flush: Bool = false) -> Blob {
-        __run(data, flush ? ZSTD_e_flush : ZSTD_e_continue)
-    }
-
-    finish() -> Blob {
-        let out = __run(Blob(), ZSTD_e_end)
-        close()
-        out
-    }
-
-    close() {
-        if let $cc = __c {
-            __c = nil
-            zstd.free-cctx(cc)
-        }
+        native.close(__z)
     }
 }
 
@@ -802,11 +265,11 @@ pub fn encoder(coding: String, level: Int | nil = nil) -> Encoder {
     let lvl = level ?? (DEFAULT_LEVELS[name] ?? 0)
     match name {
         'identity'       => Encoder('identity', 0),
-        'gzip', 'x-gzip' => Deflater('gzip', lvl),
-        'deflate'        => Deflater('deflate', lvl),
-        'raw-deflate'    => Deflater('raw-deflate', lvl),
-        'br'             => (libbrotlienc == nil) ? throw CodecError('br', 'libbrotlienc is not installed') : BrotliEncoder('br', lvl),
-        'zstd'           => (libzstd == nil) ? throw CodecError('zstd', 'libzstd is not installed') : ZstdEncoder('zstd', lvl),
+        'gzip', 'x-gzip' => NativeEncoder('gzip', lvl),
+        'deflate'        => NativeEncoder('deflate', lvl),
+        'raw-deflate'    => NativeEncoder('raw-deflate', lvl),
+        'br'             => NativeEncoder('br', lvl),
+        'zstd'           => NativeEncoder('zstd', lvl),
         other            => throw CodecError(other, 'unsupported content coding')
     }
 }

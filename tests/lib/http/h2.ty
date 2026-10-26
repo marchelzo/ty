@@ -1,7 +1,6 @@
 import http
 import ssl
 import os
-import ffi as c
 import ty.test.core (skip-file-unless)
 import _client (serve, curl, curl?, write-file)
 
@@ -9,7 +8,6 @@ let (CERT, KEY) = ssl.self-signed()
 let CA = "/tmp/ty-http-h2-ca-{os.getpid()}.pem"
 write-file(CA, CERT)
 
-skip-file-unless(c.open('nghttp2', versions: [14, nil]) != nil, 'libnghttp2 is not installed')
 skip-file-unless(curl?(), 'curl with HTTP/2 support is not installed')
 
 fn routes(srv) {

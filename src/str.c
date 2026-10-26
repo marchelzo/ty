@@ -1629,6 +1629,72 @@ string_bytes(Ty *ty, Value *string, int argc, Value *kwargs)
 }
 
 static Value
+string_ieq(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.ieq?()", 1);
+
+        Value other = ARGx(0, VALUE_STRING);
+
+        u8 const *a = (u8 const *)ss(*string);
+        u8 const *b = (u8 const *)ss(other);
+        isize na = sN(*string);
+        isize nb = sN(other);
+
+        while (na > 0 && nb > 0) {
+                if (a[0] < 0x80 && b[0] < 0x80) {
+                        u8 x = a[0] | ((a[0] - 'A' < 26u) << 5);
+                        u8 y = b[0] | ((b[0] - 'A' < 26u) << 5);
+                        if (x != y) {
+                                return BOOLEAN(false);
+                        }
+                        a += 1; na -= 1;
+                        b += 1; nb -= 1;
+                        continue;
+                }
+
+                utf8proc_int32_t x;
+                utf8proc_int32_t y;
+                isize la = max(1, utf8proc_iterate(a, na, &x));
+                isize lb = max(1, utf8proc_iterate(b, nb, &y));
+
+                if (utf8proc_tolower(x) != utf8proc_tolower(y)) {
+                        return BOOLEAN(false);
+                }
+
+                a += la; na -= la;
+                b += lb; nb -= lb;
+        }
+
+        return BOOLEAN(na == 0 && nb == 0);
+}
+
+static Value
+string_starts(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.starts?()", 1);
+
+        Value prefix = ARGx(0, VALUE_STRING);
+
+        return BOOLEAN(
+                (sN(prefix) <= sN(*string))
+             && (memcmp(ss(*string), ss(prefix), sN(prefix)) == 0)
+        );
+}
+
+static Value
+string_ends(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.ends?()", 1);
+
+        Value suffix = ARGx(0, VALUE_STRING);
+
+        return BOOLEAN(
+                (sN(suffix) <= sN(*string))
+             && (memcmp(ss(*string) + sN(*string) - sN(suffix), ss(suffix), sN(suffix)) == 0)
+        );
+}
+
+static Value
 string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.lower()", 0);
@@ -3808,6 +3874,9 @@ DEFINE_METHOD_TABLE(
         { .name = "len",       .func = string_length           },
         { .name = "lines",     .func = string_lines            },
         { .name = "lower",     .func = string_lower            },
+        { .name = "ieq?",      .func = string_ieq              },
+        { .name = "starts?",   .func = string_starts           },
+        { .name = "ends?",     .func = string_ends             },
         { .name = "match",     .func = string_match            },
         { .name = "match?",    .func = string_is_match         },
         { .name = "matches",   .func = string_matches          },

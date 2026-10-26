@@ -6237,6 +6237,11 @@ DoMutAdd(Ty *ty, bool exec)
                         DictUpdate(ty, vp->dict, top()->dict);
                         pop();
                         break;
+                case PAIR_OF(VALUE_QUEUE):
+                case PACK_TYPES(VALUE_QUEUE, VALUE_ARRAY):
+                        queue_extend(ty, vp->queue, *top());
+                        pop();
+                        break;
                 default:
                         x = pop();
                         val = vm_try_2op(ty, OP_MUT_ADD, vp, &x);
@@ -6903,6 +6908,20 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
                 dict_put_value(ty, container.dict, subscript, value);
                 break;
 
+        case VALUE_QUEUE:
+        {
+                if (UNLIKELY((n != 1) || (subscript.type != VALUE_INTEGER))) {
+                        zP("invalid index in subscript assignment to Queue: %s", VSC(&subscript));
+                }
+                Value *slot = queue_index(container.queue, subscript.z);
+                if (UNLIKELY(slot == NULL)) {
+                        push(TAGGED(TAG_INDEX_ERR, container, subscript));
+                        RaiseException(ty);
+                }
+                *slot = value;
+                break;
+        }
+
         case VALUE_BLOB:
                 if (UNLIKELY((n != 1) || (subscript.type != VALUE_INTEGER))) {
                         zP("non-integer index in subscript assignment to Blob: %s", VSC(&subscript));
@@ -7292,7 +7311,11 @@ Top:
                 } else {
                         top()[-2].off = PTRDIFF_MAX;
                 }
-                push(PAIR(item->k, item->v));
+                if (top()[-2].nt & LOOP_PAIRS) {
+                        push(PTR(item));
+                } else {
+                        push(PAIR(item->k, item->v));
+                }
                 break;
 
         case VALUE_SET:
@@ -7407,6 +7430,36 @@ vm_jit_loop_check(Ty *ty, int z)
                 pop();
                 pop();
                 return true;
+        }
+
+        if (z & LOOP_PAIRS) {
+                Value *sentinel = top();
+                while (sentinel->type != VALUE_SENTINEL) {
+                        sentinel -= 1;
+                }
+
+                Value first;
+                Value second;
+                Value p = sentinel[1];
+
+                if (sentinel[-1].type == VALUE_DICT && p.type == VALUE_PTR) {
+                        DictItem const *item = p.ptr;
+                        first  = item->k;
+                        second = item->v;
+                } else if (p.type == VALUE_TUPLE && p.count == 2) {
+                        first  = p.items[0];
+                        second = p.items[1];
+                } else {
+                        p.tags = tags_push(ty, p.tags, TAG_MATCH_ERR);
+                        p.type |= VALUE_TAGGED;
+                        vmE(&p);
+                }
+
+                STACK.count = (sentinel - vv(STACK)) + 1;
+                push(second);
+                push(first);
+
+                return false;
         }
 
         if (

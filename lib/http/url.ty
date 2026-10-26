@@ -1,12 +1,13 @@
+import _http as hc
 import http.form (decode-query, urlencode, percent-decode)
 
 const DEFAULT_PORTS = %{'http': 80, 'https': 443, 'ws': 80, 'wss': 443}
 
 const SPLIT = /^(?:([A-Za-z][A-Za-z0-9+.\-]*):)?(?:\/\/([^\/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/sv
 
-const PATH_UNSAFE     = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=:@\/%]/
-const QUERY_UNSAFE    = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!$&'()*+,;=:@\/?%]/
-const USERINFO_UNSAFE = /[^A-Za-z0-9\-._~!$&'()*+,;=%]/
+pub const PATH_UNSAFE     = 1
+pub const QUERY_UNSAFE    = 2
+pub const USERINFO_UNSAFE = 3
 
 pub class InvalidURL < ValueError {
     init(what: String) {
@@ -14,12 +15,10 @@ pub class InvalidURL < ValueError {
     }
 }
 
-fn escape-bytes(c: String) -> String {
-    c.bytes().map(b -> "%{b:02X}").join('')
-}
-
-pub fn quote(s: String, unsafe: RegexV | Regex = PATH_UNSAFE) -> String {
-    s.sub(unsafe, escape-bytes)
+/// Percent-encodes what `kind` (PATH_UNSAFE, QUERY_UNSAFE or
+/// USERINFO_UNSAFE) does not allow, keeping valid %XX escapes.
+pub fn quote(s: String, kind: Int = PATH_UNSAFE) -> String {
+    hc.percent-encode(s, kind)
 }
 
 const BASE         = 36
@@ -140,23 +139,12 @@ fn merge(base: URL, path: String) -> String {
 pub use QueryParams = String | Dict[String, _] | Array[(String, _)]
 
 fn encode-params(params: QueryParams) -> String {
-    let pairs = match params {
-        s: String => return s,
-        d: Dict   => d.list(),
-        xs: Array => xs,
-        r         => members(r).list()
+    match params {
+        s: String => s,
+        d: Dict   => hc.encode-query(d),
+        xs: Array => hc.encode-query(xs),
+        r         => hc.encode-query(members(r))
     }
-    let out = []
-    for (k, v) in pairs {
-        match v {
-            nil => out.push(urlencode(str(k))),
-            vs: Array => for x in vs { out.push("{urlencode(str(k))}={urlencode(str(x))}") },
-            true  => out.push("{urlencode(str(k))}=true"),
-            false => out.push("{urlencode(str(k))}=false"),
-            x     => out.push("{urlencode(str(k))}={urlencode(str(x))}")
-        }
-    }
-    out.join('&')
 }
 
 /// A parsed absolute or relative URL (RFC 3986). Hosts are lower-cased and

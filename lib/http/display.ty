@@ -39,10 +39,6 @@ pub fn color?(fd: Int = 1) -> Bool {
 class Paint {
     on: Bool
 
-    init(on: Bool) {
-        self.on = on
-    }
-
     __call__(style: String, s: String) -> String {
         on ? "[{THEME[style] ?? style}]{escape(s)}[/]" : s
     }
@@ -131,19 +127,11 @@ pub fn pretty-json(x: _, color: Bool = color?(), indent: Int = 2) -> String {
 }
 
 fn json-type?(ctype: String) -> Bool {
-    let t = ctype.split(';')[0].strip().lower()
-    t == 'application/json' || t.ends?('+json') || t == 'text/json' || t == 'application/x-ndjson'
+    ctype :: /^\s*(?:application\/(?:json|x-ndjson)|text\/json|[^;\s]*\+json)\s*(?:;|$)/i
 }
 
 fn text-type?(ctype: String) -> Bool {
-    let t = ctype.split(';')[0].strip().lower()
-    t.starts?('text/')
- || t.ends?('+xml')
- || t == 'application/xml'
- || t == 'application/javascript'
- || t == 'application/x-www-form-urlencoded'
- || t == 'application/graphql'
- || t == 'image/svg+xml'
+    ctype :: /^\s*(?:text\/[^;\s]*|[^;\s]*\+xml|application\/(?:xml|javascript|x-www-form-urlencoded|graphql))\s*(?:;|$)/i
 }
 
 fn printable?(b: Blob) -> Bool {
@@ -193,7 +181,7 @@ pub fn body(data: Blob | String | nil, content-type: String | nil, color: Bool =
         return clip(text, limit, p)
     }
 
-    if ctype.lower().starts?('application/x-www-form-urlencoded') {
+    if ctype :: /^application\/x-www-form-urlencoded/i {
         let q = decode-query(b.str(lossy: true))
         return clip(p.render([ "{p('key', k)}{p('punct', '=')}{p('str', str(v))}" for k, v in q ].join('\n')), limit, p)
     }

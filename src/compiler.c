@@ -7966,6 +7966,34 @@ emit_with(Ty *ty, Expr const *e, bool want_result)
         return emit_statement(ty, e->with.block, want_result);
 }
 
+inline static Expr const *
+PairPattern(Expr const *targets)
+{
+        if (vN(targets->es) != 1) {
+                return NULL;
+        }
+
+        Expr const *t = v__(targets->es, 0);
+
+        if (t->type != EXPRESSION_TUPLE || vN(t->es) != 2) {
+                return NULL;
+        }
+
+        for (int i = 0; i < 2; ++i) {
+                Expr const *e = v__(t->es, i);
+                if (
+                        (v__(t->names, i) != NULL)
+                     || !v__(TPX(t)->required, i)
+                     || (e->type == EXPRESSION_MATCH_REST)
+                     || (e->type == EXPRESSION_SPREAD)
+                ) {
+                        return NULL;
+                }
+        }
+
+        return t;
+}
+
 static void
 emit_yield_from(Ty *ty, Expr const *iter)
 {
@@ -10346,9 +10374,14 @@ BeginComprehensionLoop(
                 return;
         }
 
+        Expr const *pair = (part->pattern->type == EXPRESSION_LIST) ? PairPattern(part->pattern) : NULL;
+        ExprVec const *targets = (pair != NULL) ? &pair->es : &part->pattern->es;
+        int n = vN(*targets);
+        int flags = (pair != NULL) ? LOOP_PAIRS : 0;
+
         INSN(PUSH_INDEX);
         if (part->pattern->type == EXPRESSION_LIST) {
-                Ei32(vN(part->pattern->es));
+                Ei32(n | flags);
         } else {
                 Ei32(1);
         }
@@ -10361,16 +10394,16 @@ BeginComprehensionLoop(
                 INSN(LOOP_ITER);
 
                 state->done = (PLACEHOLDER_JUMP)(ty, INSTR_LOOP_CHECK);
-                Ei32(vN(part->pattern->es));
-                STK(vN(part->pattern->es) - 1);
+                Ei32(n | flags);
+                STK(n - 1);
 
                 if (part->pattern->has_resources) {
                         INSN(PUSH_DROP_GROUP);
                         STATE.resources += 1;
                 }
 
-                for (int i = 0; i < vN(part->pattern->es); ++i) {
-                        Expr *target = v__(part->pattern->es, i);
+                for (int i = 0; i < n; ++i) {
+                        Expr *target = v__(*targets, i);
                         usize start = vN(STATE.code);
                         emit_try_match(ty, target, false);
                         add_location(ty, target, start, vN(STATE.code));
@@ -10727,9 +10760,14 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
         v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
 
+        Expr const *pair = PairPattern(s->each.target);
+        ExprVec const *targets = (pair != NULL) ? &pair->es : &s->each.target->es;
+        int n = vN(*targets);
+        int flags = (pair != NULL) ? LOOP_PAIRS : 0;
+
         WITH_FORKED_STACK {
                 INSN(PUSH_INDEX);
-                Ei32(vN(s->each.target->es));
+                Ei32(n | flags);
 
                 EE(s->each.array);
 
@@ -10743,16 +10781,16 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                 }
 
                 PLACEHOLDER_JUMP(LOOP_CHECK, done);
-                Ei32(vN(s->each.target->es));
-                STK(vN(s->each.target->es) - 1);
+                Ei32(n | flags);
+                STK(n - 1);
 
                 if (s->each.target->has_resources) {
                         INSN(PUSH_DROP_GROUP);
                         STATE.resources += 1;
                 }
 
-                for (int i = 0; i < vN(s->each.target->es); ++i) {
-                        Expr *target = v__(s->each.target->es, i);
+                for (int i = 0; i < n; ++i) {
+                        Expr *target = v__(*targets, i);
                         usize start = vN(STATE.code);
                         emit_try_match(ty, target, false);
                         add_location(ty, target, start, vN(STATE.code));

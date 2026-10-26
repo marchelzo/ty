@@ -20,10 +20,10 @@ const STREAM   = 2
 const SENDING  = 3
 const UPGRADED = 4
 
-const CONTINUE = Blob('HTTP/1.1 100 Continue\r\n\r\n')
+const CONTINUE = 'HTTP/1.1 100 Continue\r\n\r\n'
 const PREFACE  = 'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
 
-const RESERVED = %{'content-length', 'transfer-encoding', 'connection', 'date'}
+const RESERVED = /^(?:content-length|transfer-encoding|connection|date)$/i
 
 const STATUS_LINES: Dict[Int, String] = %{
     code: "HTTP/1.1 {code} {status-name(code)}\r\n" for code in 100..600
@@ -76,12 +76,12 @@ pub fn render-head(
     }
 
     for k, v in rsp.headers {
-        if RESERVED.contains?(k.lower()) {
+        if k :: RESERVED {
             continue
         }
         match v {
             s: String => push-header(out, k, s),
-            vs        => vs.each(push-header@(out, k, _))
+            vs        => for s in vs { push-header(out, k, s) }
         }
     }
 
@@ -93,27 +93,20 @@ pub class H1Exchange : LoopExchange {
     close?:  Bool
 
     __request:  Request
-    __closed?:  Bool
+    __closed?:  Bool = false
     __head?:    Bool
-    __chunked?: Bool
+    __chunked?: Bool = false
     __length:   Int | nil
-    __ended?:   Bool
+    __ended?:   Bool = false
     __writer:   BodyWriter | nil
-    __closers:  Array[() -> _]
-    __waiting:  Array[Task]
+    __closers:  Array[() -> _] | nil
+    __waiting:  Array[Task] | nil
 
     init(proto: H1, request: Request, close?: Bool) {
-        self.proto   = proto
-        self.close?  = close?
-        __request    = request
-        __closed?    = false
-        __head?      = request.method == 'HEAD'
-        __chunked?   = false
-        __length     = nil
-        __ended?     = false
-        __writer     = nil
-        __closers    = []
-        __waiting    = []
+        self.proto  = proto
+        self.close? = close?
+        __request   = request
+        __head?     = request.method == 'HEAD'
     }
 
     loop -> Loop {
@@ -145,7 +138,7 @@ pub class H1Exchange : LoopExchange {
             return true
         }
         match rsp.header('Connection') {
-            s: String => s.lower() == 'close',
+            s: String => s.ieq?('close'),
             _         => false
         }
     }
@@ -258,7 +251,7 @@ pub class H1Exchange : LoopExchange {
     }
 
     __no-keep-alive? -> Bool {
-        (request.header('connection') ?? '').lower() != 'keep-alive'
+        !(request.header('connection') ?? '').ieq?('keep-alive')
     }
 
     abort() {
@@ -273,7 +266,10 @@ pub class H1Exchange : LoopExchange {
 
     wait-closed() {
         while !closed? {
-            __waiting.push(task()!)
+            match __waiting {
+                nil => __waiting = [task()!],
+                xs  => xs.push(task()!)
+            }
             suspend()
         }
     }
@@ -282,7 +278,10 @@ pub class H1Exchange : LoopExchange {
         if closed? {
             f()
         } else {
-            __closers.push(f)
+            match __closers {
+                nil => __closers = [f],
+                xs  => xs.push(f)
+            }
         }
     }
 
@@ -292,20 +291,22 @@ pub class H1Exchange : LoopExchange {
         }
         __closed? = true
 
-        let cs = __closers
-        __closers = []
-        for f in cs {
-            try {
-                f()
-            } catch e {
-                log::error!("error in on-close callback", err: e)
+        if let $cs = __closers {
+            __closers = nil
+            for f in cs {
+                try {
+                    f()
+                } catch e {
+                    log::error!("error in on-close callback", err: e)
+                }
             }
         }
 
-        let ws = __waiting
-        __waiting = []
-        for t in ws {
-            proto.conn.loop.resume(t)
+        if let $ws = __waiting {
+            __waiting = nil
+            for t in ws {
+                proto.conn.loop.resume(t)
+            }
         }
     }
 }
@@ -379,29 +380,21 @@ class H1Body {
 pub class H1 : Proto {
     conn:    Conn
     server:  Host
-    state:   Int
+    state:   Int = IDLE
     x:       H1Exchange | nil
     body:    H1Body | nil
-    scratch: Blob
+    scratch: Blob = Blob()
 
     __marks:      Array[Int]
-    __started?:   Bool
-    __headed?:    Bool
-    __continued?: Bool
-    __close?:     Bool
+    __started?:   Bool = false
+    __headed?:    Bool = false
+    __continued?: Bool = false
+    __close?:     Bool = false
 
     init(conn: Conn, server: Host) {
         self.conn   = conn
         self.server = server
-        state       = IDLE
-        x           = nil
-        body        = nil
         __marks     = wire.marks(conn.config.max-headers)
-        __started?  = false
-        __headed?   = false
-        __continued? = false
-        __close?    = false
-        scratch     = Blob()
         __next()
     }
 

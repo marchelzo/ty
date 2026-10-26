@@ -21,4 +21,7 @@ blob_get(Ty *ty, Value *blob, int argc, Value *kwargs);
 Value
 blob_push(Ty *ty, Value *blob, int argc, Value *kwargs);
 
+Value
+LossyString(Ty *ty, u8 const *s, isize n);
+
 #endif

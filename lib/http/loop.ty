@@ -109,17 +109,10 @@ pub fn make-backend(name: String, entries: Int) -> Backend {
 }
 
 pub class Timer {
-    deadline: Float
-    queued:   Float
-    active?:  Bool
     f:        () -> _
-
-    init(f: () -> _) {
-        self.f   = f
-        deadline = 0.0
-        queued   = -1.0
-        active?  = false
-    }
+    deadline: Float = 0.0
+    queued:   Float = -1.0
+    active?:  Bool = false
 
     cancel() {
         active? = false
@@ -131,13 +124,13 @@ pub class Conn {
     slot:      Int
     fd:        Int
     tls:       ssl.Session | nil
-    cin:       Blob
-    buf:       Blob
+    cin:       Blob = Blob()
+    buf:       Blob = Blob.zeros(BUF_SIZE)
     head:      Int
     filled:    Int
-    out:       Blob
+    out:       Blob = Blob()
     sent:      Int
-    pend:      Blob
+    pend:      Blob = Blob()
     proto:     Proto | nil
     requests:  Int
     opened:    Float
@@ -149,7 +142,7 @@ pub class Conn {
     closed?:   Bool
     draining?: Bool
     linger?:   Bool
-    waiters:   Array[Task]
+    waiters:   Array[Task] = []
 
     __timers: Array[Timer]
     __peer:   String | nil
@@ -157,11 +150,6 @@ pub class Conn {
     init(loop: Loop, slot: Int) {
         self.loop = loop
         self.slot = slot
-        cin       = Blob()
-        buf       = Blob.zeros(BUF_SIZE)
-        out       = Blob()
-        pend      = Blob()
-        waiters   = []
         __timers  = [
             Timer(-> __expired(READ)),
             Timer(-> __expired(WRITE))
@@ -349,7 +337,9 @@ pub class Conn {
             return
         }
 
-        (out, pend) = (pend, out)
+        let full = pend
+        pend = out
+        out = full
         pend.clear()
         sent = 0
         __send()
@@ -578,65 +568,43 @@ pub class Loop : EventLoop {
     server:  Host
     index:   Int
     backend: Backend
-    now:     Float
-    date:    String
-    dirty:   Array[Conn]
+    now:     Float = time.now()
+    date:    String = ''
+    dirty:   Array[Conn] = []
 
-    request-seq: Int
-    metrics:     Metrics
+    request-seq: Int = 0
+    metrics:     Metrics = Metrics()
 
     __config:    Config
 
-    __later:     Array[() -> _]
+    __later:     Array[() -> _] = []
 
     __listen:    Int
-    __slots:     Array[Conn | nil]
-    __free:      Array[Int]
-    __active:    Int
-    __timers:    Heap[(Float, Int, Timer)]
-    __mbox:      Array[() -> _]
-    __mtx:       Mutex
-    __accepting: Bool
-    __stopping:  Bool
-    __done:      Bool
-    __stale?:    Bool
-    __closed?:   Bool
-    __files:     Dict[Int, (Task | nil, Blob)]
-    __file-seq:  Int
-    __tseq:      Int
-    __tasks:     Set[Task]
-    __date-at:   Int
+    __slots:     Array[Conn | nil] = [nil]
+    __free:      Array[Int] = []
+    __active:    Int = 0
+    __timers:    Heap[(Float, Int, Timer)] = Heap()
+    __mbox:      Array[() -> _] = []
+    __mtx:       Mutex = Mutex()
+    __accepting: Bool = false
+    __stopping:  Bool = false
+    __done:      Bool = false
+    __stale?:    Bool = false
+    __closed?:   Bool = false
+    __files:     Dict[Int, (Task | nil, Blob)] = %{}
+    __file-seq:  Int = 0
+    __tseq:      Int = 0
+    __tasks:     Set[Task] = Set()
+    __date-at:   Int = 0
     __backoff:   Timer
 
     init(server: Host, config: Config, index: Int, listen: Int) {
-        self.server  = server
-        self.index   = index
-        backend      = make-backend(config.backend, config.ring-entries)
-        now          = time.now()
-        dirty        = []
-        request-seq  = 0
-        metrics      = Metrics()
-        __config     = config
-        __later      = []
-        __listen     = listen
-        __slots      = [nil]
-        __free       = []
-        __active     = 0
-        __timers     = Heap()
-        __mbox       = []
-        __mtx        = Mutex()
-        __accepting  = false
-        __stopping   = false
-        __done       = false
-        __stale?     = false
-        __closed?    = false
-        __files      = %{}
-        __file-seq   = 0
-        __tseq       = 0
-        __tasks      = Set()
-        __date-at    = 0
-        date         = ''
-        __backoff    = Timer(-> __arm-accept())
+        self.server = server
+        self.index  = index
+        backend     = make-backend(config.backend, config.ring-entries)
+        __config    = config
+        __listen    = listen
+        __backoff   = Timer(-> __arm-accept())
         __tick-date()
     }
 
@@ -1061,11 +1029,10 @@ pub class Loop : EventLoop {
 use Job = ((*_) -> _, Array[_], Loop, Task);
 
 class Blocking {
-    __queue:   SharedQueue[Job]
+    __queue:   SharedQueue[Job] = SharedQueue()
     __threads: Array[Thread[nil]]
 
     init(n: Int) {
-        __queue   = SharedQueue()
         __threads = [Thread(__work) for ..n]
         for __threads {
             it.detach()

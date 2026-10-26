@@ -80,36 +80,27 @@ fn nonblocking(fd: Int) {
 }
 
 pub class Backend : backend.Backend {
-    __kq:    Int
-    __ch:    Blob
-    __nch:   Int
-    __ev:    Blob
-    __ts:    Blob
+    __kq:     Int
+    __ch:     Blob = Blob.zeros(KEVENT * BATCH)
+    __nch:    Int = 0
+    __ev:     Blob = Blob.zeros(KEVENT * BATCH)
+    __ts:     Blob = Blob.zeros(16)
     __wake-r: Int
     __wake-w: Int
-    __byte:   Blob
-    __drain:  Blob
-    __ready: Array[(Int, Int)]
-    __ops:   Dict[Int, (Int, Int, Ptr | nil, Int)]
-    __wake:  Int | nil
+    __byte:   Blob = Blob(1)
+    __drain:  Blob = Blob.zeros(64)
+    __ready:  Array[(Int, Int)] = []
+    __ops:    Dict[Int, (Int, Int, Ptr | nil, Int)] = %{}
+    __wake:   Int | nil
 
     init(entries: Int = 1024) {
         __kq = kqueue()
         if __kq < 0 {
             throw OSError('kqueue')
         }
-        __ch    = Blob.zeros(KEVENT * BATCH)
-        __nch   = 0
-        __ev    = Blob.zeros(KEVENT * BATCH)
-        __ts    = Blob.zeros(16)
         (__wake-r, __wake-w) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)
         nonblocking(__wake-r)
         nonblocking(__wake-w)
-        __byte  = Blob(1)
-        __drain = Blob.zeros(64)
-        __ready = []
-        __ops   = %{}
-        __wake  = nil
     }
 
     name -> String {
