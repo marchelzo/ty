@@ -1,0 +1,56 @@
+import os
+import stdio
+
+pub fn read-across-chunks() {
+    let f = stdio.tmpfile()!
+    defer stdio.fclose(f)
+    let data = Blob([it % 251 for ..(2 * 65536 + 19)])
+
+    assert(stdio.fwrite(f, data) == #data)
+    stdio.fseek(f, 0, 0)
+    assert(stdio.fread(f, #data + 65536) == data)
+    assert(stdio.fread(f, 1) == nil)
+}
+
+pub fn read-appends-to-buffer() {
+    let f = stdio.tmpfile()!
+    defer stdio.fclose(f)
+    stdio.fwrite(f, 'abcdef')
+    stdio.fseek(f, 0, 0)
+
+    let out = Blob([120, 121])
+    assert(stdio.fread(f, 2, out) == 2)
+    assert(out.str() == 'xyab')
+    assert(stdio.fread(f, 20, out) == 4)
+    assert(out.str() == 'xyabcdef')
+    assert(stdio.fread(f, 1, out) == 0)
+    assert(out.str() == 'xyabcdef')
+}
+
+pub fn read-zero-and-large-counts() {
+    let f = stdio.tmpfile()!
+    defer stdio.fclose(f)
+    stdio.fwrite(f, 'a')
+    stdio.fseek(f, 0, 0)
+
+    assert(stdio.fread(f, 0) == Blob())
+    assert(stdio.fread(f, 1)!.str() == 'a')
+    assert(stdio.fread(f, 1 << 40) == nil)
+    assert(stdio.fread(f, 0) == Blob())
+
+    let out = Blob([98])
+    assert(stdio.fread(f, 0, out) == 0)
+    assert(out.str() == 'b')
+}
+
+pub fn read-pipe-through-eof() {
+    let (rd, wr) = os.pipe()!
+    let f = stdio.fdopen(rd, 'r')!
+    defer stdio.fclose(f)
+    os.write(wr, 'pipe\0data')
+    os.close(wr)
+
+    assert(stdio.fread(f, 4)!.str() == 'pipe')
+    assert(stdio.fread(f, 100)!.str() == '\0data')
+    assert(stdio.fread(f, 1) == nil)
+}

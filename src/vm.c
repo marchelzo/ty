@@ -4018,6 +4018,24 @@ BuildKwargsDict(Ty *ty, char **ip, int nkw)
                 return NIL;
         }
 
+        if (nkw == 1) {
+                Value v = *top();
+                if (
+                        IsNone(v)
+                     || (
+                                (**ip == '*')
+                             && (
+                                        ((v.type == VALUE_DICT ) && (v.dict->count == 0))
+                                     || ((v.type == VALUE_TUPLE) && (v.count       == 0))
+                                )
+                        )
+                ) {
+                        *ip += strlen(*ip) + 1;
+                        pop();
+                        return NIL;
+                }
+        }
+
         GC_STOP();
         Dict *kwargs = dict_new(ty);
         for (int i = 0; i < nkw; ++i, *ip += strlen(*ip) + 1) {
@@ -7420,11 +7438,45 @@ SpreadShuffle(Ty *ty, bool inject_nil)
 bool
 vm_jit_spread_check(Ty *ty, bool inject_nil)
 {
-        bool done = vm_jit_loop_check(ty, 1);
-        if (!done) {
-                SpreadShuffle(ty, inject_nil);
+        if (vm_jit_loop_check(ty, 1)) {
+                return true;
         }
-        return done;
+
+        Value xs = top()[-2];
+        Value const *p;
+        usize n;
+
+        switch (xs.type) {
+        case VALUE_ARRAY:
+                p = vv(*xs.array);
+                n = vN(*xs.array);
+                break;
+
+        case VALUE_TUPLE:
+                p = xs.items;
+                n = xs.count;
+                break;
+
+        default:
+                SpreadShuffle(ty, inject_nil);
+                return false;
+        }
+
+        usize i = top()[-3].i - 1;
+
+        vN(STACK) -= 4;
+
+        if (inject_nil) {
+                xvR(STACK, fit2(max(vC(STACK), 4), vN(STACK) + 2 * (n - i)));
+                for (; i < n; ++i) {
+                        xvP(STACK, p[i]);
+                        xvP(STACK, NIL);
+                }
+        } else {
+                xvPn(STACK, p + i, n - i);
+        }
+
+        return true;
 }
 
 static void
@@ -9203,8 +9255,8 @@ TargetMember:
                 CASE(SPREAD_CHECK)
                         READJUMP(jump);
                         READVALUE(b);
-                        if (!LoopCheck(ty, 1, jump)) {
-                                SpreadShuffle(ty, b);
+                        if (vm_jit_spread_check(ty, b)) {
+                                DOJUMP(jump);
                         }
                         break;
 

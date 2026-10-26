@@ -9501,17 +9501,20 @@ TY_BUILTIN_RAW(stdio_fread)
         } else {
                 blob = value_blob_new(ty);
         }
-
-
         FILE *fp = f.ptr;
-        imax bytes = 0;
-        int c;
+        usize bytes = 0;
 
         NOGC(blob);
         UnlockTy();
-        while (bytes < n.z && (c = fgetc(fp)) != EOF) {
-                uvP(*blob, c);
-                bytes += 1;
+        while (bytes < n.z) {
+                usize want = min(n.z - bytes, 64 * 1024);
+                uvR(*blob, fit2(max(vC(*blob), 4), vN(*blob) + want));
+                usize got = fread(vZ(*blob), 1, want, fp);
+                vN(*blob) += got;
+                bytes += got;
+                if (got < want) {
+                        break;
+                }
         }
         LockTy();
         OKGC(blob);
@@ -9520,7 +9523,7 @@ TY_BUILTIN_RAW(stdio_fread)
                 return INTEGER(bytes);
         }
 
-        if (vN(*blob) == 0 && n.z > 0 && c == EOF) {
+        if (bytes == 0 && n.z > 0) {
                 return NIL;
         }
 

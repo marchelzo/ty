@@ -28,6 +28,11 @@ xs.map!(\_ * 10)
 pp(xs)
 ```
 
+Sorting with `by:` evaluates the key function once per element, in input
+order, and compares the cached keys using O(n) temporary storage.
+`sort-on` and `sort-on!` use the same behavior. A key function must not
+change the array's length.
+
 Conditional elements — `if` inside an array literal includes the element only when true:
 
 ```ty

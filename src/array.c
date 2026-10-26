@@ -28,8 +28,9 @@ static Value
 array_reverse(Ty *ty, Value *array, int argc, Value *kwargs);
 
 typedef struct {
-        Value f;
-        Ty *ty;
+        Value        f;
+        Ty          *ty;
+        Value const *keys;
 } SortContext;
 
 static int
@@ -42,66 +43,20 @@ compare_default(void *ty, void const *v1, void const *v2)
         return v_cmp(v1, v2);
 }
 
-typedef struct {
-        Ty          *ty;
-        Value const *keys;
-} KeyContext;
-
 static int
 #if defined(__linux__)
-compare_keys(void const *a, void const *b, void *ctx_)
+compare_by(void const *v1, void const *v2, void *ctx_)
 #else
-compare_keys(void *ctx_, void const *a, void const *b)
+compare_by(void *ctx_, void const *v1, void const *v2)
 #endif
 {
-        KeyContext const *ctx = ctx_;
-        Ty               *ty  = ctx->ty;
-        usize             i   = *(usize const *)a;
-        usize             j   = *(usize const *)b;
-        int               c   = v_cmp(&ctx->keys[i], &ctx->keys[j]);
+        SortContext const *ctx = ctx_;
+        Ty                *ty  = ctx->ty;
+        usize              i   = *(usize const *)v1;
+        usize              j   = *(usize const *)v2;
+        int                c   = v_cmp(&ctx->keys[2 * i], &ctx->keys[2 * j]);
 
         return (c != 0) ? c : (i > j) - (i < j);
-}
-
-static void
-sort_keyed(Ty *ty, Array *xs, usize at, usize n, Value const *f)
-{
-        Array *keys = vAn(n);
-        Value  held = ARRAY(keys);
-
-        gP(&held);
-
-        for (usize i = 0; i < n; ++i) {
-                Value k = vm_call1(ty, f, v_(*xs, at + i));
-                vAp(keys, k);
-        }
-
-        if (vN(*xs) < at + n) {
-                gX();
-                zP("Array.sort(): array was resized while computing sort keys");
-        }
-
-        SCRATCH_SAVE();
-
-        usize      *order = smA(n * sizeof *order);
-        Value      *items = smA(n * sizeof *items);
-        KeyContext  ctx   = { .ty = ty, .keys = vv(*keys) };
-
-        for (usize i = 0; i < n; ++i) {
-                order[i] = i;
-        }
-
-        rqsort(order, n, sizeof *order, compare_keys, &ctx);
-
-        memcpy(items, v_(*xs, at), n * sizeof *items);
-
-        for (usize i = 0; i < n; ++i) {
-                *v_(*xs, at + i) = items[order[i]];
-        }
-
-        SCRATCH_RESTORE();
-
-        gX();
 }
 
 static int
@@ -128,6 +83,55 @@ compare_by2(void *ctx_, void const *v1, void const *v2)
         gX();
 
         return result;
+}
+
+static void
+sort_keyed(Ty *ty, Array *xs, usize at, usize n, Value const *f)
+{
+        if (n == 0) {
+                return;
+        }
+
+        usize count = vN(*xs);
+        Value pairs = ARRAY(vAn(2 * n));
+
+        gP(&pairs);
+
+        for (usize i = 0; i < n; ++i) {
+                vvP(*pairs.array, NIL);
+                vvP(*pairs.array, v__(*xs, at + i));
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                *v_(*pairs.array, 2 * i) = vm_call1(ty, f, v_(*pairs.array, 2 * i + 1));
+        }
+
+        if (vN(*xs) != count) {
+                zP("Array.sort(): array changed size during key evaluation");
+        }
+
+        SCRATCH_SAVE();
+
+        usize       *order = smA(n * sizeof *order);
+        SortContext  ctx   = { .ty = ty, .keys = vv(*pairs.array) };
+
+        for (usize i = 0; i < n; ++i) {
+                order[i] = i;
+        }
+
+        rqsort(order, n, sizeof *order, compare_by, &ctx);
+
+        if (vN(*xs) != count) {
+                zP("Array.sort(): array changed size during key comparison");
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                *v_(*xs, at + i) = v__(*pairs.array, 2 * order[i] + 1);
+        }
+
+        SCRATCH_RESTORE();
+
+        gX();
 }
 
 inline static void

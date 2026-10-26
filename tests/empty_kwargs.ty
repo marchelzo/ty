@@ -1,0 +1,63 @@
+fn options(%kw: Any) -> Dict[String, Any] {
+    kw
+}
+
+fn forward(*xs: Any, %kw: Any) -> (Array[Any], Dict[String, Any]) {
+    (xs, options(**kw))
+}
+
+fn selected(n: Int, extra: Int = 1) -> Int {
+    n + extra
+}
+
+fn selected(n: String, extra: String = '!') -> String {
+    "{n}{extra}"
+}
+
+class Box {
+    kw: Dict[String, Any]
+
+    init(%kw: Any) {
+        self.kw = kw
+    }
+}
+
+pub fn empty-keywords-remain-independent() {
+    let input: Dict[String, Any] = %{}
+    let first = options(**input)
+    let next = options(**input)
+
+    first['x'] = 1
+    assert(input == %{} && next == %{})
+    assert(options(**()) == %{})
+    assert(options() == %{})
+}
+
+pub fn empty-keywords-forward-with-positional-arguments() {
+    let empty: Dict[String, Any] = %{}
+
+    assert(forward(1, 2, **empty) == ([1, 2], %{}))
+    assert(forward(*[1, 2], **()) == ([1, 2], %{}))
+    assert(forward(**empty) == ([], %{}))
+    assert(forward(1, x: 2, **empty) == ([1], %{'x': 2}))
+    assert(forward(1, **empty, x: 2) == ([1], %{'x': 2}))
+}
+
+pub fn empty-keywords-select-overloads-and-defaults() {
+    let empty: Dict[String, Any] = %{}
+
+    assert(selected(4, **empty) == 5)
+    assert(selected('a', **empty) == 'a!')
+    assert(selected(4, **()) == 5)
+    assert(selected('a', extra: '?', **empty) == 'a?')
+}
+
+pub fn empty-keywords-create-fresh-constructor-options() {
+    let empty: Dict[String, Any] = %{}
+    let a = Box(**empty)
+    let b = Box(**empty)
+
+    a.kw['x'] = 1
+    assert(b.kw == %{} && empty == %{})
+    assert(Box(**()).kw == %{})
+}

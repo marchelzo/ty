@@ -18,7 +18,7 @@
 inline static SetItem
 item(Ty *ty, Value const *x)
 {
-        return (SetItem) { .k = *x, .h = value_hash(ty, x) };
+        return (SetItem) { .k = *x, .h = ht_hash(ty, x) };
 }
 
 inline static bool
