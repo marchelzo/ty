@@ -1,0 +1,224 @@
+import http
+import http.ws as ws
+import http.client as client (Client, BearerAuth, HttpStatusError, ProtocolError, ReadTimeout, WriteError)
+import ssl
+import os
+import net
+import time
+import _client (serve, write-file, xread)
+
+let (CERT, KEY) = ssl.self-signed()
+let CA = "/tmp/ty-http-ws-client-ca-{os.getpid()}.pem"
+write-file(CA, CERT)
+
+let parted = SharedQueue()
+
+fn routes(srv) {
+    srv.ws('/echo', fn (sock, req) {
+        while let $m = sock.recv() {
+            sock.send(m)
+        }
+    })
+
+    srv.ws('/parting', fn (sock, req) {
+        while let $m = sock.recv() {
+            sock.send(m)
+        }
+        parted.put(sock.close-code)
+    })
+
+    srv.ws('/whoami', fn (sock, req) {
+        sock.send("{req.header('authorization')} {req.header('x-team')} {req.params['q']} {sock.protocol}")
+        sock.recv()
+    }, protocols: ['chat', 'superchat'])
+
+    srv.ws('/hangup', fn (sock, req) {
+        sock.send('bye')
+        sock.close(4000, 'done')
+    })
+
+    srv.ws('/later', fn (sock, req) {
+        http.sleep(0.6)
+        sock.send('still here')
+        sock.recv()
+    })
+}
+
+fn tls() -> _ {
+    {cert: CERT, key: KEY}
+}
+
+fn url(srv, path: String) -> String {
+    "{srv.url.sub(/^http/, 'ws')}{path}"
+}
+
+pub fn echo-text-and-binary() {
+    serve(routes, fn (srv) {
+        with s = client.websocket(url(srv, '/echo')) {
+            assert(s.response.status-code == 101)
+            s.send('hello')
+            assert(s.recv() == 'hello')
+            s.send('ünïcödé ✓')
+            assert(s.recv() == 'ünïcödé ✓')
+            s.send(Blob(0, 1, 2, 255))
+            let b = s.recv()
+            assert(b :: Blob && b.hex() == '000102ff')
+            let big = 'L' * 300000
+            s.send(big)
+            assert(s.recv() == big)
+        }
+    })
+}
+
+pub fn handshakes-carry-the-client-settings() {
+    serve(routes, fn (srv) {
+        let c = Client(headers: %{'X-Team': 'goats'}, auth: BearerAuth('sesame'))
+        let s = c.websocket(url(srv, '/whoami'), params: {q: 'hi'}, protocols: ['v1', 'superchat'])
+        assert(s.protocol == 'superchat')
+        assert(s.recv() == 'Bearer sesame goats hi superchat')
+        s.close()
+        c.close()
+    })
+}
+
+pub fn closes-from-the-server() {
+    serve(routes, fn (srv) {
+        let s = client.websocket(url(srv, '/hangup'))
+        assert(s.recv() == 'bye')
+        assert(s.recv() == nil)
+        assert(s.close-code == 4000 && s.close-reason == 'done')
+        assert(s.closed?)
+        s.close()
+    })
+}
+
+pub fn closes-from-the-client() {
+    serve(routes, fn (srv) {
+        let s = client.websocket(url(srv, '/parting'))
+        s.send('one')
+        assert(s.recv() == 'one')
+        s.close(4001, 'leaving')
+        assert(s.closed? && s.close-code == 4001)
+        assert(parted.take() == 4001)
+        try {
+            s.send('two')
+            assert(false)
+        } catch _: WriteError {
+        }
+    })
+}
+
+pub fn pings-are-answered() {
+    serve(routes, fn (srv) {
+        let s = client.websocket(url(srv, '/later'))
+        assert(s.recv(timeout: 3) == 'still here')
+        s.close()
+    }, ws-ping-interval: 0.05, ws-idle-timeout: 0.3)
+}
+
+pub fn refusals() {
+    serve(routes, fn (srv) {
+        try {
+            client.websocket(url(srv, '/nope'))
+            assert(false)
+        } catch e: HttpStatusError {
+            assert(e.status-code == 404)
+        }
+    })
+
+    let plain = RawServer(-> nil, head: 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nno')
+    try {
+        client.websocket("ws://127.0.0.1:{plain.port}/")
+        assert(false)
+    } catch e: ProtocolError {
+        assert(str(e).contains?('answered 200 OK'))
+    }
+
+    let forged = RawServer(-> nil, head: 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: bogus\r\n\r\n')
+    try {
+        client.websocket("ws://127.0.0.1:{forged.port}/")
+        assert(false)
+    } catch e: ProtocolError {
+        assert(str(e).contains?('invalid WebSocket handshake'))
+    }
+}
+
+pub fn secure-sockets() {
+    serve(routes, fn (srv) {
+        let c = Client(verify: CA)
+        with s = c.websocket(url(srv, '/echo')) {
+            s.send('over tls')
+            assert(s.recv() == 'over tls')
+        }
+        c.close()
+        with s = client.websocket(url(srv, '/echo'), verify: CA) {
+            s.send('one-off')
+            assert(s.recv() == 'one-off')
+        }
+    }, tls: tls())
+}
+
+class RawServer {
+    fd:   Int
+    port: Int
+    got:  SharedQueue[_]
+
+    init(script: (Int) -> _, head: String | nil = nil) {
+        fd   = net.listen('tcp', '127.0.0.1:0')
+        port = int(os.getnameinfo(os.getsockname(fd), os.NI_NUMERICSERV).1, 10)
+        got  = SharedQueue()
+        Thread(-> __serve(script, head)).detach()
+    }
+
+    __serve(script: (Int) -> _, head: String | nil) {
+        let (c, _) = os.accept(fd)
+        let buf = Blob()
+        while buf.search('\r\n\r\n') == nil && (xread(c, buf, 4096) ?? 0) > 0 {
+        }
+        let key = buf.str!().lines().find(\_.lower().starts?('sec-websocket-key:')).split(':', 1)[1].trim()
+        os.write(c, head ?? ws.handshake-response(key, nil), all=true)
+        script(c)
+        let reply = Blob()
+        let deadline = time.now() + 2.0
+        while #reply < 6 && time.now() < deadline && (xread(c, reply, 4096) ?? 0) > 0 {
+        }
+        got.put(reply)
+        os.close(c)
+        os.close(fd)
+    }
+}
+
+pub fn fragments-wait-across-timeouts() {
+    let raw = RawServer(fn (c) {
+        os.write(c, ws.frame(ws.OP_TEXT, 'one-', fin: false), all=true)
+        os.sleep(0.3)
+        os.write(c, ws.frame(ws.OP_PING, 'there?'), all=true)
+        os.write(c, ws.frame(ws.OP_CONT, 'two', fin: true), all=true)
+    })
+    let s = client.websocket("ws://127.0.0.1:{raw.port}/")
+    try {
+        s.recv(timeout: 0.05)
+        assert(false)
+    } catch _: ReadTimeout {
+    }
+    assert(s.recv(timeout: 2) == 'one-two')
+    let pong = raw.got.take()
+    assert(pong[0] == (0x80 | ws.OP_PONG) && (pong[1] & 0x80) != 0)
+    s.close(timeout: 0)
+}
+
+pub fn protocol-violations-close-the-socket() {
+    let raw = RawServer(fn (c) {
+        os.write(c, ws.frame(ws.OP_TEXT, 'masked', mask: Blob(1, 2, 3, 4)), all=true)
+    })
+    let s = client.websocket("ws://127.0.0.1:{raw.port}/")
+    try {
+        s.recv(timeout: 2)
+        assert(false)
+    } catch e: ProtocolError {
+        assert(str(e).contains?('masked'))
+    }
+    assert(s.closed? && s.close-code == ws.CLOSE_PROTOCOL_ERROR)
+    let close = raw.got.take()
+    assert(close[0] == (0x80 | ws.OP_CLOSE))
+}

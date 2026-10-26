@@ -1,7 +1,5 @@
 import log
 import ffi as c
-import hash
-import base64
 import http.core (
     ConnectionClosed,
     Task,
@@ -14,69 +12,30 @@ import http.loop (Conn, Timer, Proto, READ)
 import http.wire (Request)
 import http.deflate (PerMessage, DeflateError)
 
-pub const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-
-pub const OP_CONT   = 0x0
-pub const OP_TEXT   = 0x1
-pub const OP_BINARY = 0x2
-pub const OP_CLOSE  = 0x8
-pub const OP_PING   = 0x9
-pub const OP_PONG   = 0xA
-
-pub const CLOSE_NORMAL         = 1000
-pub const CLOSE_GOING_AWAY     = 1001
-pub const CLOSE_PROTOCOL_ERROR = 1002
-pub const CLOSE_UNSUPPORTED    = 1003
-pub const CLOSE_NO_STATUS      = 1005
-pub const CLOSE_ABNORMAL       = 1006
-pub const CLOSE_INVALID_DATA   = 1007
-pub const CLOSE_POLICY         = 1008
-pub const CLOSE_TOO_BIG        = 1009
-pub const CLOSE_INTERNAL       = 1011
+pub import http.wsframe (
+    GUID,
+    OP_CONT,
+    OP_TEXT,
+    OP_BINARY,
+    OP_CLOSE,
+    OP_PING,
+    OP_PONG,
+    CLOSE_NORMAL,
+    CLOSE_GOING_AWAY,
+    CLOSE_PROTOCOL_ERROR,
+    CLOSE_UNSUPPORTED,
+    CLOSE_NO_STATUS,
+    CLOSE_ABNORMAL,
+    CLOSE_INVALID_DATA,
+    CLOSE_POLICY,
+    CLOSE_TOO_BIG,
+    CLOSE_INTERNAL,
+    accept-key,
+    valid-close-code?,
+    frame
+)
 
 const CLOSE_GRACE = 5.0
-
-pub fn accept-key(key: String) -> String {
-    base64.encode(hash.sha1(key + GUID).digest())
-}
-
-fn valid-close-code?(code: Int) -> Bool {
-    (code >= 1000 && code <= 1003)
- || (code >= 1007 && code <= 1011)
- || (code >= 3000 && code <= 4999)
-}
-
-pub fn frame(op: Int, payload: String | Blob, fin: Bool = true, mask: Blob | nil = nil, rsv1: Bool = false) -> Blob {
-    let n = payload.size()
-    let out = Blob()
-    out.push((fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | op)
-
-    let m = (mask != nil) ? 0x80 : 0
-
-    if n < 126 {
-        out.push(m | n)
-    } else if n < 65536 {
-        out.push(m | 126)
-        out.push((n >> 8) & 0xFF)
-        out.push(n & 0xFF)
-    } else {
-        out.push(m | 127)
-        for i in ..8 {
-            out.push((n >> (56 - 8 * i)) & 0xFF)
-        }
-    }
-
-    if let $key = mask {
-        out.push(key)
-        let body = Blob(payload)
-        body.xor(key)
-        out.push(body)
-    } else {
-        out.push(payload)
-    }
-
-    out
-}
 
 /// A server-side WebSocket connection. `send`, `ping` and `close` may be
 /// called from any thread; `recv` must be called from the handler's task.

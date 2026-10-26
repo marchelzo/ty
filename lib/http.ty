@@ -118,6 +118,7 @@ pub import http.client as client (
     Client as HttpClient,
     Request as ClientRequest,
     Response as ClientResponse,
+    WebSocket as ClientWebSocket,
     Timeout,
     Limits,
     Retry,
@@ -140,7 +141,8 @@ pub import http.client as client (
     delete,
     stream,
     download,
-    events
+    events,
+    websocket
 )
 pub import http.headers (Headers)
 pub import http.url (URL)

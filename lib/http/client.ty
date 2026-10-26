@@ -3,7 +3,7 @@
  * cleartext), TLS via `ssl`, connection pooling with keep-alive, automatic
  * gzip/deflate/br/zstd decoding, cookies, redirects, auth (basic, bearer,
  * digest), retries, proxies (HTTP CONNECT, SOCKS5), streaming uploads and
- * downloads, Server-Sent Events, and pretty-printed output.
+ * downloads, Server-Sent Events, WebSockets, and pretty-printed output.
  *
  * ```
  * import http.client as client
@@ -22,6 +22,11 @@
  *
  * for ev in c.events('/feed') {
  *     print(ev.event, ev.json())
+ * }
+ *
+ * with ws = c.websocket('wss://api.example.com/live') {
+ *     ws.send('hello')
+ *     print(ws.recv(timeout: 5))
  * }
  * ```
  *
@@ -50,6 +55,23 @@ import http.wire as wire (ResponseHead, NeedMore, Invalid, Dechunker)
 import http.status (status-name)
 import http.display as display
 import http.native as native
+import http.wsframe (
+    frame,
+    accept-key,
+    valid-close-code?,
+    OP_CONT,
+    OP_TEXT,
+    OP_BINARY,
+    OP_CLOSE,
+    OP_PING,
+    OP_PONG,
+    CLOSE_NORMAL,
+    CLOSE_NO_STATUS,
+    CLOSE_ABNORMAL,
+    CLOSE_PROTOCOL_ERROR,
+    CLOSE_INVALID_DATA,
+    CLOSE_TOO_BIG
+)
 
 pub import http.url (URL, InvalidURL)
 pub import http.headers (Headers)
@@ -2144,6 +2166,68 @@ pub class HTTPTransport : Transport {
         nil
     }
 
+    /// Sends `req` on a new HTTP/1.1 connection of its own, for protocols
+    /// that take the connection over. Returns the response and, when the
+    /// server switched protocols (101), the socket with whatever arrived
+    /// past the response head; otherwise the body is left to read, and the
+    /// connection closes with it.
+    upgrade(req: Request, t: Timeout) -> (Response, Socket | nil, Blob) {
+        let url      = req.url
+        let host     = url.host ?? throw UnsupportedProtocol("http: URL has no host: {url}")
+        let port     = url.effective-port ?? throw UnsupportedProtocol("http: URL has no port: {url}")
+        let proxy    = proxy-for(url)
+        let until    = trans.deadline(t.connect)
+        let https?   = url.scheme == 'https'
+        let forward? = proxy != nil && !https? && (proxy.scheme == 'http' || proxy.scheme == 'https')
+        let extra    = []
+
+        if proxy != nil && forward? {
+            if let $auth = proxy-auth(proxy) {
+                extra.push(('Proxy-Authorization', auth))
+            }
+        }
+
+        let sock = __dial(url, proxy, host, port, until)
+
+        try {
+            if https? {
+                sock.start-tls(__context(false), host, until)
+            }
+
+            let conn   = H1Conn(sock, '', nil, forward?)
+            let target = forward? ? str(url.without-credentials()) : url.target
+
+            conn.timeout = t
+            sock.send(head-bytes(req, target, extra), trans.deadline(t.write))
+
+            let h    = conn.read-head()
+            let done = h.status == 101 || h.status == 204 || h.status == 304
+            let rsp  = Response(
+                h.status,
+                h.headers,
+                content: (h.status == 101) ? Blob() : nil,
+                http-version: "HTTP/1.{h.minor}",
+                reason: h.reason,
+                url: url,
+                request: req
+            )
+
+            if h.status == 101 {
+                return (rsp, sock, conn.buf[conn.pos;])
+            }
+
+            let body = done            ? H1Body(conn, 0, 0, false)
+                     : h.chunked?      ? H1Body(conn, 1, 0, false)
+                     : (h.length >= 0) ? H1Body(conn, 2, h.length, false)
+                     :                   H1Body(conn, 3, 0, false)
+
+            (rsp.attach(body, decode: false), nil, Blob())
+        } catch e {
+            sock.close()
+            throw e
+        }
+    }
+
     close() {
         pool.close()
     }
@@ -2515,13 +2599,17 @@ pub class Client {
         best ?? transport
     }
 
-    __send-once(req: Request, t: Timeout) -> Response {
+    __add-cookies(req: Request) {
         if req.headers['cookie'] == nil {
             let parts = [cookies.header-for(req.url), req.extensions['cookies']].filter(\_ != nil)
             if #parts > 0 {
                 req.headers['Cookie'] = parts.join('; ')
             }
         }
+    }
+
+    __send-once(req: Request, t: Timeout) -> Response {
+        __add-cookies(req)
 
         for f in event-hooks.request {
             f(req)
@@ -2872,6 +2960,99 @@ pub class Client {
         Chunks(next, -> st.close())
     }
 
+    /// Opens a WebSocket (RFC 6455) on a connection of its own. `url` may be
+    /// `ws://`, `wss://`, `http://` or `https://`. The handshake carries the
+    /// client's headers, params, cookies and auth, and goes through its
+    /// proxy and TLS settings; `protocols` are offered as subprotocols. A
+    /// 4xx/5xx answer throws `HttpStatusError`, any other refusal
+    /// `ProtocolError`. Redirects are not followed.
+    websocket(
+        url: String | URL,
+        headers: _ = nil,
+        params: _ = nil,
+        cookies: _ = nil,
+        auth: _ = nil,
+        protocols: Array[String] = [],
+        timeout: _ = nil,
+        max-message: Int = 64 << 20
+    ) -> WebSocket {
+        if __closed? {
+            throw TransportError('http: the client has been closed')
+        }
+
+        let target = __url(url)
+        let key    = b64.encode(random(16))
+        let req    = build-request(
+            'GET',
+            URL(target, scheme: target.secure? ? 'https' : 'http'),
+            params: params,
+            headers: headers,
+            cookies: cookies
+        )
+
+        req.headers.set('Connection', 'Upgrade')
+        req.headers.set('Upgrade', 'websocket')
+        req.headers.set('Sec-WebSocket-Version', '13')
+        req.headers.set('Sec-WebSocket-Key', key)
+
+        if #protocols > 0 {
+            req.headers.set('Sec-WebSocket-Protocol', protocols.join(', '))
+        }
+
+        __add-cookies(req)
+
+        if let $au = match auth { nil => self.auth, false => nil, x => auth-of(x) } {
+            req = au.apply(req)
+        }
+
+        for f in event-hooks.request {
+            f(req)
+        }
+        if let $tr = trace {
+            tr('request', req)
+        }
+
+        let tp = match __transport-for(req.url) {
+            h: HTTPTransport => h,
+            _                => throw UnsupportedProtocol('http: WebSockets need the network transport', req)
+        }
+
+        let (rsp, sock, rest) = tp.upgrade(req, Timeout.of(timeout, self.timeout))
+
+        self.cookies.extract(rsp.headers, req.url)
+
+        if let $tr = trace {
+            tr('response', rsp)
+        }
+        for f in event-hooks.response {
+            f(rsp)
+        }
+
+        let $s = sock or do {
+            rsp.enable-decoding(max-response-size)
+            try {
+                rsp.read-all()
+            } finally {
+                rsp.close()
+            }
+            rsp.raise-for-status()
+            throw ProtocolError("http: {target.host} answered {rsp.status-code} {rsp.reason} instead of opening a WebSocket", req)
+        }
+
+        let chosen = rsp.header('sec-websocket-protocol')
+
+        if (
+            (rsp.header('upgrade') ?? '').lower() != 'websocket'
+         || rsp.header('sec-websocket-accept') != accept-key(key)
+         || (chosen != nil && !(chosen in protocols))
+        ) {
+            s.close()
+            throw ProtocolError("http: {target.host} sent an invalid WebSocket handshake", req)
+        }
+
+        WebSocket(s, rest, rsp, chosen, max-message)
+    }
+
     /// Runs requests concurrently on `workers` threads (HTTP/2 connections
     /// are shared, so this multiplexes). Each item is a URL, a `Request`, or
     /// a record/Dict of `request` arguments (`{method, url, ...}`). Returns
@@ -2932,6 +3113,296 @@ pub class Client {
 
     __str__() -> String {
         "<Client{(base-url == nil) ? '' : " {base-url}"}>"
+    }
+}
+
+/// A client WebSocket from `Client.websocket` (or `websocket`). One thread
+/// reads with `recv` while others may `send` and `ping`; `recv` answers the
+/// server's pings itself and returns nil once the connection has closed,
+/// when `close-code` and `close-reason` say why. Call `close` from the
+/// reading thread.
+pub class WebSocket {
+    response:     Response
+    protocol:     String | nil
+    max-message:  Int
+    close-code:   Int | nil
+    close-reason: String | nil
+
+    __sock:        Socket
+    __host:        String
+    __buf:         Blob
+    __frag:        Blob | nil
+    __frag-op:     Int
+    __lock:        Mutex
+    __close-sent?: Bool
+
+    init(sock: Socket, rest: Blob, response: Response, protocol: String | nil, max-message: Int) {
+        self.response    = response
+        self.protocol    = protocol
+        self.max-message = max-message
+        close-code       = nil
+        close-reason     = nil
+        __sock           = sock
+        __host           = sock.host
+        __buf            = rest
+        __frag           = nil
+        __frag-op        = OP_TEXT
+        __lock           = Mutex()
+        __close-sent?    = false
+    }
+
+    /// The socket's descriptor, for `os.poll`. TLS may already hold data
+    /// that `recv` can return, so a quiet descriptor does not mean it would
+    /// block.
+    fd -> Int {
+        __sock.fd
+    }
+
+    closed? -> Bool {
+        __sock.closed?
+    }
+
+    /// Sends a text (String) or binary (Blob) message, waiting at most
+    /// `timeout` seconds for the network to take it.
+    send(msg: String | Blob, timeout: Int | Float | nil = 5.0) {
+        __send((msg :: String) ? OP_TEXT : OP_BINARY, msg, timeout)
+    }
+
+    ping(data: String | Blob = '', timeout: Int | Float | nil = 5.0) {
+        __send(OP_PING, data, timeout)
+    }
+
+    /// The next message: a String for text, a Blob for binary data, or nil
+    /// once the connection has closed. Throws `ReadTimeout` when no whole
+    /// message arrives within `timeout` seconds (nil waits as long as it
+    /// takes); a partly received message is kept for the next call.
+    recv(timeout: Int | Float | nil = nil) -> String | Blob | nil {
+        let until = trans.deadline(trans.seconds(timeout))
+
+        while true {
+            match __next() {
+                (op, fin, payload) => {
+                    if let $msg = __take(op, fin, payload) {
+                        return msg
+                    }
+                },
+                nil => {
+                    if close-code != nil || closed? {
+                        return nil
+                    }
+                    let $chunk = __sock.recv(until) or do {
+                        close-code = close-code ?? CLOSE_ABNORMAL
+                        __sock.close()
+                        return nil
+                    }
+                    __buf.push(chunk)
+                }
+            }
+        }
+
+        nil
+    }
+
+    /// Sends a close frame, waits up to `timeout` seconds for the server's,
+    /// and closes the connection.
+    close(code: Int = CLOSE_NORMAL, reason: String = '', timeout: Int | Float | nil = 1.0) {
+        if closed? {
+            return
+        }
+
+        try {
+            if !__close-sent? {
+                __send(OP_CLOSE, __close-payload(code, reason), timeout)
+            }
+            let until = trans.deadline(trans.seconds(timeout))
+            while close-code == nil && recv(timeout: trans.left(until)) != nil {
+            }
+        } catch _ {
+        }
+
+        close-code = close-code ?? code
+        __sock.close()
+    }
+
+    __drop__() {
+        close()
+    }
+
+    __str__() -> String {
+        "<WebSocket {response.url}{closed? ? ' closed' : ''}>"
+    }
+
+    __close-payload(code: Int, reason: String) -> Blob {
+        let payload = Blob((code >> 8) & 0xFF, code & 0xFF).push(reason)
+        if #payload > 125 {
+            payload.clear(125)
+        }
+        payload
+    }
+
+    __send(op: Int, payload: String | Blob, timeout: Int | Float | nil) {
+        let ^_ = __lock.lock()
+
+        if __close-sent? || closed? {
+            throw WriteError("http: the WebSocket to {__host} is closed")
+        }
+
+        if op == OP_CLOSE {
+            __close-sent? = true
+        }
+
+        __sock.send(frame(op, payload, mask: random(4)), trans.deadline(trans.seconds(timeout)))
+    }
+
+    __failure(code: Int, reason: String) -> ProtocolError {
+        try {
+            __send(OP_CLOSE, __close-payload(code, ''), 1.0)
+        } catch _ {
+        }
+
+        close-code = code
+        __sock.close()
+
+        ProtocolError("http: {reason} on the WebSocket to {__host}")
+    }
+
+    __next() -> (Int, Bool, Blob) | nil {
+        let b = __buf
+        let n = #b
+
+        if n < 2 {
+            return nil
+        }
+
+        let fin = (b[0] & 0x80) != 0
+        let op  = b[0] & 0x0F
+        let len = b[1] & 0x7F
+        let hdr = 2
+
+        if (b[0] & 0x70) != 0 {
+            throw __failure(CLOSE_PROTOCOL_ERROR, 'reserved bits set')
+        }
+
+        if (b[1] & 0x80) != 0 {
+            throw __failure(CLOSE_PROTOCOL_ERROR, 'masked frame from the server')
+        }
+
+        if len == 126 {
+            if n < 4 {
+                return nil
+            }
+            len = (b[2] << 8) | b[3]
+            hdr = 4
+        } else if len == 127 {
+            if n < 10 {
+                return nil
+            }
+            if (b[2] & 0x80) != 0 {
+                throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid frame length')
+            }
+            len = 0
+            for i in ..8 {
+                len = (len << 8) | b[2 + i]
+            }
+            hdr = 10
+        }
+
+        if op >= 0x8 && (len > 125 || !fin) {
+            throw __failure(CLOSE_PROTOCOL_ERROR, 'invalid control frame')
+        }
+
+        if len > max-message {
+            throw __failure(CLOSE_TOO_BIG, "{len}-byte frame over max-message")
+        }
+
+        if n < hdr + len {
+            return nil
+        }
+
+        let payload = b[hdr;hdr + len]
+        b.clear(0, hdr + len)
+
+        (op, fin, payload)
+    }
+
+    __take(op: Int, fin: Bool, payload: Blob) -> String | Blob | nil {
+        match op {
+            OP_CONT => {
+                let $frag = __frag or throw __failure(CLOSE_PROTOCOL_ERROR, 'unexpected continuation frame')
+                if #frag + #payload > max-message {
+                    throw __failure(CLOSE_TOO_BIG, 'message over max-message')
+                }
+                frag.push(payload)
+                if fin {
+                    __frag = nil
+                    return __message(__frag-op, frag)
+                }
+            },
+
+            OP_TEXT, OP_BINARY => {
+                if __frag != nil {
+                    throw __failure(CLOSE_PROTOCOL_ERROR, 'expected a continuation frame')
+                }
+                if fin {
+                    return __message(op, payload)
+                }
+                __frag    = payload
+                __frag-op = op
+            },
+
+            OP_PING => {
+                if !__close-sent? {
+                    __send(OP_PONG, payload, 5.0)
+                }
+            },
+
+            OP_PONG => {},
+
+            OP_CLOSE => {
+                let code   = CLOSE_NO_STATUS
+                let reason = ''
+                if #payload == 1 {
+                    throw __failure(CLOSE_PROTOCOL_ERROR, 'truncated close frame')
+                }
+                if #payload >= 2 {
+                    code = (payload[0] << 8) | payload[1]
+                    if !valid-close-code?(code) {
+                        throw __failure(CLOSE_PROTOCOL_ERROR, "invalid close code {code}")
+                    }
+                    reason = payload.str!(2, #payload - 2)
+                    if !reason.utf8? {
+                        throw __failure(CLOSE_INVALID_DATA, 'invalid UTF-8 in a close reason')
+                    }
+                }
+                close-code   = code
+                close-reason = reason
+                if !__close-sent? {
+                    try {
+                        __send(OP_CLOSE, (code == CLOSE_NO_STATUS) ? Blob() : __close-payload(code, ''), 1.0)
+                    } catch _ {
+                    }
+                }
+                __sock.close()
+            },
+
+            _ => throw __failure(CLOSE_PROTOCOL_ERROR, "unknown opcode {op}")
+        }
+
+        nil
+    }
+
+    __message(op: Int, payload: Blob) -> String | Blob {
+        if op == OP_BINARY {
+            return payload
+        }
+
+        let text = payload.str!()
+
+        if !text.utf8? {
+            throw __failure(CLOSE_INVALID_DATA, 'invalid UTF-8 in a text message')
+        }
+
+        text
     }
 }
 
@@ -3029,4 +3500,23 @@ pub fn download(url: String | URL, path: String | Path | nil = nil, %kwargs) -> 
 
 pub fn events(url: String | URL, %kwargs) -> Chunks[Event] {
     shared().events(url, **kwargs)
+}
+
+/// Opens a WebSocket; see `Client.websocket`. Client keywords (`verify`,
+/// `proxy`, ...) apply to this connection alone.
+pub fn websocket(url: String | URL, %kwargs) -> WebSocket {
+    let client-opts = %{k: v for k, v in kwargs if CLIENT_OPTIONS.contains?(k)}
+    let ws-opts     = %{k: v for k, v in kwargs if !CLIENT_OPTIONS.contains?(k)}
+
+    if #client-opts == 0 {
+        return shared().websocket(url, **ws-opts)
+    }
+
+    let c = Client(**client-opts)
+
+    try {
+        c.websocket(url, **ws-opts)
+    } finally {
+        c.close()
+    }
 }
