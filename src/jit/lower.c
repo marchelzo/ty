@@ -141,6 +141,8 @@ typedef struct bc_lir {
         u32                   nosr;
         u32                   last_call;
         i32                  *tier;
+        JitProfile           *profile;
+        JitProfile const     *seen;
 
         BcSlot               *vs;
         BcSlot               *known;
@@ -193,7 +195,7 @@ static void
 native_invoke(BcLir *c, LirReg frame, LirReg out);
 
 static Frame *
-method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip);
+method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip, JitCallProfile *site);
 
 static void
 inline_call(
@@ -209,6 +211,9 @@ inline_call(
 
 static bool
 inline_method(BcLir *c, BcLirNode const *node, LirLabel *done);
+
+static void
+profiled_call(BcLir *c, BcLirNode const *node, LirReg fn, i32 first, LirLabel *done);
 
 static bool
 builtin_call(
@@ -1993,6 +1998,81 @@ rt_method(
         );
 }
 
+static bool
+profiled(BcLirNode const *node)
+{
+        return decoded(node)
+            && (node->op == INSTR_CALL || node->op == INSTR_CALL_METHOD)
+            && (node->nkw == 0)
+            && (node->argc >= 0);
+}
+
+static void
+plan_profile(BcLir *c, bool install)
+{
+        if (!c->compact) {
+                LirCode const *old = jit_code_of(c->function);
+                c->seen = (old != NULL) ? old->profile : NULL;
+                return;
+        }
+
+        u32  n  = 0;
+        bool on = install && (getenv("TY_JIT_NO_PROFILE") == NULL);
+
+        for (i32 off = 0; on && off < c->size; ++off) {
+                n += profiled(&c->nodes[off]);
+        }
+
+        if (n == 0) {
+                return;
+        }
+
+        c->profile = alloc0(sizeof (JitProfile) + n * sizeof (JitCallProfile));
+
+        for (i32 off = 0; off < c->size; ++off) {
+                if (profiled(&c->nodes[off])) {
+                        c->profile->sites[c->profile->n++].off = off;
+                }
+        }
+}
+
+static JitCallProfile *
+profile_site(BcLir *c, BcLirNode const *node)
+{
+        u32 off = node - c->nodes;
+
+        for (u32 i = 0; c->profile != NULL && i < c->profile->n; ++i) {
+                if (c->profile->sites[i].off == off) {
+                        return &c->profile->sites[i];
+                }
+        }
+
+        return NULL;
+}
+
+static u32
+seen_keys(BcLir const *c, BcLirNode const *node, uptr *keys)
+{
+        u32 off = node - c->nodes;
+
+        for (u32 i = 0; c->seen != NULL && i < c->seen->n; ++i) {
+                JitCallProfile const *p = &c->seen->sites[i];
+                u32                   n = atomic_load_explicit(&p->n, memory_order_acquire);
+                if (p->off != off) {
+                        continue;
+                }
+                if (n > JIT_PROFILE_WAYS) {
+                        return 0;
+                }
+                for (u32 k = 0; k < n; ++k) {
+                        keys[k] = atomic_load_explicit(&p->keys[k], memory_order_relaxed);
+                }
+                return n;
+        }
+
+        return 0;
+}
+
 static void
 invoke_method(BcLir *c, BcLirNode const *node)
 {
@@ -2022,7 +2102,8 @@ invoke_method(BcLir *c, BcLirNode const *node)
                         imm32(node->op),
                         imm32(node->member),
                         imm32(node->argc),
-                        pimm(node->kw_ip)
+                        pimm(node->kw_ip),
+                        pimm(explicit ? profile_site(c, node) : NULL)
                 );
 
                 native_invoke(c, frame, out);
@@ -2322,10 +2403,17 @@ invoke(BcLir *c, BcLirNode const *node)
         } else {
                 fn   = slot_of(c, c->sp - 1);
                 done = invoke_local_fast(c, node, fn, first);
+                profiled_call(c, node, fn, first, &done);
         }
 
         LirReg  out     = slot_of(c, first);
-        LirOpnd enter[] = { lir_r(c->ty), lir_r(out), lir_r(fn), lir_i(node->argc) };
+        LirOpnd enter[] = {
+                lir_r(c->ty),
+                lir_r(out),
+                lir_r(fn),
+                lir_i(node->argc),
+                lir_i((uptr)(global ? NULL : profile_site(c, node)))
+        };
 
         sync_sp(c);
 
@@ -3706,6 +3794,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         c.L->detail = (notes != NULL);
 
         plan_nodes(&c);
+        plan_profile(&c, install);
         prologue(&c);
 
         c.ok = c.ok && vs_plan(&c, ty, f);
@@ -3729,6 +3818,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         if (code == NULL) {
                 xmF(osr);
                 xmF(c.tier);
+                xmF(c.profile);
                 ty_snprintf(why, nwhy, "%s", c.ok ? err.message : "lowering failed");
                 if (ProfMode) {
                         prof_jit_decline(f, err.message, -1);
@@ -3753,7 +3843,8 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
 
         code->osr  = osr;
         code->nosr = nosr;
-        code->tier = c.tier;
+        code->tier    = c.tier;
+        code->profile = c.profile;
 
         if (!install) {
                 return code;

@@ -2245,6 +2245,7 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                         break;
 
                 case TY_INLINE_POP:
+                case TY_INLINE_GIVEN:
                         break;
 
                 case TY_INLINE_ADD:
@@ -2272,6 +2273,17 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                 case TY_INLINE_OR:
                         if (d < 2 || !lane_logic(c, insn->op, &st[d - 2], st[d - 1], emit)) {
                                 return false;
+                        }
+                        break;
+
+                case TY_INLINE_NOT:
+                        if (d < 1 || !st[d - 1].flag) {
+                                return false;
+                        }
+                        if (st[d - 1].v.kind == LO_IMM) {
+                                st[d - 1].v = lir_i(st[d - 1].v.imm == 0);
+                        } else if (emit) {
+                                st[d - 1].v = lir_r(vop(c, LIR_XOR, LIR_I64, st[d - 1].v, lir_i(1)));
                         }
                         break;
 

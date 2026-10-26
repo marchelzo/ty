@@ -295,6 +295,7 @@ lir_code_destroy(LirCode *code)
         xmF(code->name);
         xmF(code->osr);
         xmF(code->tier);
+        xmF(code->profile);
 }
 
 void

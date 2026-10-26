@@ -242,10 +242,71 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         if (!read_bytes(&ip, end, &member, sizeof member)
                             || kind != TY_INLINE_METHOD || plan->count == 0) return false;
                         TyInlineInsn *value = &plan->insns[plan->count - 1];
-                        if (value->op != TY_INLINE_BOOLEAN) return false;
-                        value->op = TY_INLINE_STORE_FIELD;
-                        value->local = plan->self_local;
-                        value->member = member;
+                        if (value->op == TY_INLINE_BOOLEAN) {
+                                value->op     = TY_INLINE_STORE_FIELD;
+                                value->local  = plan->self_local;
+                                value->member = member;
+                                break;
+                        }
+                        if (member < 0 || ip >= end || (u8)*ip != INSTR_ASSIGN) {
+                                return false;
+                        }
+                        insn.op     = TY_INLINE_SET_FIELD;
+                        insn.local  = plan->self_local;
+                        insn.member = member;
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
+                        break;
+                }
+
+                case INSTR_TARGET_MEMBER:
+                {
+                        i32 member;
+                        if (
+                                !read_bytes(&ip, end, &member, sizeof member)
+                             || (member < 0)
+                             || (plan->count == 0)
+                             || (ip >= end)
+                             || ((u8)*ip != INSTR_ASSIGN)
+                        ) {
+                                return false;
+                        }
+                        TyInlineInsn *object = &plan->insns[plan->count - 1];
+                        if (object->op != TY_INLINE_LOCAL) {
+                                return false;
+                        }
+                        object->op     = TY_INLINE_SET_FIELD;
+                        object->member = member;
+                        break;
+                }
+
+                case INSTR_JUMP_IF_NIL:
+                {
+                        i32 skip;
+                        i32 over;
+                        if (
+                                !read_bytes(&ip, end, &skip, sizeof skip)
+                             || (plan->count == 0)
+                             || (skip != 1 + (int)sizeof over)
+                             || (ip >= end)
+                             || ((u8)*ip != INSTR_JUMP)
+                        ) {
+                                return false;
+                        }
+                        ip += 1;
+                        TyInlineInsn *arg = &plan->insns[plan->count - 1];
+                        if (
+                                !read_bytes(&ip, end, &over, sizeof over)
+                             || (over < 0)
+                             || (over > end - ip)
+                             || (arg->op != TY_INLINE_LOCAL)
+                             || (arg->local >= plan->argc)
+                        ) {
+                                return false;
+                        }
+                        arg->op = TY_INLINE_GIVEN;
+                        ip += over;
                         break;
                 }
 
@@ -255,6 +316,13 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case INSTR_POP:
                         insn.op = TY_INLINE_POP;
                         if (!push_insn(plan, insn)) return false;
+                        break;
+
+                case INSTR_NOT:
+                        insn.op = TY_INLINE_NOT;
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
                         break;
 
                 case INSTR_ADD:
@@ -383,6 +451,31 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 return false;
         }
 
+        bool stored = false;
+
+        for (int i = 0; i < plan->count; ++i) {
+                switch (plan->insns[i].op) {
+                case TY_INLINE_STORE_FIELD:
+                case TY_INLINE_SET_FIELD:
+                        stored = true;
+                        break;
+
+                case TY_INLINE_LOCAL:
+                case TY_INLINE_FIELD:
+                case TY_INLINE_INTEGER:
+                case TY_INLINE_REAL:
+                case TY_INLINE_BOOLEAN:
+                case TY_INLINE_POP:
+                case TY_INLINE_JUMP:
+                        break;
+
+                default:
+                        if (stored) {
+                                return false;
+                        }
+                }
+        }
+
         for (int i = 0; i < plan->count; ++i) {
                 TyInlineInsn *insn = &plan->insns[i];
                 if (insn->op != TY_INLINE_BRANCH_TRUE
@@ -482,6 +575,13 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         }
                         next_depth--;
                         break;
+                case TY_INLINE_NOT:
+                case TY_INLINE_SET_FIELD:
+                        if (depth < 1) {
+                                return false;
+                        }
+                        break;
+                case TY_INLINE_GIVEN:
                 case TY_INLINE_JUMP:
                         break;
                 }

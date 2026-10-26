@@ -1,0 +1,106 @@
+fn add(a: Int, b: Int) -> Int { a + b }
+fn sub(a: Int, b: Int) -> Int { a - b }
+fn mul(a: Int, b: Int) -> Int { a * b }
+fn big(a: Int, b: Int) -> Int { if a > 1000000000 { return 0 } a + 2 * b }
+fn pick(a: Int, b: Int) -> Int { b }
+
+fn fold(xs, init, f) {
+    let acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+fn adder(k: Int) {
+    (a, b) -> a + b + k
+}
+
+class Circle {
+    r: Int
+
+    init(r: Int) { self.r = r }
+
+    area() -> Int { 3 * r * r }
+    scaled(k: Int) -> Int { if k > 1000000 { return 0 } r * k }
+}
+
+class Square {
+    s: Int
+
+    init(s: Int) { self.s = s }
+
+    area() -> Int { s * s }
+    scaled(k: Int) -> Int { if k > 1000000 { return 1 } s + k }
+}
+
+class Blob {
+    area() -> Int { 7 }
+    scaled(k: Int) -> Int { -k }
+}
+
+fn areas(shapes: [_]) -> Int {
+    let n = 0
+    for s in shapes {
+        n += s.area()
+        n += s.scaled(2)
+    }
+    n
+}
+
+fn expected-areas(shapes: [_]) -> Int {
+    let n = 0
+    for s in shapes {
+        n += match s {
+            Circle(r) => 3 * r * r + r * 2,
+            Square(s) => s * s + s + 2,
+            _         => 7 - 2
+        }
+    }
+    n
+}
+
+let XS = [i for i in ..200]
+
+pub fn test-monomorphic-callees() {
+    for ..300 {
+        assert(fold(XS, 0, add) == 19900)
+    }
+    assert(fold(XS, 0, sub) == -19900)
+    assert(fold(XS, 1, pick) == 199)
+    for ..300 {
+        assert(fold(XS, 0, add) == 19900)
+    }
+}
+
+pub fn test-polymorphic-and-megamorphic-callees() {
+    let fs = [add, sub, mul, big, pick]
+    let want = [19900, -19900, 0, 39800, 199]
+    for round in ..200 {
+        let k = (round < 100) ? 2 : 5
+        for i in ..k {
+            assert(fold(XS, (i == 4) ? 1 : 0, fs[i]) == ((i == 4) ? 199 : want[i]))
+        }
+    }
+}
+
+pub fn test-closures-keep-their-environment() {
+    let fs = [adder(1), adder(10), adder(100)]
+    for ..300 {
+        assert(fold(XS, 0, fs[0]) == 19900 + 200)
+        assert(fold(XS, 0, fs[1]) == 19900 + 2000)
+        assert(fold(XS, 0, fs[2]) == 19900 + 20000)
+    }
+}
+
+pub fn test-dynamic-receivers() {
+    let two: [_]  = [Circle(1), Square(2), Circle(3), Square(4)]
+    let many: [_] = [Circle(1), Square(2), Blob(), Circle(5)]
+    for ..500 {
+        assert(areas(two) == expected-areas(two))
+    }
+    for ..500 {
+        assert(areas(many) == expected-areas(many))
+        assert(areas(two) == expected-areas(two))
+    }
+}

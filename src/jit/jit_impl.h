@@ -405,6 +405,43 @@ find_type_hint(TypeHintVector const *hints, iptr off);
 BuiltinMethod *
 jit_builtin_method(Class *cls, int member_id, int *value_type);
 
+enum { JIT_PROFILE_WAYS = 4 };
+
+typedef struct {
+        u32           off;
+        _Atomic u32   n;
+        _Atomic uptr  keys[JIT_PROFILE_WAYS];
+} JitCallProfile;
+
+typedef struct {
+        u32            n;
+        JitCallProfile sites[];
+} JitProfile;
+
+inline static void
+jit_profile_note(JitCallProfile *p, uptr key)
+{
+        u32 n = atomic_load_explicit(&p->n, memory_order_relaxed);
+
+        if (n > JIT_PROFILE_WAYS) {
+                return;
+        }
+
+        for (u32 i = 0; i < n; ++i) {
+                if (atomic_load_explicit(&p->keys[i], memory_order_relaxed) == key) {
+                        return;
+                }
+        }
+
+        if (key == 0 || n == JIT_PROFILE_WAYS) {
+                atomic_store_explicit(&p->n, JIT_PROFILE_WAYS + 1, memory_order_relaxed);
+                return;
+        }
+
+        atomic_store_explicit(&p->keys[n], key, memory_order_relaxed);
+        atomic_store_explicit(&p->n, n + 1, memory_order_release);
+}
+
 inline static void
 jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
 {
@@ -442,11 +479,12 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
                 }
         }
 
-        xvP(ty->st->frames, ((Frame){ .fp = fp, .f = *fn, .ip = ty->ip }));
+        Frame *frame = PushFrame(&ty->st->frames, fp, fn, ty->ip);
+
         xvP(ty->st->calls, ty->ip);
 
-        vvL(ty->st->frames)->f.type = VALUE_NATIVE_FUNCTION;
-        vvL(ty->st->frames)->f.tags = 0;
+        frame->f.type = VALUE_NATIVE_FUNCTION;
+        frame->f.tags = 0;
 
         ty->ip = &JIT;
 

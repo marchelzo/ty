@@ -65,7 +65,7 @@ push_result(Ty *ty, usize base, Value v)
 }
 
 static Frame *
-call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
+call_enter(Ty *ty, Value *out, Value *fn, i32 argc, JitCallProfile *site)
 {
         Value  value = *fn;
         usize  count = out - ty->stack.items + argc;
@@ -74,6 +74,11 @@ call_enter(Ty *ty, Value *out, Value *fn, i32 argc)
         JitFn *jit   = NULL;
 
         ty->stack.count = count;
+
+        if (site != NULL) {
+                bool known = (value.type == VALUE_FUNCTION) && !from_eval(&value);
+                jit_profile_note(site, known ? (uptr)value.info : 0);
+        }
 
         if (value.type == VALUE_BUILTIN_FUNCTION) {
                 push_result(ty, count - argc, value.builtin_function(ty, argc, &NIL));
@@ -120,10 +125,14 @@ method_of(Class *class, i32 member)
 }
 
 static Frame *
-method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip)
+method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip, JitCallProfile *site)
 {
         bool  explicit = (op != INSTR_CALL_SELF_METHOD);
         Value self     = explicit ? top[-1] : *vm_get_self(ty);
+
+        if (site != NULL) {
+                jit_profile_note(site, (self.type == VALUE_OBJECT) ? (uptr)self.class : 0);
+        }
 
         if (self.type == VALUE_OBJECT) {
                 Value const *method = method_of(class_get(ty, self.class), member);
@@ -143,16 +152,16 @@ method_enter(Ty *ty, Value *top, i32 op, i32 member, i32 argc, char *kw_ip)
 static void
 call_leave(Ty *ty, Value *out)
 {
-        Frame *frame = vvL(ty->st->frames);
-        Value *base  = ty->stack.items + frame->fp;
-        Value  v     = *vvL(ty->stack);
+        Frame       *frame = vvL(ty->st->frames);
+        Value       *base  = ty->stack.items + frame->fp;
+        Value const *v     = vvL(ty->stack);
 
         ty->ip = *vvL(ty->st->calls);
         ty->st->calls.count -= 1;
 
         if (base == out) {
                 ty->stack.count = frame->fp + 1;
-                *base = v;
+                MoveJitResult(base, v);
         } else {
                 ty->stack.count = frame->fp;
         }
@@ -210,7 +219,8 @@ native_call(BcLir *c, LirOpnd *enter)
                 { LT_PTR, enter[0] },
                 { LT_PTR, enter[1] },
                 { LT_PTR, enter[2] },
-                { LT_I32, enter[3] }
+                { LT_I32, enter[3] },
+                { LT_PTR, enter[4] }
         );
 
         native_invoke(c, frame, enter[1].reg);
@@ -440,9 +450,8 @@ push_native_frame(BcLir *c, Depth d, LirReg fn, LirReg code, LirReg fp)
 #undef F
 
         LirReg calls = ldp(c, st, offsetof(co_state, calls.items));
-        LirReg coff  = binop(c, LIR_SHL, LIR_I64, lir_r(ncalls), lir_i(3));
 
-        stq(c, lea(c, calls, coff, 0), 0, lir_r(ip));
+        veff(c, LIR_ST64, lir_m(calls, ncalls, sizeof (char *), 0), lir_r(ip));
         stq(c, st, offsetof(co_state, calls.count), lir_r(plus(c, ncalls, 1)));
         stq(c, st, offsetof(co_state, frames.count), lir_r(plus(c, nframes, 1)));
         stq(c, c->ty, offsetof(Ty, ip), lir_i((uptr)&JIT));
@@ -461,8 +470,7 @@ pop_native_frame(BcLir *c, i32 out)
 
         LirReg ncalls = bump(c, st, offsetof(co_state, calls.count), -1);
         LirReg calls  = ldp(c, st, offsetof(co_state, calls.items));
-        LirReg coff   = binop(c, LIR_SHL, LIR_I64, lir_r(ncalls), lir_i(3));
-        LirReg saved  = unop(c, LIR_LD_I64, LIR_I64, lir_m(calls, coff, 1, 0));
+        LirReg saved  = unop(c, LIR_LD_I64, LIR_I64, lir_m(calls, ncalls, sizeof (char *), 0));
 
         stq(c, c->ty, offsetof(Ty, ip), lir_r(saved));
 
@@ -550,6 +558,80 @@ same_member(BcLir *c, LirReg value, i32 member, bool getter, Value const *fn, Li
         same_ptr(c, ldp(c, target, VOFF(info)), fn->info, miss);
 }
 
+[[gnu::always_inline]]
+inline static Value const *
+getter_of(Class *class, i32 member)
+{
+        u16 off = offset_of(class, member, false, OFF_GETTER);
+        return (off == OFF_NOT_FOUND || (off & OFF_MASK) >= vN(class->getters.values))
+             ? NULL
+             : v_(class->getters.values, off & OFF_MASK);
+}
+
+static bool
+descends(Class const *class, Class const *base)
+{
+        for (Class const *k = class->super; k != NULL; k = k->super) {
+                if (k == base) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static i32
+kin(BcLir *c, Class const *class, i32 member, bool getter, Value const *fn, Class **out, i32 max)
+{
+        i32 n     = 0;
+        i32 count = class_count(c->ctx);
+
+        for (i32 i = class->i + 1; i < count && n < max; ++i) {
+                Class *k = class_get(c->ctx, i);
+
+                if (k == NULL || !k->final || !descends(k, class)) {
+                        continue;
+                }
+
+                Value const *m = getter ? getter_of(k, member) : method_of(k, member);
+
+                if (m != NULL && m->type == fn->type && m->info == fn->info) {
+                        out[n++] = k;
+                }
+        }
+
+        return n;
+}
+
+static void
+kin_arms(
+        BcLir *c,
+        LirReg self,
+        Class const *class,
+        i32 member,
+        bool getter,
+        Value const *fn,
+        i32 argc,
+        i32 first,
+        LirLabel call,
+        LirLabel done
+)
+{
+        Class *arms[4];
+        i32    n = kin(c, class, member, getter, fn, arms, countof(arms));
+
+        for (i32 i = 0; i < n; ++i) {
+                LirLabel next = newlabel(c);
+
+                guard_class(c, self, arms[i]->i, next);
+                guard_epoch(c, next);
+                try_plan(c, fn, TY_INLINE_METHOD, argc, first, self, arms[i], NULL, first, done);
+                jump(c, call);
+
+                bind(c, next);
+        }
+}
+
 static i32
 union_classes(BcLir *c, i32 offset, Class **out, i32 max)
 {
@@ -608,7 +690,7 @@ method_arm(
         guard_class(c, self, class->i, other);
         guard_epoch(c, other);
 
-        try_plan(
+        bool planned = try_plan(
                 c,
                 method,
                 TY_INLINE_METHOD,
@@ -626,8 +708,70 @@ method_arm(
 
         if (other != next) {
                 bind(c, other);
+                if (planned) {
+                        kin_arms(c, self, class, node->member, false, method, node->argc, first, call, done);
+                }
                 same_member(c, self, node->member, false, method, next);
                 jump(c, call);
+        }
+}
+
+static i32
+profiled_classes(BcLir *c, BcLirNode const *node, Class **out, i32 max)
+{
+        uptr keys[JIT_PROFILE_WAYS];
+        u32  n = seen_keys(c, node, keys);
+        i32  k = 0;
+
+        for (u32 i = 0; i < n && k < max; ++i) {
+                if (keys[i] < CLASS_PRIMITIVE || keys[i] >= (uptr)class_count(c->ctx)) {
+                        continue;
+                }
+
+                Class       *class = class_get(c->ctx, keys[i]);
+                Value const *m     = method_of(class, node->member);
+
+                if (class->final && m != NULL && roomy(m, node->argc)) {
+                        out[k++] = class;
+                }
+        }
+
+        return k;
+}
+
+static void
+profiled_call(BcLir *c, BcLirNode const *node, LirReg fn, i32 first, LirLabel *done)
+{
+        uptr keys[JIT_PROFILE_WAYS];
+        u32  n = c->compact ? 0 : seen_keys(c, node, keys);
+
+        for (u32 i = 0; i < n; ++i) {
+                Value callee = { .type = VALUE_FUNCTION };
+
+                callee.info = (i32 *)keys[i];
+
+                if (
+                        (callee.info == c->function->info)
+                     || !jit_linkable_global(&callee, node->argc)
+                     || !roomy(&callee, node->argc)
+                ) {
+                        continue;
+                }
+
+                LirLabel next = newlabel(c);
+
+                if (*done == LIR_NONE) {
+                        *done = newlabel(c);
+                }
+
+                expect(c, fn, 0, VALUE_FUNCTION, next);
+                same_ptr(c, ldp(c, fn, VOFF(info)), callee.info, next);
+                jnz(c, ldq(c, fn, VOFF(xinfo)), next);
+
+                try_plan(c, &callee, TY_INLINE_GLOBAL, node->argc, first, LIR_NONE, NULL, NULL, first, *done);
+                inline_call(c, fn, &callee, first, node->argc, LIR_NONE, next, *done);
+
+                bind(c, next);
         }
 }
 
@@ -655,6 +799,10 @@ inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
 
         if (class != NULL) {
                 classes[0] = class;
+        }
+
+        if (n == 0 && explicit && !c->compact) {
+                n = profiled_classes(c, node, classes, countof(classes));
         }
 
         for (i32 i = 0; i < n; ++i) {
@@ -1004,7 +1152,10 @@ kernel_call(
 static void
 raw_object(Ty *ty, Value *dst, i32 class)
 {
-        *dst = RawObject(class);
+        TyObject *obj = class_new_instance(ty, class);
+        u64       w[] = { VALUE_OBJECT, (u32)class, (uptr)obj, 0 };
+
+        memcpy(dst, w, sizeof w);
 }
 
 static void
@@ -1060,6 +1211,10 @@ inline_ctor(BcLir *c, LirReg fn, Value const *callee, i32 out, i32 argc, LirLabe
 
         LirLabel failed   = newlabel(c);
         LirLabel finished = newlabel(c);
+
+        c->sp += 1;
+        try_plan(c, init, TY_INLINE_METHOD, argc, out + 1, slot_of(c, out), class, NULL, out + 1, finished);
+        c->sp -= 1;
 
         inline_call(c, ctor, init, out + 1, argc, slot_of(c, out), failed, finished);
 

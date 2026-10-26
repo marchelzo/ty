@@ -230,20 +230,38 @@ static void
 prologue(dasm_State **Dst, u32 frame, u32 align, u32 origin)
 {
         | push rbp
-        | mov r11, rsp
+        if (align > 16) {
+                | mov r11, rsp
+        }
         | sub rsp, frame
         if (align > 16) {
                 | and rsp, -(i32)align
         }
         | mov rbp, rsp
-        st(Dst, TMP1, FRAME, origin);
+        if (align > 16) {
+                st(Dst, TMP1, FRAME, origin);
+        }
 }
 
 static void
-epilogue(dasm_State **Dst, u32 origin, bool tail)
+caller_sp(dasm_State **Dst, u8 d, u32 frame, u32 align, u32 origin)
 {
-        ld(Dst, TMP1, FRAME, origin);
-        | mov rsp, r11
+        if (align > 16) {
+                ld(Dst, d, FRAME, origin);
+        } else {
+                | lea Rq(d), [rbp+frame]
+        }
+}
+
+static void
+epilogue(dasm_State **Dst, u32 frame, u32 align, u32 origin, bool tail)
+{
+        if (align > 16) {
+                ld(Dst, TMP1, FRAME, origin);
+                | mov rsp, r11
+        } else {
+                | lea rsp, [rbp+frame]
+        }
         | pop rbp
         if (tail) {
                 | jmp r10
@@ -312,6 +330,25 @@ alui(dasm_State **Dst, LirOp op, u8 d, u8 a, u64 imm, bool narrow)
 {
         i32 n = (i32)imm;
 
+        if (d != a && (op == LIR_ADD || (op == LIR_SUB && n != INT32_MIN))) {
+                i32 k = (op == LIR_ADD) ? n : -n;
+                if (narrow) {
+                        | lea Rd(d), [Rq(a)+k]
+                } else {
+                        | lea Rq(d), [Rq(a)+k]
+                }
+                return;
+        }
+
+        if (op == LIR_MUL) {
+                if (narrow) {
+                        | imul Rd(d), Rd(a), n
+                } else {
+                        | imul Rq(d), Rq(a), n
+                }
+                return;
+        }
+
         mov(Dst, d, a, narrow ? LIR_I32 : LIR_I64, false, false);
 
         switch (op) {
@@ -341,13 +378,6 @@ alui(dasm_State **Dst, LirOp op, u8 d, u8 a, u64 imm, bool narrow)
                 break;
         case LIR_ROTR:
                 | WI ror, d, (u8)n
-                break;
-        case LIR_MUL:
-                if (narrow) {
-                        | imul Rd(d), Rd(d), n
-                } else {
-                        | imul Rq(d), Rq(d), n
-                }
                 break;
         }
 }
@@ -477,7 +507,13 @@ alu(dasm_State **Dst, LirOp op, u8 d, u8 a, u8 b, bool narrow)
         case LIR_AND:
         case LIR_OR:
         case LIR_XOR:
-                if (d != b || d == a) {
+                if (op == LIR_ADD && d != a && d != b) {
+                        if (narrow) {
+                                | lea Rd(d), [Rq(a)+Rq(b)]
+                        } else {
+                                | lea Rq(d), [Rq(a)+Rq(b)]
+                        }
+                } else if (d != b || d == a) {
                         mov(Dst, d, a, cls, false, false);
                         arith(Dst, op, d, b, narrow);
                 } else if (op == LIR_SUB) {

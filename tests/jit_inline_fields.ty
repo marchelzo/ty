@@ -1,0 +1,225 @@
+class Flags {
+    a: _
+    b: _
+    c: _
+
+    init(a, b, c) { self.a = a; self.b = b; self.c = c }
+
+    mixed? -> _ { c || (!a && b) }
+    all? -> _ { a && b && !c }
+    flipped() -> _ { !a }
+}
+
+class Point {
+    x: _
+    y: _
+    z: _
+
+    init(x = 1.5, y = 2.5, z = 3.5) {
+        self.x = x; self.y = y; self.z = z
+    }
+}
+
+class Point3 < Point {
+    w: _
+
+    init(x, y, z) {
+        super(x, y, z)
+        self.w = 0
+    }
+}
+
+class Box {
+    v: Int
+
+    init(v: Int) { self.v = v }
+}
+
+fn +(a: Box, b: Int) -> Box { Box(a.v + b) }
+
+class Shuffle {
+    a: _
+    b: _
+
+    init(a, b) { self.a = a; self.b = b }
+
+    shift(x) -> _ { self.a = self.b; self.b = x; self.a }
+    bump(x) -> _ { self.a = x; self.b = self.a + 1 }
+    rotate(x) -> _ { self.a = self.b; self.b = x; self.a + 1 }
+}
+
+fn set-x(p: Point, v) { p.x = v }
+
+fn check-flags(f: Flags) -> Bool {
+    let a = f.a
+    let b = f.b
+    let c = f.c
+    let mixed = c
+    let all   = a
+    if !mixed {
+        mixed = !a
+        if mixed { mixed = b }
+    }
+    if all { all = b }
+    if all { all = !c }
+    (f.mixed? == mixed) && (f.all? == all) && (f.flipped() == !a)
+}
+
+fn full(i) { Point(i.float, 2.0, -1.0) }
+fn some(i) { Point(i, nil, i + 1) }
+fn none() { Point(nil, nil, nil) }
+
+pub fn test-bool-getters-match-the-interpreter() {
+    let bits = [false, true]
+    let hits = 0
+    for i in ..4000 {
+        let f = Flags(bits[i % 2], bits[(i / 2) % 2], bits[(i / 4) % 2])
+        assert(check-flags(f))
+        if f.mixed? { hits += 1 }
+    }
+    assert(hits == 2500)
+}
+
+pub fn test-bool-getters-fall-back-for-other-values() {
+    let values = [0, 1, nil, [], [1], '', 'x', true, false]
+    for round in ..3 {
+        for i in ..2000 {
+            assert(check-flags(Flags(i % 2 == 0, i % 3 == 0, i % 5 == 0)))
+        }
+        for a in values {
+            for b in values {
+                for c in values {
+                    assert(check-flags(Flags(a, b, c)))
+                }
+            }
+        }
+    }
+}
+
+pub fn test-constructors-store-their-fields() {
+    let s = 0.0
+    for i in ..5000 {
+        let p = full(i)
+        assert(p.x == i.float && p.y == 2.0 && p.z == -1.0)
+        s += p.x + p.y + p.z
+    }
+    assert(s == 12502500.0)
+}
+
+pub fn test-constructor-defaults-still-apply() {
+    for i in ..3000 {
+        let p = some(i)
+        assert(p.x == i && p.y == 2.5 && p.z == i + 1)
+        let q = none()
+        assert(q.x == 1.5 && q.y == 2.5 && q.z == 3.5)
+        let r = Point(i)
+        assert(r.x == i && r.y == 2.5 && r.z == 3.5)
+        let t = Point()
+        assert(t.x == 1.5 && t.y == 2.5 && t.z == 3.5)
+    }
+}
+
+pub fn test-field-stores-keep-their-order() {
+    let s = Shuffle(1, 2)
+    for i in ..4000 {
+        let before = s.b
+        assert(s.shift(i) == before)
+        assert(s.a == before && s.b == i)
+    }
+    for i in ..4000 {
+        assert(s.bump(i) == i + 1)
+        assert(s.a == i && s.b == i + 1)
+    }
+    assert(s.bump(0.5) == 1.5)
+    assert(s.a == 0.5 && s.b == 1.5)
+}
+
+pub fn test-field-stores-are-not-replayed() {
+    let s = Shuffle(0, 0)
+    for i in ..4000 {
+        assert(s.rotate(i) == s.a + 1 && s.b == i)
+    }
+    s = Shuffle(Box(0), Box(10))
+    let r = s.rotate(Box(20))
+    assert(r.v == 11 && s.a.v == 10 && s.b.v == 20)
+}
+
+pub fn test-field-stores-into-arguments() {
+    let p = Point(0, 0, 0)
+    let q = Point3(0, 0, 0)
+    for i in ..4000 {
+        set-x(p, i)
+        assert(p.x == i)
+        set-x(q, -i)
+        assert(q.x == -i && q.w == 0 && q.y == 0)
+    }
+}
+
+class Base {
+    hp: Int
+
+    init(hp: Int) { self.hp = hp }
+
+    alive? -> Bool { hp > 0 }
+    hurt(n: Int) -> Int { hp - n }
+}
+
+class Left < Base {
+    a: Int
+    b: Int
+
+    init(hp: Int) { super(hp); self.a = 100; self.b = 200 }
+}
+
+class Right < Base {
+    c: String
+
+    init(hp: Int) { super(hp); self.c = 'x' }
+}
+
+class Over < Base {
+    alive? -> Bool { true }
+    hurt(n: Int) -> Int { -n }
+}
+
+fn alive-count(xs: [Base]) -> Int {
+    let n = 0
+    for x in xs {
+        if x.alive? { n += 1 }
+    }
+    n
+}
+
+fn hurt-sum(xs: [Base], k: Int) -> Int {
+    let s = 0
+    for x in xs { s += x.hurt(k) }
+    s
+}
+
+pub fn test-subclass-receivers-use-their-own-fields() {
+    let xs: [Base] = []
+    for i in ..60 {
+        let hp = (i % 3) - 1
+        xs.push(match i % 4 {
+            0 => Base(hp),
+            1 => Left(hp),
+            2 => Right(hp),
+            _ => Over(hp)
+        })
+    }
+    let alive = 0
+    let hurt  = 0
+    for x in xs {
+        if x :: Over {
+            alive += 1
+            hurt  -= 3
+        } else {
+            if x.hp > 0 { alive += 1 }
+            hurt += x.hp - 3
+        }
+    }
+    for ..2000 {
+        assert(alive-count(xs) == alive)
+        assert(hurt-sum(xs, 3) == hurt)
+    }
+}

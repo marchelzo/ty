@@ -194,7 +194,6 @@ static bool DirsBound = false;
 Value LOTS_OF_NILS[2048];
 /* ========================================================================== */
 
-#define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
 
 #define TY_INSTR_INLINE
 
@@ -2101,16 +2100,16 @@ xjit_finish(Ty *ty, isize depth, i32 rc)
 
         i32 next_resume = JIT_RESUME(rc);
         Frame *top = v_(FRAMES, depth);
-        Value v;
+        Value const *ret;
 
         switch (JIT_REASON(rc)) {
         case JIT_RETURN:
 JitReturn:
                 CO_LOG("jit_return", TERM(93;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 IP = vXx(CALLS);
-                v = v_L(STACK);
+                ret = vvL(STACK);
                 vN(STACK) = vXx(FRAMES).fp + 1;
-                v_L(STACK) = v;
+                MoveJitResult(vvL(STACK), ret);
                 CO_LOG("jit_return", TERM(92;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 break;
 
@@ -2387,7 +2386,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 *v_(STACK, fp + np) = self;
         }
 
-        xvP(FRAMES, FRAME(fp, *f, IP));
+        PushFrame(&FRAMES, fp, f, IP);
         xvP(CALLS, whence);
 
 #ifdef TY_HAVE_USDT
@@ -2645,9 +2644,9 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
                 if (LIKELY(JIT_REASON(rc) == JIT_RETURN)) {
                         v_(FRAMES, depth0)->jit_pc = NULL;
                         IP = vXx(CALLS);
-                        Value v = v_L(STACK);
+                        Value const *ret = vvL(STACK);
                         vN(STACK) = vXx(FRAMES).fp + 1;
-                        v_L(STACK) = v;
+                        MoveJitResult(vvL(STACK), ret);
                         --EXEC_DEPTH;
                         return;
                 }
@@ -2663,6 +2662,7 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
         }
 }
 
+[[gnu::always_inline]]
 inline static bool
 plain_call(Ty *ty, Value const *f, int argc)
 {
@@ -2675,6 +2675,7 @@ plain_call(Ty *ty, Value const *f, int argc)
              || jit_pending(jit)
              || (f->type != VALUE_FUNCTION)
              || (f->info[FUN_INFO_CLASS] != -1)
+             || is_starred(f)
              || (rest_idx_of(f) != -1)
              || (kwargs_idx_of(f) != -1)
              || (argc > bound)
@@ -2688,18 +2689,40 @@ plain_call(Ty *ty, Value const *f, int argc)
         usize  fp = vN(STACK) - argc;
         isize  f0 = vN(FRAMES);
 
-        xvR(STACK, fp + bound + 256);
-        NilStackRange(ty, fp + argc, bound - argc);
+        if (UNLIKELY(fp + bound + 256 > vC(STACK))) {
+                xvR(STACK, fp + bound + 256);
+        }
+
+        for (i32 i = argc; i < bound; ++i) {
+                *v_(STACK, fp + i) = NIL;
+        }
+
         vN(STACK) = fp + bound;
 
-        xvP(FRAMES, FRAME(fp, *f, ip));
+        PushFrame(&FRAMES, fp, f, ip);
         xvP(CALLS, ip);
 
         CheckUsed(ty);
 
-        v_(FRAMES, f0)->jit_resume = 0;
+        IP = &JIT;
+        EXEC_DEPTH += 2;
+        vvL(FRAMES)->jit_code = jit;
 
-        xjit(ty, f0, jit, 0, v_(STACK, fp), f->env);
+        i32 rc = (*jit)(ty, 0, v_(STACK, fp), f->env, &vvL(FRAMES)->jit_pc);
+
+        if (LIKELY(rc == JIT_RETURN)) {
+                Value const *ret = vvL(STACK);
+                vN(CALLS)  -= 1;
+                vN(FRAMES)  = f0;
+                vN(STACK)   = fp + 1;
+                EXEC_DEPTH -= 2;
+                IP          = ip;
+                MoveJitResult(v_(STACK, fp), ret);
+                return true;
+        }
+
+        --EXEC_DEPTH;
+        xjit_finish(ty, f0, rc);
 
         while (vN(FRAMES) != f0) {
                 isize  i   = vN(FRAMES) - 1;
@@ -2794,7 +2817,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
                 put(*v);
         }
 
-        xvP(FRAMES, FRAME(vN(STACK), gen->f, whence));
+        PushFrame(&FRAMES, vN(STACK), &gen->f, whence);
         xvP(CALLS, whence);
         v_(gen->st->frames, 0)->ip = whence;
 
@@ -7249,7 +7272,7 @@ Top:
         case VALUE_OBJECT:
                 if ((vp = class_lookup_method_i(ty, v.class, NAMES._next_)) != NULL) {
                         push(INTEGER(i));
-                        if (exec) {
+                        if (exec || try_jit(ty, vp) != NULL) {
                                 exec_fn(ty, vp, &v, 1, NULL);
                                 YieldFix(ty);
                         } else {
@@ -7935,7 +7958,7 @@ DoGenerator(Ty *ty, char const *ip, Value *locals, Value **env)
         char *end = DoFunction(ty, ip, locals, env);
         Generator *gen = NewGenerator(ty, peek());
         xvPn(gen->st->stack, LOTS_OF_NILS, gen->f.info[FUN_INFO_BOUND]);
-        xvP(gen->st->frames, FRAME(1, gen->f, IP));
+        PushFrame(&gen->st->frames, 1, &gen->f, IP);
         put(GENERATOR(gen));
         return end;
 }
@@ -11463,7 +11486,9 @@ vm_call1(Ty *ty, Value const *f, Value const *x)
         switch (f->type) {
         case VALUE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
-                exec_fn(ty, f, NULL, 1, NULL);
+                if (!plain_call(ty, f, 1)) {
+                        exec_fn(ty, f, NULL, 1, NULL);
+                }
                 return pop();
 
         case VALUE_METHOD:

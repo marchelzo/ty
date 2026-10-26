@@ -553,6 +553,8 @@ op_definition(int op, usize i);
 int
 op_dispatch(Ty *ty, int op, int t1, int t2);
 
+extern _Atomic u32 OperatorEpoch;
+
 usize
 op_count(void);
 

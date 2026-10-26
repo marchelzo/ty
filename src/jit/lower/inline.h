@@ -49,7 +49,9 @@ is_arg(Plan const *p, i32 local)
 inline static bool
 touches_field(TyInlineInsn const *insn)
 {
-        return (insn->op == TY_INLINE_FIELD) || (insn->op == TY_INLINE_STORE_FIELD);
+        return (insn->op == TY_INLINE_FIELD)
+            || (insn->op == TY_INLINE_STORE_FIELD)
+            || (insn->op == TY_INLINE_SET_FIELD);
 }
 
 static LirReg
@@ -130,19 +132,6 @@ analyze(Plan *p, Value const *callee, TyInlineKind kind, i32 argc)
             && (p->plan.depths[p->plan.count] == 1);
 }
 
-static bool
-logical(Plan const *p)
-{
-        for (i32 i = 0; i < p->plan.count; ++i) {
-                u8 op = p->plan.insns[i].op;
-                if (op == TY_INLINE_AND || op == TY_INLINE_OR) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
 static void
 nonzero_bits(BcLir *c, LirReg f, LirLabel slow)
 {
@@ -211,6 +200,31 @@ plan_arith(BcLir *c, u8 op, i32 left, i32 right, LirLabel slow)
         bind(c, done);
 }
 
+static LirReg
+plan_flag(BcLir *c, i32 slot, LirLabel slow)
+{
+        expect(c, c->ops, vat(slot), VALUE_BOOLEAN, slow);
+        return ldx(c, LIR_LD_U8, LIR_I64, c->ops, vat(slot) + VOFF(boolean));
+}
+
+static void
+plan_logic(BcLir *c, u8 op, i32 left, i32 right, LirLabel slow)
+{
+        LirReg x = plan_flag(c, left, slow);
+        LirReg y = plan_flag(c, right, slow);
+        LirOp  o = (op == TY_INLINE_AND) ? LIR_AND : LIR_OR;
+
+        put_scalar(c, left, VALUE_BOOLEAN, lir_r(binr(c, o, LIR_I64, x, y)));
+}
+
+static void
+plan_not(BcLir *c, i32 slot, LirLabel slow)
+{
+        LirReg x = plan_flag(c, slot, slow);
+
+        put_scalar(c, slot, VALUE_BOOLEAN, lir_r(binop(c, LIR_XOR, LIR_I64, lir_r(x), lir_i(1))));
+}
+
 static void
 guard_plan(BcLir *c, Plan const *p, LirLabel slow)
 {
@@ -264,6 +278,18 @@ plan_insn(BcLir *c, Plan const *p, i32 i, i32 top, LirLabel const *labels, LirLa
                 break;
         }
 
+        case TY_INLINE_SET_FIELD: {
+                LirReg object = field_object(c, p, insn, i, &slot);
+                copy(c, object, slot, c->ops, vat(top - 1));
+                break;
+        }
+
+        case TY_INLINE_GIVEN: {
+                LirReg arg = plan_source(c, p, insn->local);
+                jcc(c, LIR_EQ, lir_r(tagat(c, arg, 0)), lir_i(VALUE_NIL), slow);
+                break;
+        }
+
         case TY_INLINE_INTEGER:
                 put_scalar(c, top, VALUE_INTEGER, lir_i(insn->integer));
                 break;
@@ -292,6 +318,15 @@ plan_insn(BcLir *c, Plan const *p, i32 i, i32 top, LirLabel const *labels, LirLa
         case TY_INLINE_LE:
         case TY_INLINE_GE:
                 plan_arith(c, insn->op, top - 2, top - 1, slow);
+                break;
+
+        case TY_INLINE_AND:
+        case TY_INLINE_OR:
+                plan_logic(c, insn->op, top - 2, top - 1, slow);
+                break;
+
+        case TY_INLINE_NOT:
+                plan_not(c, top - 1, slow);
                 break;
 
         case TY_INLINE_BRANCH_TRUE: {
@@ -372,7 +407,6 @@ try_plan(
 
         if (
                 !analyze(&p, callee, kind, argc)
-             || logical(&p)
              || (c->sp + p.plan.max_stack + 1 > c->max_sp + 200)
              || !plan_fields(c, &p)
         ) {
@@ -446,7 +480,8 @@ inline_operator(BcLir *c, u8 instr)
                 return false;
         }
 
-        int ref = op_dispatch(c->ctx, op, left->i, right->i);
+        u32 epoch = atomic_load_explicit(&OperatorEpoch, memory_order_acquire);
+        int ref   = op_dispatch(c->ctx, op, left->i, right->i);
 
         if (ref < 0 || ref >= vN(Globals)) {
                 return false;
@@ -465,12 +500,28 @@ inline_operator(BcLir *c, u8 instr)
                 return false;
         }
 
-        TyInlineTarget *target = ty_inline_operator_target(left, right, op, ref, callee);
-        LirLabel        slow   = newlabel(c);
-        LirLabel        done   = newlabel(c);
-        LirReg          a      = slot_of(c, c->sp - 2);
-        LirReg          b      = slot_of(c, c->sp - 1);
-        LirReg          ok     = tycall(
+        TyInlineTarget *target  = ty_inline_operator_target(left, right, op, ref, callee);
+        LirLabel        slow    = newlabel(c);
+        LirLabel        done    = newlabel(c);
+        LirLabel        recheck = newlabel(c);
+        LirLabel        checked = newlabel(c);
+        LirReg          a       = slot_of(c, c->sp - 2);
+        LirReg          b       = slot_of(c, c->sp - 1);
+
+        guard_class(c, a, left->i, slow);
+        guard_class(c, b, right->i, slow);
+        unless(c, ldw(c, pval(c, &OperatorEpoch), 0), epoch, recheck);
+
+        LirReg defined = addr(c, ldp(c, pval(c, &Globals.items), 0), vat(ref));
+
+        expect(c, defined, 0, VALUE_FUNCTION, recheck);
+        same_ptr(c, ldp(c, defined, VOFF(info)), callee->info, recheck);
+        same_ptr(c, ldp(c, defined, VOFF(env)), callee->env, recheck);
+        jump(c, checked);
+
+        bind(c, recheck);
+
+        LirReg ok = tycall(
                 c,
                 ty_inline_guard_operator,
                 LT_BOOL,
@@ -480,6 +531,8 @@ inline_operator(BcLir *c, u8 instr)
         );
 
         jz(c, ok, slow);
+
+        bind(c, checked);
 
         if (inlined) {
                 emit_plan(c, &p, c->sp - 2, slow);

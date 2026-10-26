@@ -1,0 +1,35 @@
+import ty
+
+class Money {
+    cents: Int
+
+    init(cents: Int) { self.cents = cents }
+}
+
+class Coin < Money {
+}
+
+fn +(a: Money, b: Money) -> Money { Money(a.cents + b.cents) }
+fn -(a: Money, b: Money) -> Money { Money(a.cents - b.cents) }
+
+fn total(xs: [Money]) -> Int {
+    let t = Money(0)
+    for x in xs { t = t + x }
+    t.cents
+}
+
+fn spread(a: Money, b: Money) -> Int { (a - b).cents }
+
+pub fn test-operator-sites-survive-new-definitions() {
+    let xs = [Money(i) for i in ..100]
+    for ..300 {
+        assert(total(xs) == 4950)
+        assert(spread(Money(7), Money(3)) == 4)
+    }
+    ty.eval('fn *(a: Coin, b: Coin) -> Int { a.cents * b.cents }')
+    for ..300 {
+        assert(total(xs) == 4950)
+        assert(spread(Money(7), Money(3)) == 4)
+        assert(spread(Coin(9), Coin(3)) == 6)
+    }
+}

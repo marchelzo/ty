@@ -662,7 +662,7 @@ pass(Emit *e, LirInst const *in, u32 pc)
                 }
 
                 if (args[p].phys != LIR_PHYS_NONE) {
-                        li(Dst, args[p].phys, in->call_args[p].imm);
+                        li(Dst, args[p].phys, fitted(in->call_args[p].imm, in->sig.params[p]));
                 } else {
                         li(Dst, TMP0, in->call_args[p].imm);
                         mem(Dst, true, TMP0, FRAME, args[p].stack, argsize(in->sig.params[p]), false, false);
@@ -670,8 +670,49 @@ pass(Emit *e, LirInst const *in, u32 pc)
         }
 
         for (u32 p = 0; p < in->ncall_args; ++p) {
-                if (args[p].phys != LIR_PHYS_NONE && !args[p].fpr) {
+                if (
+                        (in->call_args[p].kind != LO_IMM)
+                     && (args[p].phys != LIR_PHYS_NONE)
+                     && !args[p].fpr
+                ) {
                         fit(Dst, args[p].phys, in->sig.params[p]);
+                }
+        }
+
+        return true;
+}
+
+static bool
+steady(Emit *e, LirInst const *in, u32 pc)
+{
+        LirLoc            l    = loc(e, in->args[0].reg, LIR_IN(pc));
+        LirRegPool const *gpr  = &e->target->gpr;
+        ArgLoc           *args = tmp(ArgLoc, in->ncall_args + 1);
+
+        if (l.phys == LIR_PHYS_NONE) {
+                return true;
+        }
+
+        if (
+                isfloat(rcls(e, in->args[0].reg))
+             || (l.phys == TMP0)
+             || (l.phys == TMP1)
+             || (in->sig.variadic && l.phys == gpr->ret)
+        ) {
+                return false;
+        }
+
+        for (u32 i = 0; i < gpr->nscratch; ++i) {
+                if (gpr->scratch[i] == l.phys) {
+                        return false;
+                }
+        }
+
+        locate(e->target, &in->sig, args);
+
+        for (u32 p = 0; p < in->ncall_args; ++p) {
+                if (!args[p].fpr && args[p].phys == l.phys) {
+                        return false;
                 }
         }
 
@@ -885,7 +926,7 @@ tail(Emit *e, LirInst const *in)
         }
 
         if (out != 0) {
-                ld(Dst, TAIL_BASE, FRAME, e->origin);
+                caller_sp(Dst, TAIL_BASE, e->frame, e->alloc->frame_align, e->origin);
                 for (u32 i = 0; i < out; i += 8) {
                         ld(Dst, TAIL_COPY, FRAME, i);
                         st(Dst, TAIL_COPY, TAIL_BASE, 16 + i);
@@ -896,7 +937,7 @@ tail(Emit *e, LirInst const *in)
         }
 
         saveregs(e, false);
-        epilogue(Dst, e->origin, true);
+        epilogue(Dst, e->frame, e->alloc->frame_align, e->origin, true);
 
         return true;
 }
@@ -908,13 +949,16 @@ invoke(Emit *e, LirInst const *in, u32 pc)
         u64     where = 0;
         u32     twin  = LIR_RETURNS_TWICE | LIR_CALL_SITE;
         bool    site  = (in->flags & LIR_CALL_SITE) != 0;
+        bool    late  = (fn.kind == LO_REG) && steady(e, in, pc);
 
         bounds(e, pc);
 
         switch (fn.kind) {
         case LO_REG:
-                home(e, fn.reg, pc, TMP0, LT_PTR);
-                st(Dst, TMP0, FRAME, e->result);
+                if (!late) {
+                        home(e, fn.reg, pc, TMP0, LT_PTR);
+                        st(Dst, TMP0, FRAME, e->result);
+                }
                 break;
 
         case LO_IMM:    where = fn.imm;                    break;
@@ -930,7 +974,9 @@ invoke(Emit *e, LirInst const *in, u32 pc)
                 varargs(Dst, nfloats(e, &in->sig));
         }
 
-        if (fn.kind == LO_REG) {
+        if (late) {
+                home(e, fn.reg, pc, TMP0, LT_PTR);
+        } else if (fn.kind == LO_REG) {
                 ld(Dst, TMP0, FRAME, e->result);
         } else {
                 li(Dst, TMP0, where);
@@ -984,7 +1030,7 @@ incoming(Emit *e, u8 d, u32 p, bool fpr)
 {
         ArgLoc a = e->arguments[p];
 
-        ld(Dst, TMP1, FRAME, e->origin);
+        caller_sp(Dst, TMP1, e->frame, e->alloc->frame_align, e->origin);
         mem(Dst, false, d, TMP1, 16 + a.stack, argsize(a.type), false, fpr);
 }
 
@@ -1754,7 +1800,7 @@ finale(Emit *e)
 {
         label(Dst, e->epilogue);
         saveregs(e, false);
-        epilogue(Dst, e->origin, false);
+        epilogue(Dst, e->frame, e->alloc->frame_align, e->origin, false);
 }
 
 static bool

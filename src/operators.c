@@ -205,6 +205,8 @@ op_definition_spec(int op, usize i, i32 *t1, i32 *t2, i32 *ref, Expr **expr)
         return found;
 }
 
+_Atomic u32 OperatorEpoch;
+
 void
 op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 {
@@ -245,6 +247,8 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
         v0(group->cache);
 
         TyRwLockWrUnlock(&group->lock);
+
+        atomic_fetch_add_explicit(&OperatorEpoch, 1, memory_order_release);
 }
 
 static i32

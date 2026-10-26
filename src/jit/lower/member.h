@@ -241,13 +241,17 @@ known_getter(
         LirLabel call  = newlabel(c);
 
         guard_receiver(c, value, class, other);
-        try_plan(c, getter, TY_INLINE_METHOD, 0, out, value, class, NULL, out, done);
+
+        bool planned = try_plan(c, getter, TY_INLINE_METHOD, 0, out, value, class, NULL, out, done);
 
         bind(c, call);
         inline_call(c, konst(c, getter), getter, out, 0, value, slow, done);
 
         if (other != slow) {
                 bind(c, other);
+                if (planned) {
+                        kin_arms(c, value, class, member, true, getter, 0, out, call, done);
+                }
                 same_member(c, value, member, true, getter, slow);
                 jump(c, call);
         }

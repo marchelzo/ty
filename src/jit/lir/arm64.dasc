@@ -338,7 +338,13 @@ prologue(dasm_State **Dst, u32 frame, u32 align, u32 origin)
 }
 
 static void
-epilogue(dasm_State **Dst, u32 origin, bool tail)
+caller_sp(dasm_State **Dst, u8 d, u32 frame, u32 align, u32 origin)
+{
+        ld(Dst, d, FRAME, origin);
+}
+
+static void
+epilogue(dasm_State **Dst, u32 frame, u32 align, u32 origin, bool tail)
 {
         ld(Dst, TMP1, FRAME, origin);
         | mov sp, x17

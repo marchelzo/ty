@@ -613,6 +613,7 @@ struct lir_code {
         u32          *osr;
         u32           nosr;
         i32          *tier;
+        void         *profile;
         u64           serial;
         u32           deopts;
         LirCode      *previous;

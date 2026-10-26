@@ -7,7 +7,7 @@ enum {
         TY_INLINE_MAX_INSNS = 24,
         TY_INLINE_MAX_STACK = 8,
         TY_INLINE_MAX_ARGS = 64,
-        TY_INLINE_MAX_BYTES = 96,
+        TY_INLINE_MAX_BYTES = 192,
         TY_INLINE_MAX_COST = 64,
 };
 
@@ -40,6 +40,9 @@ typedef enum {
         TY_INLINE_JUMP,
         TY_INLINE_AND,
         TY_INLINE_OR,
+        TY_INLINE_NOT,
+        TY_INLINE_SET_FIELD,
+        TY_INLINE_GIVEN,
 } TyInlineOp;
 
 typedef struct {
