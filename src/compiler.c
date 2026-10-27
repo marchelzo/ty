@@ -8315,7 +8315,8 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
                 INSN(PUSH_DEFER_GROUP);
         }
 
-        bool returns = emit_statement(ty, s->try.s, want_result);
+        StackState stack   = STATE.stack;
+        bool       returns = emit_statement(ty, s->try.s, want_result);
 
         PLACEHOLDER_JUMP(JUMP, finally);
 
@@ -8327,13 +8328,15 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
         get_try(ty, 0)->ctx = TRY_CATCH;
 
         for (int i = 0; i < vN(s->try.patterns); ++i) {
-                returns &= emit_catch(
-                        ty,
-                        v__(s->try.patterns, i),
-                        NULL,
-                        v__(s->try.handlers, i),
-                        want_result
-                );
+                WITHxSTACK(stack) {
+                        returns &= emit_catch(
+                                ty,
+                                v__(s->try.patterns, i),
+                                NULL,
+                                v__(s->try.handlers, i),
+                                want_result
+                        );
+                }
         }
 
         INSN(RETHROW);
