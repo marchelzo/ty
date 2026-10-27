@@ -1305,12 +1305,12 @@ pub class Server : Handler {
     head(   path: String, f: RequestHandler)                       -> RequestHandler { route('HEAD',    path, f)         }
     options(path: String, f: RequestHandler)                       -> RequestHandler { route('OPTIONS', path, f)         }
 
-    get    (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('GET',     path, f, stream) }
-    post   (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('POST',    path, f, stream) }
-    put    (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PUT',     path, f, stream) }
-    delete (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('DELETE',  path, f, stream) }
-    patch  (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PATCH',   path, f, stream) }
-    head   (f: RequestHandler, path: String)                       -> RequestHandler { route('HEAD',    path, f)         }
+    get(    f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('GET',     path, f, stream) }
+    post(   f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('POST',    path, f, stream) }
+    put(    f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PUT',     path, f, stream) }
+    delete( f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('DELETE',  path, f, stream) }
+    patch(  f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PATCH',   path, f, stream) }
+    head(   f: RequestHandler, path: String)                       -> RequestHandler { route('HEAD',    path, f)         }
     options(f: RequestHandler, path: String)                       -> RequestHandler { route('OPTIONS', path, f)         }
 
     ws(path: String, f: SocketHandler, protocols: Array[String] = []) -> SocketHandler {
