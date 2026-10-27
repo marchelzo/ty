@@ -40,6 +40,7 @@ typedef struct {
 
 #define TY_THREAD_OK 0
 #define TY_RWLOCK_INIT SRWLOCK_INIT
+#define TY_ONCE_INIT INIT_ONCE_STATIC_INIT
 #define TY_WAIT_SCRATCH(n) (0)
 
 typedef HANDLE                  TyThread;
@@ -47,6 +48,7 @@ typedef CRITICAL_SECTION        TyMutex;
 typedef CONDITION_VARIABLE      TyCondVar;
 typedef SRWLOCK                 TyRwLock;
 typedef SYNCHRONIZATION_BARRIER TyBarrier;
+typedef INIT_ONCE               TyOnce;
 typedef unsigned                TyThreadFunc(void *);
 typedef unsigned                TyThreadReturnValue;
 
@@ -95,6 +97,19 @@ inline static bool
 TyThreadEqual(TyThread t1, TyThread t2)
 {
         return GetThreadId(t1) == GetThreadId(t2);
+}
+
+static BOOL CALLBACK
+TyOnceThunk(PINIT_ONCE o, PVOID f, PVOID *ctx)
+{
+        ((void (*)(void))f)();
+        return TRUE;
+}
+
+inline static void
+TyOnceRun(TyOnce *o, void (*f)(void))
+{
+        InitOnceExecuteOnce(o, TyOnceThunk, (PVOID)f, NULL);
 }
 
 inline static void
@@ -297,10 +312,12 @@ typedef nsync_mu             TyRwLock;
 typedef nsync_cv             TyCondVar;
 typedef nsync_note           TyNote;
 typedef nsync_counter        TyCounter;
+typedef nsync_once           TyOnce;
 
 #define TY_MUTEX_INIT  NSYNC_MU_INIT
 #define TY_RWLOCK_INIT NSYNC_MU_INIT
 #define TY_THREAD_OK   NULL
+#define TY_ONCE_INIT   NSYNC_ONCE_INIT
 
 #define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
 
@@ -370,6 +387,12 @@ inline static bool
 TyThreadEqual(TyThread t1, TyThread t2)
 {
         return pthread_equal(t1, t2);
+}
+
+inline static void
+TyOnceRun(TyOnce *o, void (*f)(void))
+{
+        nsync_run_once(o, f);
 }
 
 /*

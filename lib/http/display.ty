@@ -10,8 +10,7 @@
 import os
 import json
 import chalk (chalk, escape)
-import http.form (decode-query)
-import http.status (status-name)
+import _http as c
 
 /// Chalk styles for each element; reassign entries to restyle output.
 pub THEME = %{
@@ -67,14 +66,15 @@ pub fn request-line(method: String, target: String, version: String, color: Bool
 
 pub fn status-line(version: String, status: Int, reason: String | nil, color: Bool) -> String {
     let p = Paint(color)
-    let r = (reason == nil || reason == '') ? status-name(status) : reason
+    let r = (reason == nil || reason == '') ? c.reason(status) : reason
     p.render("{p('version', version)} {p(status-style(status), "{status} {r}")}")
 }
 
-/// `pairs` are `(name, value)` tuples (anything iterable that yields them).
-pub fn header-lines(pairs: Array[(String, String)], color: Bool) -> Array[String] {
+/// `pairs` are `(name, value)` tuples; names are shown in canonical case
+/// unless `lower` (HTTP/2).
+pub fn header-lines(pairs: Array[(String, String)], color: Bool, lower: Bool = false) -> Array[String] {
     let p = Paint(color)
-    [ p.render("{p('name', name)}{p('punct', ':')} {p('value', value)}") for (name, value) in pairs ]
+    [ p.render("{p('name', lower ? name : c.canonical(name))}{p('punct', ':')} {p('value', value)}") for (name, value) in pairs ]
 }
 
 fn json-string(s: String) -> String {
@@ -182,7 +182,7 @@ pub fn body(data: Blob | String | nil, content-type: String | nil, color: Bool =
     }
 
     if ctype :: /^application\/x-www-form-urlencoded/i {
-        let q = decode-query(b.str(lossy: true))
+        let q = c.decode-query(b.str(lossy: true))
         return clip(p.render([ "{p('key', k)}{p('punct', '=')}{p('str', str(v))}" for k, v in q ].join('\n')), limit, p)
     }
 
@@ -194,8 +194,8 @@ pub fn body(data: Blob | String | nil, content-type: String | nil, color: Bool =
 }
 
 /// A full message: start line, headers, a blank line, and the body.
-pub fn message(start: String, headers: Array[(String, String)], data: Blob | String | nil, content-type: String | nil, color: Bool, limit: Int | nil = 8192, body?: Bool = true) -> String {
-    let lines = [start, *header-lines(headers, color)]
+pub fn message(start: String, headers: Array[(String, String)], data: Blob | String | nil, content-type: String | nil, color: Bool, limit: Int | nil = 8192, body?: Bool = true, lower: Bool = false) -> String {
+    let lines = [start, *header-lines(headers, color, lower)]
     let text = body? ? body(data, content-type, color, limit) : ''
     if text != '' {
         lines.push('')

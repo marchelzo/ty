@@ -1,0 +1,400 @@
+/**
+ * Header tables and server-side requests. The native core builds `Request`
+ * and `Headers` objects directly: every string in a request head is a view
+ * into one allocation, and header names are stored lower-cased.
+ */
+pub import _http as c (reason as status-name)
+import json
+import os
+import http.display as display
+
+pub use HttpVersion = {major: Int, minor: Int}
+pub use Upload      = {name: String, type: String | nil, path: String}
+
+pub const V10: HttpVersion = {major: 1, minor: 0}
+pub const V11: HttpVersion = {major: 1, minor: 1}
+pub const V20: HttpVersion = {major: 2, minor: 0}
+
+pub use HeaderValue  = String | Int | Float | Bool | Array[String | Int | Float] | nil
+pub use HeaderSource = Headers | Dict[String, _] | Array[(String, _)] | nil
+
+fn checked(v: _) -> String {
+    let s = str(v)
+    if !c.valid-header?(s) {
+        throw ValueError("http: invalid character in header value: {s:.64}")
+    }
+    s
+}
+
+fn key(name: String) -> String {
+    if !c.valid-header?(name) || name.size() == 0 {
+        throw ValueError("http: invalid header name: {name:.64}")
+    }
+    c.lower(name)
+}
+
+fn kebab(name: String) -> String {
+    name.sub(/[a-z0-9][A-Z]/, m -> "{m[0]}-{m[1].lower()}")
+}
+
+/// Case-insensitive, multi-valued HTTP headers. Names are stored
+/// lower-cased (HTTP/1 output uses canonical casing); a repeated field is an
+/// Array in `table`.
+///
+/// ```
+/// let h = Headers(%{'Accept': 'text/html'})
+/// h.add('Set-Cookie', 'a=1')
+/// h.add('set-cookie', 'b=2')
+/// h['accept']             // 'text/html'
+/// h.all('Set-Cookie')     // ['a=1', 'b=2']
+/// ```
+pub class Headers {
+    table: Dict[String, String | Array[String]] = %{}
+
+    init(src: HeaderSource = nil) {
+        if src != nil {
+            update(src)
+        }
+    }
+
+    static of(src: HeaderSource) -> Headers {
+        match src {
+            h: Headers => h,
+            _          => Headers(src)
+        }
+    }
+
+    /// The value of `name`; repeated fields are joined with `, `.
+    [](name: String) -> String | nil {
+        c.header(table, name)
+    }
+
+    []=(name: String, value: HeaderValue) -> HeaderValue {
+        set(name, value)
+        value
+    }
+
+    get(name: String, default: String | nil = nil) -> String | nil {
+        c.header(table, name) ?? default
+    }
+
+    first(name: String) -> String | nil {
+        match table[c.lower(name)] {
+            s: String => s,
+            [s, *]    => s,
+            _         => nil
+        }
+    }
+
+    all(name: String) -> Array[String] {
+        match table[c.lower(name)] {
+            nil       => [],
+            s: String => [s],
+            vs        => [*vs]
+        }
+    }
+
+    contains?(name: String) -> Bool {
+        table[c.lower(name)] != nil
+    }
+
+    /// Replaces every field named `name`; nil removes it and an Array sets
+    /// one field per element.
+    set(name: String, value: HeaderValue) -> Headers {
+        let k = key(name)
+        match value {
+            nil       => table.remove(k),
+            vs: Array => table[k] = vs.map(checked),
+            v         => table[k] = checked(v)
+        }
+        self
+    }
+
+    setdefault(name: String, value: HeaderValue) -> Headers {
+        if !contains?(name) {
+            set(name, value)
+        }
+        self
+    }
+
+    add(name: String, value: HeaderValue) -> Headers {
+        let k = key(name)
+        let new = match value {
+            vs: Array => vs.map(checked),
+            v         => [checked(v)]
+        }
+        match table[k] {
+            nil               => table[k] = (#new == 1) ? new[0] : new,
+            vs: Array[String] => vs.push(*new),
+            one               => table[k] = [one, *new]
+        }
+        self
+    }
+
+    remove(name: String) -> Headers {
+        table.remove(c.lower(name))
+        self
+    }
+
+    /// Replaces the fields that `other` names.
+    update(other: HeaderSource) -> Headers {
+        match other {
+            nil        => {},
+            h: Headers => for k, v in h.table { table[k] = v },
+            d: Dict    => for k, v in d { set(str(k), v) },
+            xs: Array  => do {
+                let seen = %[]
+                for (k, v) in xs {
+                    if seen.contains?(c.lower(k)) {
+                        add(k, v)
+                    } else {
+                        seen.insert(c.lower(k))
+                        set(k, v)
+                    }
+                }
+            },
+            r => for k, v in members(r) { set(kebab(k), v) }
+        }
+        self
+    }
+
+    /// Adds every field of `other`, keeping existing ones.
+    extend(other: HeaderSource) -> Headers {
+        for (k, v) in Headers.of(other).items() {
+            add(k, v)
+        }
+        self
+    }
+
+    copy() -> Headers {
+        c.copy-headers(self)
+    }
+
+    /// The fields as `(name, value)` pairs, repeated fields flattened.
+    items() -> Array[(String, String)] {
+        let out = []
+        for k, v in table {
+            match v {
+                s: String => out.push((k, s)),
+                vs        => for s in vs { out.push((k, s)) }
+            }
+        }
+        out
+    }
+
+    names() -> Array[String] {
+        [k for k, _ in table]
+    }
+
+    keys() -> Array[String] {
+        names()
+    }
+
+    values() -> Array[String] {
+        [v for (_, v) in items()]
+    }
+
+    dict() -> Dict[String, String | Array[String]] {
+        %{k: v for k, v in table}
+    }
+
+    __json__() -> Dict[String, String | Array[String]] {
+        table
+    }
+
+    __iter__*() {
+        for p in items() {
+            yield p
+        }
+    }
+
+    #() -> Int {
+        let n = 0
+        for _, v in table {
+            n += (v :: Array) ? #v : 1
+        }
+        n
+    }
+
+    empty? -> Bool {
+        #table == 0
+    }
+
+    ==(other: Any) -> Bool {
+        match other {
+            h: Headers => items() == h.items(),
+            _          => false
+        }
+    }
+
+    __str__() -> String {
+        items().map(p -> "{c.canonical(p.0)}: {p.1}").join('\r\n')
+    }
+
+    __repr__() -> String {
+        "Headers({items()})"
+    }
+}
+
+pub class HttpError < RuntimeError {
+    status: Int
+    detail: String
+
+    init(status: Int, detail: String | nil = nil) {
+        self.status = status
+        self.detail = detail ?? c.reason(status)
+        super(self.detail)
+    }
+}
+
+const MULTIPART = /^multipart\/form-data;\s*boundary="?([^";]+)"?/i
+
+/// A request received by the server. The native core fills the public
+/// fields; `body` is nil for streaming routes (read them with `read`).
+pub class Request {
+    method:   String
+    target:   String
+    url:      String
+    query:    String | nil
+    headers:  Headers
+    body:     String | nil
+    version:  HttpVersion
+    scheme:   String
+    remote:   String | nil
+    id:       String | nil
+    route:    String | nil
+    start:    Float = 0.0
+    session:  _
+    exchange: _
+
+    __params:  Dict[String, _] | nil
+    __cookies: Dict[String, String] | nil
+    __files:   Dict[String, Upload] | nil
+    __served?: Bool = false
+
+    init(
+        method: String,
+        target: String,
+        version: HttpVersion = V11,
+        body: String | nil = nil,
+        headers: HeaderSource = nil,
+        scheme: String = 'http'
+    ) {
+        self.method  = method
+        self.target  = target
+        self.version = version
+        self.body    = body
+        self.headers = Headers.of(headers)
+        self.scheme  = scheme
+        match target.bsearch('?') {
+            nil => url = target,
+            i   => {
+                url   = target.bslice(0, i)
+                query = target.bslice(i + 1)
+            }
+        }
+    }
+
+    header(name: String) -> String | nil {
+        c.header(headers.table, name)
+    }
+
+    content-type -> String | nil {
+        c.header(headers.table, 'content-type')
+    }
+
+    /// 'HTTP/1.0', 'HTTP/1.1' or 'HTTP/2'.
+    http-version -> String {
+        (version.major == 2) ? 'HTTP/2' : "HTTP/1.{version.minor}"
+    }
+
+    /// Query parameters, plus urlencoded form fields and multipart text
+    /// fields of the body.
+    params -> Dict[String, _] {
+        __params ?? do {
+            let p = __decode-params()
+            __params = p
+            p
+        }
+    }
+
+    /// Uploaded files of a multipart form, by field name.
+    files -> Dict[String, Upload] {
+        params
+        __files ?? do {
+            let f: Dict[String, Upload] = %{}
+            __files = f
+            f
+        }
+    }
+
+    cookies -> Dict[String, String] {
+        __cookies ?? do {
+            let d = c.cookies(header('cookie'))
+            __cookies = d
+            d
+        }
+    }
+
+    cookie(name: String) -> String | nil {
+        cookies[name]
+    }
+
+    json() -> _ {
+        match body {
+            nil => (exchange == nil) ? nil : json::parse(read-all().str!()),
+            s   => json::parse(s)
+        }
+    }
+
+    __decode-params() -> Dict[String, _] {
+        let params = (query == nil) ? %{} : c.decode-query(query)
+        let $data = body or return params
+        let ctype = content-type ?? ''
+        if ctype :: /^application\/x-www-form-urlencoded/i {
+            params.update(c.decode-query(data))
+        } else if let [_, boundary] = ctype.match(MULTIPART) {
+            if let (fields, files) = c.multipart(data, boundary, getenv('TMPDIR') ?? '/tmp') {
+                params.update(fields)
+                __files = files
+            }
+        }
+        params
+    }
+
+    /// The next chunk of the body (at most `max` bytes), or nil at the end.
+    read(max: Int = 65536) -> String | nil {
+        if exchange && body == nil {
+            return exchange.read-body(max)
+        }
+        if __served? {
+            return nil
+        }
+        __served? = true
+        body
+    }
+
+    read-all() -> Blob {
+        let out = Blob()
+        while let $chunk = read() {
+            out.push(chunk)
+        }
+        out
+    }
+
+    /// Renders the request (start line, headers, formatted body).
+    pretty(body: Bool = true, color: Bool | nil = nil, limit: Int | nil = 8192) -> String {
+        let col = color ?? display.color?()
+        display.message(display.request-line(method, target, http-version, col), headers.items(), self.body, content-type, col, limit, body, version.major == 2)
+    }
+
+    show(%kwargs) {
+        print(pretty(**kwargs))
+    }
+
+    __str__() -> String {
+        "<Request [{method} {target}]>"
+    }
+}
+
+c.setup-server(Request, Headers, V10, V11, V20)

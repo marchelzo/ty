@@ -3,9 +3,10 @@
  * for the server, and `CookieJar`, the client's cookie store.
  */
 import time
+pub import _http (cookies as parse-cookies, date as http-date)
 import path (Path)
 import http.url (URL)
-import http.headers (Headers)
+import http.message (Headers)
 
 const COOKIE_NAME  = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/
@@ -20,28 +21,7 @@ fn unquote(s: String) -> String {
     s.sub(/^"(.*)"$/, &1)
 }
 
-/// Parses a request `Cookie` header into a name → value Dict (first
-/// occurrence wins, surrounding quotes are removed).
-pub fn parse-cookies(header: String | nil) -> Dict[String, String] {
-    let out = %{}
-    let $h = header or return out
-    for part in h.split(';') {
-        let kv = part.split('=', 1)
-        if #kv != 2 {
-            continue
-        }
-        let k = kv[0].strip()
-        let v = unquote(kv[1].strip())
-        if k.size() > 0 && out[k] == nil {
-            out[k] = v
-        }
-    }
-    out
-}
 
-pub fn http-date(t: Int | Float) -> String {
-    time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(int(t)))
-}
 
 /// Formats a `Set-Cookie` value. Throws ValueError for names, values or
 /// attributes that cannot be sent safely; `secure: nil` means "Secure when
@@ -69,7 +49,7 @@ pub fn format-set-cookie(
         parts.push("Max-Age={max-age}")
     }
     if expires != nil {
-        parts.push("Expires={http-date(expires)}")
+        parts.push("Expires={http-date(int(expires))}")
     }
     for (attr, v) in [('Path', path), ('Domain', domain)] {
         if v :: String {
@@ -303,8 +283,8 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
     let host = url.host ?? ''
     let host-only = true
 
-    if let $d = domain {
-        if !domain-match?(host, d) || !d.contains?('.') && d != 'localhost' {
+    if domain {
+        if !domain-match?(host, domain) || !domain.contains?('.') && domain != 'localhost' {
             return nil
         }
         host-only = false

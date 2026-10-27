@@ -9,6 +9,7 @@
         "jit"
       ]
     },
+    "llhttp",
     "nghttp2",
     "xxhash",
     "zlib",

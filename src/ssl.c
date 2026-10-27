@@ -1,5 +1,4 @@
 #include <errno.h>
-#include <pthread.h>
 #include <string.h>
 
 #include <sys/socket.h>
@@ -12,6 +11,7 @@
 #include "class.h"
 #include "functions.h"
 #include "dynlib.h"
+#include "tls.h"
 
 enum {
         SSL_ERROR_WANT_READ   = 2,
@@ -188,7 +188,7 @@ load(void)
         void *s = DynOpen("TY_LIBSSL", ssl);
 
         if (c == NULL || s == NULL) {
-                snprintf(LoadError, sizeof LoadError, "failed to load %s (OpenSSL 3)", (c == NULL) ? "libcrypto" : "libssl");
+                ty_snprintf(LoadError, sizeof LoadError, "failed to load %s (OpenSSL 3)", (c == NULL) ? "libcrypto" : "libssl");
                 return;
         }
 
@@ -196,7 +196,7 @@ load(void)
                 !DynBind(s, (void **)&O, SslNames, &missing)
              || !DynBind(c, (void **)&O + countof(SslNames) - 1, CryptoNames, &missing)
         ) {
-                snprintf(LoadError, sizeof LoadError, "OpenSSL is missing %s (OpenSSL 3 is required)", missing);
+                ty_snprintf(LoadError, sizeof LoadError, "OpenSSL is missing %s (OpenSSL 3 is required)", missing);
                 return;
         }
 
@@ -208,8 +208,8 @@ load(void)
 static bool
 loaded(void)
 {
-        static pthread_once_t once = PTHREAD_ONCE_INIT;
-        pthread_once(&once, load);
+        static TyOnce once = TY_ONCE_INIT;
+        TyOnceRun(&once, load);
         return Loaded;
 }
 
@@ -227,7 +227,7 @@ typedef struct {
         int  nalpn;
 } Ctx;
 
-typedef struct {
+typedef struct tls {
         P    ssl;
         P    rbio;
         P    wbio;
@@ -677,30 +677,24 @@ TY_BUILTIN(ssl_ctx_sni)
         return NIL;
 }
 
-// _ssl.new(ctx: Ptr, server: Bool, host: String | nil = nil, ip: Bool = false) -> Ptr | nil
-TY_BUILTIN(ssl_new)
+static Sess *
+sess_new(Ctx *c, bool server, char const *host, bool ip)
 {
-        Ctx *c = CTX(ctx);
         P ssl = O.SSL_new(c->ctx);
 
         if (ssl == NULL) {
-                return NIL;
+                return NULL;
         }
 
         if (server) {
                 O.SSL_set_accept_state(ssl);
         } else {
                 O.SSL_set_connect_state(ssl);
-                if (host.type == VALUE_STRING) {
-                        SCRATCH_SAVE();
-                        char *h = zstr(ty, host);
-                        if (ip) {
-                                O.X509_VERIFY_PARAM_set1_ip_asc(O.SSL_get0_param(ssl), h);
-                        } else {
-                                O.SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, h);
-                                O.SSL_set1_host(ssl, h);
-                        }
-                        SCRATCH_RESTORE();
+                if (host != NULL && ip) {
+                        O.X509_VERIFY_PARAM_set1_ip_asc(O.SSL_get0_param(ssl), host);
+                } else if (host != NULL) {
+                        O.SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void *)host);
+                        O.SSL_set1_host(ssl, host);
                 }
         }
 
@@ -711,17 +705,29 @@ TY_BUILTIN(ssl_new)
                 if (rbio != NULL) { O.BIO_free(rbio); }
                 if (wbio != NULL) { O.BIO_free(wbio); }
                 O.SSL_free(ssl);
-                return NIL;
+                return NULL;
         }
 
         O.BIO_ctrl(rbio, BIO_C_SET_BUF_MEM_EOF_RETURN, -1, NULL);
         O.BIO_ctrl(wbio, BIO_C_SET_BUF_MEM_EOF_RETURN, -1, NULL);
         O.SSL_set_bio(ssl, rbio, wbio);
 
-        Sess *s = xmA(sizeof *s);
-        *s = (Sess) { .ssl = ssl, .rbio = rbio, .wbio = wbio };
+        Sess *x = xmA(sizeof *x);
+        *x = (Sess) { .ssl = ssl, .rbio = rbio, .wbio = wbio };
 
-        return autoptr(ty, s, sess_free);
+        return x;
+}
+
+// _ssl.new(ctx: Ptr, server: Bool, host: String | nil = nil, ip: Bool = false) -> Ptr | nil
+TY_BUILTIN(ssl_new)
+{
+        Ctx *c = CTX(ctx);
+
+        SCRATCH_SAVE();
+        Sess *x = sess_new(c, server, cstr(ty, host), ip);
+        SCRATCH_RESTORE();
+
+        return (x == NULL) ? NIL : autoptr(ty, x, sess_free);
 }
 
 // _ssl.feed(s: Ptr, data: Any, n: Int) -> Int
@@ -1220,5 +1226,203 @@ TY_BUILTIN(ssl_equal)
 
 #undef SESS
 #undef CTX
+
+bool
+TlsLoad(char const **why)
+{
+        if (!loaded()) {
+                *why = LoadError;
+                return false;
+        }
+
+        return true;
+}
+
+Tls *
+TlsNew(void *ctx, bool server, char const *host)
+{
+        bool ip = (host != NULL) && (strchr(host, ':') != NULL || strspn(host, "0123456789.") == strlen(host));
+        return loaded() ? sess_new(ctx, server, host, ip) : NULL;
+}
+
+void
+TlsFree(Tls *t)
+{
+        if (t != NULL) {
+                sess_free(t);
+        }
+}
+
+int
+TlsHandshake(Ty *ty, Tls *t, Value const *h)
+{
+        if (t->done) {
+                return 1;
+        }
+
+        Sni sni   = { .ty = ty, .h = h, .exc = NIL };
+        Sni *prev = CurrentSni;
+
+        O.ERR_clear_error();
+
+        CurrentSni = &sni;
+        int rc = O.SSL_do_handshake(t->ssl);
+        CurrentSni = prev;
+
+        if (sni.failed) {
+                return -1;
+        }
+
+        if (rc == 1) {
+                t->done = true;
+                return 1;
+        }
+
+        int e = O.SSL_get_error(t->ssl, rc);
+
+        return (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) ? 0 : -e;
+}
+
+bool
+TlsDone(Tls const *t)
+{
+        return t->done;
+}
+
+bool
+TlsFeed(Tls *t, void const *p, usize n)
+{
+        return (n == 0) || (O.BIO_write(t->rbio, p, n) == (int)n);
+}
+
+void
+TlsFeedEof(Tls *t)
+{
+        O.BIO_ctrl(t->rbio, BIO_C_SET_BUF_MEM_EOF_RETURN, 0, NULL);
+}
+
+isize
+TlsRead(Tls *t, void *p, usize n)
+{
+        size_t got;
+
+        O.ERR_clear_error();
+
+        if (O.SSL_read_ex(t->ssl, p, n, &got) == 1) {
+                return got;
+        }
+
+        switch (O.SSL_get_error(t->ssl, 0)) {
+        case SSL_ERROR_WANT_READ:
+        case SSL_ERROR_WANT_WRITE:
+                return 0;
+
+        case SSL_ERROR_ZERO_RETURN:
+        case SSL_ERROR_SYSCALL:
+                t->eof = true;
+                return -1;
+        }
+
+        return -2;
+}
+
+isize
+TlsWrite(Tls *t, void const *p, usize n)
+{
+        usize done = 0;
+        size_t got;
+
+        O.ERR_clear_error();
+
+        while (done < n) {
+                if (O.SSL_write_ex(t->ssl, (u8 const *)p + done, n - done, &got) == 1) {
+                        done += got;
+                        continue;
+                }
+                int e = O.SSL_get_error(t->ssl, 0);
+                if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) {
+                        break;
+                }
+                return -1;
+        }
+
+        return done;
+}
+
+usize
+TlsPending(Tls const *t)
+{
+        return O.BIO_ctrl_pending(t->wbio);
+}
+
+usize
+TlsBuffered(Tls const *t)
+{
+        return O.SSL_pending(t->ssl);
+}
+
+isize
+TlsDrain(Tls *t, void *p, usize n)
+{
+        int got = O.BIO_read(t->wbio, p, n);
+        return max(got, 0);
+}
+
+void
+TlsShutdown(Tls *t)
+{
+        O.ERR_clear_error();
+        if (t->done || O.SSL_is_init_finished(t->ssl) == 1) {
+                O.SSL_shutdown(t->ssl);
+        }
+        O.ERR_clear_error();
+}
+
+bool
+TlsEof(Tls const *t)
+{
+        return t->eof;
+}
+
+bool
+TlsAlpn(Tls const *t, char const **p, unsigned *n)
+{
+        u8 const *a = NULL;
+
+        O.SSL_get0_alpn_selected(t->ssl, &a, n);
+        *p = (char const *)a;
+
+        return a != NULL && *n > 0;
+}
+
+long
+TlsVerifyResult(Tls const *t)
+{
+        return O.SSL_get_verify_result(t->ssl);
+}
+
+char const *
+TlsVerifyError(long r)
+{
+        return O.X509_verify_cert_error_string(r);
+}
+
+void
+TlsErrors(char *buf, usize n)
+{
+        usize at = 0;
+        unsigned long e;
+
+        buf[0] = '\0';
+
+        while ((e = O.ERR_get_error()) != 0 && at + 2 < n) {
+                if (at > 0) {
+                        buf[at++] = ';';
+                        buf[at++] = ' ';
+                }
+                O.ERR_error_string_n(e, buf + at, n - at);
+                at += strlen(buf + at);
+        }
+}
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -1,12 +1,150 @@
 import json
 import time
 import ssl
-import http.core (Response)
-import http.wire (Request)
-
-pub import http.store (Store, SessionData, MemoryStore, Session)
 
 const MAX_COOKIE = 4000
+
+pub use SessionData = Dict[String, _];
+
+pub trait Store {
+    load(id: String) -> SessionData | nil;
+    save(id: String, data: SessionData, ttl: Float);
+    destroy(id: String);
+}
+
+/// Server-side session storage kept in process memory. Thread-safe; data is
+/// stored as JSON so sessions never share mutable objects between threads.
+pub class MemoryStore : Store {
+    max-sessions: Int = 100000
+
+    __mtx:  Mutex = Mutex()
+    __data: Dict[String, (Float, String)] = %{}
+    __ops:  Int = 0
+
+    size -> Int {
+        let ^_ = __mtx.lock()
+        #__data
+    }
+
+    load(id: String) -> SessionData | nil {
+        let ^_ = __mtx.lock()
+        let (expires, text) = __data[id] ?? return nil
+        if expires < time.utc() {
+            __data.remove(id)
+            return nil
+        }
+        json.parse(text)
+    }
+
+    save(id: String, data: SessionData, ttl: Float) {
+        let text = json.encode(data)
+        let ^_ = __mtx.lock()
+        __ops += 1
+        if __ops % 1024 == 0 || #__data >= max-sessions {
+            __purge()
+        }
+        if #__data >= max-sessions && __data[id] == nil {
+            throw RuntimeError('http: session store is full')
+        }
+        __data[id] = (time.utc() + ttl, text)
+    }
+
+    destroy(id: String) {
+        let ^_ = __mtx.lock()
+        __data.remove(id)
+    }
+
+    __purge() {
+        let now = time.utc()
+        let stale = [id for id, (exp, _) in __data if exp < now]
+        for id in stale {
+            __data.remove(id)
+        }
+    }
+}
+
+pub class Session {
+    id:         String | nil
+    new?:       Bool = true
+    dirty?:     Bool = false
+    destroyed?: Bool = false
+
+    __data:     SessionData | nil
+    __loader:   () -> (String | nil, SessionData | nil)
+    __rotate?:  Bool = false
+
+    init(loader: () -> (String | nil, SessionData | nil)) {
+        __loader = loader
+    }
+
+    __load() -> SessionData {
+        __data ?? do {
+            let (id, data) = __loader()
+            self.id = id
+            new? = data == nil
+            let d = data ?? %{}
+            __data = d
+            d
+        }
+    }
+
+    loaded? -> Bool {
+        __data != nil
+    }
+
+    data -> SessionData {
+        __load()
+    }
+
+    get(key: String, default: _ = nil) -> _ {
+        __load()[key] ?? default
+    }
+
+    set[a](key: String, value: a) -> a {
+        __load()[key] = value
+        dirty? = true
+        value
+    }
+
+    [](key: String) -> _ {
+        __load()[key]
+    }
+
+    []=[a](key: String, value: a) -> a {
+        set(key, value)
+    }
+
+    contains?(key: String) -> Bool {
+        __load().contains?(key)
+    }
+
+    remove(key: String) {
+        __load().remove(key)
+        dirty? = true
+    }
+
+    clear() {
+        __data = %{}
+        dirty? = true
+    }
+
+    /// Issues a new session id keeping the data (use after login).
+    regenerate() {
+        __load()
+        __rotate? = true
+        dirty? = true
+    }
+
+    /// Deletes the session and expires its cookie.
+    destroy() {
+        __load()
+        destroyed? = true
+    }
+
+    rotate? -> Bool {
+        __rotate?
+    }
+}
 
 /// Signs `value` with the first secret: `value.signature`.
 pub fn sign(value: String, secrets: Array[String]) -> String {
@@ -68,7 +206,7 @@ pub class Sessions {
         self.rolling   = rolling
     }
 
-    __load(req: Request) -> (String | nil, SessionData | nil) {
+    __load(req: _) -> (String | nil, SessionData | nil) {
         let $raw = req.cookie(name) or return (nil, nil)
         let $value = unsign(raw, secrets) or return (nil, nil)
 
@@ -87,7 +225,7 @@ pub class Sessions {
         }
     }
 
-    __cookie(rsp: Response, value: String) {
+    __cookie(rsp: _, value: String) {
         rsp.set-cookie(
             name,
             value,
@@ -100,7 +238,7 @@ pub class Sessions {
         )
     }
 
-    commit(req: Request, rsp: Response, s: Session) {
+    commit(req: _, rsp: _, s: Session) {
         if !s.loaded? {
             return
         }
@@ -148,7 +286,7 @@ pub class Sessions {
         __cookie(rsp, sign(id, secrets))
     }
 
-    middleware(req: Request, rsp: Response, next: () -> _) {
+    middleware(req: _, rsp: _, next: () -> _) {
         let s = Session(-> __load(req))
         req.session = s
         rsp.on-headers(_ -> commit(req, rsp, s))

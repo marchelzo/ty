@@ -1,9 +1,6 @@
 import _http as hc
-import http.form (decode-query, urlencode, percent-decode)
 
 const DEFAULT_PORTS = %{'http': 80, 'https': 443, 'ws': 80, 'wss': 443}
-
-const SPLIT = /^(?:([A-Za-z][A-Za-z0-9+.\-]*):)?(?:\/\/([^\/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/sv
 
 pub const PATH_UNSAFE     = 1
 pub const QUERY_UNSAFE    = 2
@@ -13,91 +10,6 @@ pub class InvalidURL < ValueError {
     init(what: String) {
         super("http: invalid URL: {what}")
     }
-}
-
-/// Percent-encodes what `kind` (PATH_UNSAFE, QUERY_UNSAFE or
-/// USERINFO_UNSAFE) does not allow, keeping valid %XX escapes.
-pub fn quote(s: String, kind: Int = PATH_UNSAFE) -> String {
-    hc.percent-encode(s, kind)
-}
-
-const BASE         = 36
-const TMIN         = 1
-const TMAX         = 26
-const SKEW         = 38
-const DAMP         = 700
-const INITIAL_BIAS = 72
-const INITIAL_N    = 128
-
-fn adapt(delta: Int, points: Int, first?: Bool) -> Int {
-    let d = first? ? delta / DAMP : delta / 2
-    d += d / points
-    let k = 0
-    while d > ((BASE - TMIN) * TMAX) / 2 {
-        d /= BASE - TMIN
-        k += BASE
-    }
-    k + (((BASE - TMIN + 1) * d) / (d + SKEW))
-}
-
-fn digit(d: Int) -> String {
-    chr((d < 26) ? d + 97 : d + 22)
-}
-
-/// RFC 3492 Punycode encoding of one label (without the `xn--` prefix).
-pub fn punycode(label: String) -> String {
-    let cps: Array[Int] = [ord(c) for c in label.chars()]
-    let out = [chr(c) for c in cps if c < 128]
-    let b = #out
-    let h = b
-    let n = INITIAL_N
-    let delta = 0
-    let bias = INITIAL_BIAS
-
-    if b > 0 {
-        out.push('-')
-    }
-
-    while h < #cps {
-        let m = cps.filter(\_ >= n).min() ?? n
-        delta += (m - n) * (h + 1)
-        n = m
-        for c in cps {
-            if c < n {
-                delta += 1
-            }
-            if c == n {
-                let q = delta
-                let k = BASE
-                while true {
-                    let t = (k <= bias) ? TMIN : ((k >= bias + TMAX) ? TMAX : k - bias)
-                    if q < t {
-                        break
-                    }
-                    out.push(digit(t + (q - t) % (BASE - t)))
-                    q = (q - t) / (BASE - t)
-                    k += BASE
-                }
-                out.push(digit(q))
-                bias = adapt(delta, h + 1, h == b)
-                delta = 0
-                h += 1
-            }
-        }
-        delta += 1
-        n += 1
-    }
-
-    out.join('')
-}
-
-pub fn idna(host: String) -> String {
-    if host.match?(/^[\x00-\x7F]*$/) {
-        return host.lower()
-    }
-    host.lower().split('.').map(fn (label) {
-        label.match?(/^[\x00-\x7F]*$/) ? label : "xn--{punycode(label)}"
-    }).join('.')
 }
 
 fn remove-dots(path: String) -> String {
@@ -136,16 +48,7 @@ fn merge(base: URL, path: String) -> String {
     "{base.path.comb(/[^\/]*$/)}{path}"
 }
 
-pub use QueryParams = String | Dict[String, _] | Array[(String, _)]
-
-fn encode-params(params: QueryParams) -> String {
-    match params {
-        s: String => s,
-        d: Dict   => hc.encode-query(d),
-        xs: Array => hc.encode-query(xs),
-        r         => hc.encode-query(members(r))
-    }
-}
+pub use QueryParams = String | Dict[String, _] | Array[(String, _)] | Tuple
 
 /// A parsed absolute or relative URL (RFC 3986). Hosts are lower-cased and
 /// IDNA-encoded, and characters that are not valid in a component are
@@ -196,28 +99,28 @@ pub class URL {
             self.scheme = scheme.lower()
         }
         if host != nil {
-            self.host = idna(host.comb(/^\[|\]$/))
+            self.host = hc.idna(host.comb(/^\[|\]$/))
         }
         if port != nil {
             self.port = port
         }
         if path != nil {
-            self.path = quote(path)
+            self.path = hc.percent-encode(path, PATH_UNSAFE)
         }
         if query != nil {
-            self.query = quote(query, QUERY_UNSAFE)
+            self.query = hc.percent-encode(query, QUERY_UNSAFE)
         }
         if fragment != nil {
-            self.fragment = quote(fragment, QUERY_UNSAFE)
+            self.fragment = hc.percent-encode(fragment, QUERY_UNSAFE)
         }
         if username != nil {
-            self.username = quote(username, USERINFO_UNSAFE)
+            self.username = hc.percent-encode(username, USERINFO_UNSAFE)
         }
         if password != nil {
-            self.password = quote(password, USERINFO_UNSAFE)
+            self.password = hc.percent-encode(password, USERINFO_UNSAFE)
         }
         if params != nil {
-            let extra = encode-params(params)
+            let extra = (params :: String) ? params : hc.encode-query(params)
             if extra != '' {
                 self.query = (self.query == nil || self.query == '') ? extra : "{self.query}&{extra}"
             }
@@ -228,60 +131,7 @@ pub class URL {
     }
 
     __parse(s: String) {
-        let text = s.strip()
-        let $found = text.match(SPLIT) or throw InvalidURL(s)
-        let m = found.groups + [nil] * (6 - #found.groups)
-
-        let sch  = m[1]
-        let auth = m[2]
-        let pth  = m[3]
-        let q    = m[4]
-        let frag = m[5]
-
-        scheme   = (sch == nil) ? nil : sch.lower()
-        username = nil
-        password = nil
-        host     = nil
-        port     = nil
-        path     = (pth == nil) ? '' : quote(pth)
-        query    = (q == nil) ? nil : quote(q, QUERY_UNSAFE)
-        fragment = (frag == nil) ? nil : quote(frag, QUERY_UNSAFE)
-
-        let $authority = auth or return
-
-        let (userinfo, hostport) = match authority.split(/@(?=[^@]*$)/) {
-            [ui, hp] => (ui, hp),
-            _        => (nil, authority)
-        }
-
-        let (user, pass) = match userinfo.?split(':', 1) {
-            [u, p] => (u, p),
-            [u]    => (u, nil),
-            _      => (nil, nil)
-        }
-
-        username = (user == nil) ? nil : quote(user, USERINFO_UNSAFE)
-        password = (pass == nil) ? nil : quote(pass, USERINFO_UNSAFE)
-
-        let v6? = hostport.starts?('[')
-        let (h, p) = match hostport.match(v6? ? /^\[([^\]]*)\](?::([^:]*))?$/ : /^(.*?)(?::([^:]*))?$/) {
-            [_, h, p] => (h, p),
-            [_, h]    => (h, nil),
-            _         => throw InvalidURL(s)
-        }
-
-        if p != nil && !p.match?(/^\d*$/) {
-            throw InvalidURL(s)
-        }
-
-        host = v6? ? h.lower() : idna(percent-decode(h))
-        port = (p == nil || p == '') ? nil : int(p, 10)
-
-        if host != nil && host.match?(/[\x00-\x20#\/<>?@\[\\\]^|]/) {
-            throw InvalidURL(s)
-        }
-
-        if port != nil && (port < 0 || port > 65535) {
+        if !hc.parse-url(self, s) {
             throw InvalidURL(s)
         }
     }
@@ -338,7 +188,7 @@ pub class URL {
 
     /// Decoded query parameters.
     params -> Dict[String, String | Array[String | nil] | nil] {
-        (query == nil || query == '') ? %{} : decode-query(query)
+        (query == nil || query == '') ? %{} : hc.decode-query(query)
     }
 
     /// Resolves `ref` against this URL (RFC 3986 section 5.2).
@@ -440,3 +290,5 @@ pub class URL {
         }
     }
 }
+
+hc.setup-url(URL)

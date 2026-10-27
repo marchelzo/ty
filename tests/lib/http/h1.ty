@@ -227,10 +227,10 @@ pub fn malformed-requests() {
         let cases = [
             ('GARBAGE\r\n\r\n', 400),
             ('GET / HTTP/1.1\r\n\r\n', 400),
-            ('GET / HTTP/2.0\r\nHost: x\r\n\r\n', 505),
+            ('GET / HTTP/1.2\r\nHost: x\r\n\r\n', 505),
             ('GET / HTTP/1.1\r\nHost: x\r\nBad Header: y\r\n\r\n', 400),
             ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n', 400),
-            ('POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n', 501),
+            ('POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n', 400),
             ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n', 400),
             ('POST / HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n', 400)
         ]
@@ -307,10 +307,38 @@ pub fn stats-and-url() {
     })
 }
 
-pub fn decorator-style-arguments() {
+pub fn decorators() {
     serve(fn (srv) {
-        srv.get(fn (req, rsp) { rsp.plain('legacy') }, '/legacy')
+        @srv.get('/hello/<name>')
+        fn hello(req, rsp, name) {
+            rsp.plain("hello {name}")
+        }
+
+        @srv.post('/size', stream: true)
+        fn size(req, rsp) {
+            let n = 0
+            while let $chunk = req.read(65536) {
+                n += #chunk
+            }
+            rsp.plain(str(n))
+        }
+
+        @srv.route('PUT', '/thing')
+        fn put-thing(req, rsp) {
+            rsp.plain('put')
+        }
+
+        @srv.not-found
+        fn missing(req, rsp) {
+            rsp.plain("no {req.url}")
+        }
     }, fn (srv) {
-        assert(get(srv.port, '/legacy').body == 'legacy')
+        assert(get(srv.port, '/hello/ty').body == 'hello ty')
+        let c = Client(srv.port)
+        assert(c.request('POST', '/size', 'x' * 100000).response().body == '100000')
+        c.close()
+        assert(Client(srv.port).request('PUT', '/thing', '').response().body == 'put')
+        let r = get(srv.port, '/nope')
+        assert(r.status == 404 && r.body == 'no /nope')
     })
 }

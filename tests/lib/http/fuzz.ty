@@ -1,11 +1,13 @@
-import http.wire as wire (Ready, NeedMore, Invalid, Dechunker)
+import http
+import os
+import _client (serve, Client, dial, xread)
 
 let SEEDS = [
     'GET /a?b=c HTTP/1.1\r\nHost: x\r\nX-A: 1\r\n\r\n',
-    'POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello',
-    'POST /c HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n',
+    'POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello',
+    'POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n',
     'GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n',
-    'PUT /x HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok'
+    'PUT /echo HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok'
 ]
 
 const ALPHABET = [0, 9, 10, 13, 32, 48, 58, 65, 97, 127, 128, 255]
@@ -36,58 +38,60 @@ fn mutate(src: String) -> Blob {
     b
 }
 
-fn outcome(r: _) -> String {
-    match r {
-        Ready((req, n)) => "ready {req.method} {req.target} {n} {req.body}",
-        Invalid(s)      => "invalid {s}",
-        _               => 'more'
-    }
+fn routes(srv) {
+    srv.get('/', (req, rsp) -> rsp.plain('root'))
+    srv.get('/a', (req, rsp) -> rsp.plain(req.query ?? ''))
+    srv.post('/echo', (req, rsp) -> rsp.write(req.body ?? ''))
+    srv.put('/echo', (req, rsp) -> rsp.write(req.body ?? ''))
 }
 
 pub fn parser-survives-mutations() {
-    for i in ..4000 {
-        let b = mutate(rand(SEEDS))
-        let whole = outcome(wire.parse(b, 0, #b, wire.marks(16), 4096, 4096))
-        if whole.starts?('ready') {
-            let k = rand(0, #b)
-            let prefix = outcome(wire.parse(b, 0, k, wire.marks(16), 4096, 4096))
-            assert(prefix == 'more' || prefix.starts?('invalid') || prefix == whole || prefix.starts?('ready'))
+    serve(routes, fn (srv) {
+        let buf = Blob()
+        for i in ..600 {
+            let fd = dial(srv.port)
+            os.write(fd, mutate(rand(SEEDS)), all=true)
+            os.shutdown(fd, os.SHUT_WR)
+            buf.clear()
+            while (xread(fd, buf, 65536) ?? 0) > 0 {
+            }
+            let text = buf.str(lossy: true)
+            assert(text == '' || text.starts?('HTTP/1.1 '))
+            os.close(fd)
         }
-    }
+        let c = Client(srv.port)
+        assert(c.get('/').body == 'root')
+        c.close()
+    }, max-header-size: 4096, max-body-size: 4096, threads: 2)
 }
 
-pub fn dechunker-is-split-invariant() {
-    for i in ..2000 {
-        let src = Blob()
-        let body = Blob()
-        for ..rand(0, 5) {
-            let n = rand(1, 40)
-            let piece = Blob(*[rand(0, 256) for ..n])
-            src.push("{n:x}\r\n")
-            src.push(piece)
-            src.push('\r\n')
-            body.push(piece)
-        }
-        src.push('0\r\n\r\n')
-
-        let out = Blob()
-        let d = Dechunker()
-        let pos = 0
-        while !d.done? && pos < #src {
-            let end = min(#src, pos + rand(1, 9))
-            let n = d.feed(src, pos, end, out)
-            assert(n >= 0)
-            pos += n
-            if n == 0 && end == #src {
-                break
+pub fn chunked-bodies-are-split-invariant() {
+    serve(routes, fn (srv) {
+        let c = Client(srv.port)
+        os.setsockopt(c.fd, 6, 1, 1)
+        for i in ..150 {
+            let src = Blob()
+            let body = Blob()
+            for ..rand(0, 5) {
+                let n = rand(1, 40)
+                let piece = Blob(*[rand(0, 256) for ..n])
+                src.push("{n:x}\r\n")
+                src.push(piece)
+                src.push('\r\n')
+                body.push(piece)
             }
+            src.push('0\r\n\r\n')
+            c.send('POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
+            let pos = 0
+            while pos < #src {
+                let n = min(#src - pos, rand(1, 9))
+                c.send(src.slice(pos, n))
+                pos += n
+            }
+            let r = c.response()
+            assert(r.status == 200)
+            assert(Blob(r.body) == body)
         }
-        assert(d.done?)
-        assert(out == body)
-
-        let bad = mutate(src.str!())
-        let d2 = Dechunker()
-        let sink = Blob()
-        d2.feed(bad, 0, #bad, sink)
-    }
+        c.close()
+    })
 }

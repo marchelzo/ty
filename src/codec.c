@@ -1,4 +1,3 @@
-#include <pthread.h>
 #include <stdarg.h>
 #include <string.h>
 
@@ -11,6 +10,7 @@
 #include "vm.h"
 #include "functions.h"
 #include "dynlib.h"
+#include "codec.h"
 
 enum {
         CHUNK = 64 * 1024
@@ -117,11 +117,11 @@ brotli_load(void)
 static void
 brotli(void)
 {
-        static pthread_once_t once = PTHREAD_ONCE_INIT;
-        pthread_once(&once, brotli_load);
+        static TyOnce once = TY_ONCE_INIT;
+        TyOnceRun(&once, brotli_load);
 }
 
-typedef struct {
+struct codec {
         int        kind;
         int        coding;
         int        format;
@@ -129,6 +129,7 @@ typedef struct {
         bool       end;
         bool       any;
         bool       open;
+        bool       gc;
         i64        total;
         size_t     left;
         z_stream   z;
@@ -136,7 +137,7 @@ typedef struct {
         ZSTD_DCtx *zd;
         ZSTD_CCtx *zc;
         char       msg[160];
-} Codec;
+};
 
 static void
 codec_close(Codec *c)
@@ -170,7 +171,7 @@ fail(Codec *c, char const *fmt, ...)
         va_list ap;
 
         va_start(ap, fmt);
-        vsnprintf(c->msg, sizeof c->msg, fmt, ap);
+        ty_vsnprintf(c->msg, sizeof c->msg, fmt, ap);
         va_end(ap);
 
         codec_close(c);
@@ -188,23 +189,32 @@ bits_of(int format)
 }
 
 inline static u8 *
-room(Ty *ty, Blob *out, usize n)
+room(Ty *ty, Codec *c, CodecBytes *out, usize n)
 {
-        vvR(*out, vN(*out) + n);
-        return vv(*out) + vN(*out);
+        if (out->count + n > out->capacity) {
+                usize cap = fit2(max(out->capacity, 256), out->count + n);
+                if (c->gc) {
+                        mRE(out->items, cap);
+                } else {
+                        mresize(out->items, cap);
+                }
+                out->capacity = cap;
+        }
+
+        return out->items + out->count;
 }
 
 inline static bool
-grew(Codec *c, Blob *out, usize n, i64 limit)
+grew(Codec *c, CodecBytes *out, usize n, i64 limit)
 {
-        vN(*out) += n;
+        out->count += n;
         c->total += n;
 
         return limit >= 0 && c->total > limit;
 }
 
 static int
-inflate_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
+inflate_run(Ty *ty, Codec *c, u8 const *in, usize len, CodecBytes *out, i64 limit)
 {
         if (len == 0) {
                 return RUN_OK;
@@ -251,7 +261,7 @@ inflate_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
                 c->z.avail_in = len - off;
 
                 for (;;) {
-                        c->z.next_out  = room(ty, out, CHUNK);
+                        c->z.next_out  = room(ty, c, out, CHUNK);
                         c->z.avail_out = CHUNK;
 
                         int rc = inflate(&c->z, Z_NO_FLUSH);
@@ -286,7 +296,7 @@ inflate_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
 }
 
 static int
-deflate_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
+deflate_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, CodecBytes *out)
 {
         int mode = (op == OP_FINISH) ? Z_FINISH
                  : (op == OP_FLUSH)  ? Z_SYNC_FLUSH
@@ -296,7 +306,7 @@ deflate_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
         c->z.avail_in = len;
 
         for (;;) {
-                c->z.next_out  = room(ty, out, CHUNK);
+                c->z.next_out  = room(ty, c, out, CHUNK);
                 c->z.avail_out = CHUNK;
 
                 int rc = deflate(&c->z, mode);
@@ -319,7 +329,7 @@ deflate_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
 }
 
 static int
-brdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
+brdec_run(Ty *ty, Codec *c, u8 const *in, usize len, CodecBytes *out, i64 limit)
 {
         if (len == 0) {
                 return RUN_OK;
@@ -335,7 +345,7 @@ brdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
 
         for (;;) {
                 size_t aout = CHUNK;
-                u8 *nout = room(ty, out, CHUNK);
+                u8 *nout = room(ty, c, out, CHUNK);
 
                 int rc = BrDec.BrotliDecoderDecompressStream(c->br, &ain, &in, &aout, &nout, NULL);
 
@@ -369,13 +379,13 @@ brdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
 }
 
 static int
-brenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
+brenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, CodecBytes *out)
 {
         size_t ain = len;
 
         for (;;) {
                 size_t aout = CHUNK;
-                u8 *nout = room(ty, out, CHUNK);
+                u8 *nout = room(ty, c, out, CHUNK);
 
                 if (!BrEnc.BrotliEncoderCompressStream(c->br, op, &ain, &in, &aout, &nout, NULL)) {
                         return fail(c, "BrotliEncoderCompressStream failed");
@@ -390,7 +400,7 @@ brenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
 }
 
 static int
-zdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
+zdec_run(Ty *ty, Codec *c, u8 const *in, usize len, CodecBytes *out, i64 limit)
 {
         if (len == 0) {
                 return RUN_OK;
@@ -403,7 +413,7 @@ zdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
         ZSTD_inBuffer zin = { .src = in, .size = len };
 
         for (;;) {
-                ZSTD_outBuffer zout = { .dst = room(ty, out, CHUNK), .size = CHUNK };
+                ZSTD_outBuffer zout = { .dst = room(ty, c, out, CHUNK), .size = CHUNK };
 
                 size_t rc = ZSTD_decompressStream(c->zd, &zout, &zin);
 
@@ -425,7 +435,7 @@ zdec_run(Ty *ty, Codec *c, u8 const *in, usize len, Blob *out, i64 limit)
 }
 
 static int
-zenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
+zenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, CodecBytes *out)
 {
         ZSTD_inBuffer zin = { .src = in, .size = len };
         ZSTD_EndDirective end = (op == OP_FINISH) ? ZSTD_e_end
@@ -433,7 +443,7 @@ zenc_run(Ty *ty, Codec *c, u8 const *in, usize len, int op, Blob *out)
                               :                     ZSTD_e_continue;
 
         for (;;) {
-                ZSTD_outBuffer zout = { .dst = room(ty, out, CHUNK), .size = CHUNK };
+                ZSTD_outBuffer zout = { .dst = room(ty, c, out, CHUNK), .size = CHUNK };
 
                 size_t rc = ZSTD_compressStream2(c->zc, &zout, &zin, end);
 
@@ -578,13 +588,10 @@ codec_init(Codec *c, int level)
         return NULL;
 }
 
-// _codec.open(coding: String, encode: Bool, level: Int = 0) -> Ptr | String
-TY_BUILTIN(codec_open)
+Codec *
+CodecNew(char const *s, usize n, bool encode, int level, char const **err)
 {
-        Codec *p = xmA(sizeof *p);
         Codec c = { .first = true };
-        char const *s = (char const *)ss(coding);
-        usize n = sN(coding);
 
 #define IS(w) (n == sizeof (w) - 1 && memcmp(s, (w), n) == 0)
         if (IS("gzip") || IS("x-gzip")) {
@@ -604,23 +611,102 @@ TY_BUILTIN(codec_open)
         } else if (IS("zstd")) {
                 c.kind = encode ? K_ZSTD_ENC : K_ZSTD_DEC;
         } else {
-                xmF(p);
-                return vSsz("unsupported content coding");
+                *err = "unsupported content coding";
+                return NULL;
         }
 #undef IS
 
+        Codec *p = xmA(sizeof *p);
         *p = c;
 
-        char const *err = codec_init(p, level);
-
-        if (err != NULL) {
+        if ((*err = codec_init(p, level)) != NULL) {
                 xmF(p);
-                return vSsz(err);
+                return NULL;
         }
 
-        return autoptr(ty, p, codec_free);
+        return p;
 }
 
+int
+CodecRun(Ty *ty, Codec *c, void const *data, usize len, int op, CodecBytes *out, bool gc, i64 limit)
+{
+        u8 const *in = data;
+
+        c->gc = gc;
+
+        switch (c->kind) {
+        case K_INFLATE:  return inflate_run(ty, c, in, len, out, limit);
+        case K_BR_DEC:   return brdec_run(ty, c, in, len, out, limit);
+        case K_ZSTD_DEC: return zdec_run(ty, c, in, len, out, limit);
+        }
+
+        if (!c->open) {
+                return fail(c, "encoder is closed");
+        }
+
+        return (c->kind == K_DEFLATE) ? deflate_run(ty, c, in, len, op, out)
+             : (c->kind == K_BR_ENC)  ? brenc_run(ty, c, in, len, op, out)
+             :                          zenc_run(ty, c, in, len, op, out);
+}
+
+bool
+CodecDone(Codec *c)
+{
+        return (c->kind == K_INFLATE)  ? (c->end || c->first)
+             : (c->kind == K_BR_DEC)   ? (c->end || !c->any)
+             : (c->kind == K_ZSTD_DEC) ? (c->left == 0)
+             :                           true;
+}
+
+void
+CodecReset(Codec *c)
+{
+        c->total = 0;
+
+        if (!c->open) {
+                return;
+        }
+
+        switch (c->kind) {
+        case K_INFLATE:  c->end = false; inflateReset(&c->z);                          break;
+        case K_DEFLATE:  deflateReset(&c->z);                                          break;
+        case K_ZSTD_DEC: c->left = 0; ZSTD_DCtx_reset(c->zd, ZSTD_reset_session_only); break;
+        case K_ZSTD_ENC: ZSTD_CCtx_reset(c->zc, ZSTD_reset_session_only);              break;
+        }
+}
+
+void
+CodecFree(Codec *c)
+{
+        if (c != NULL) {
+                codec_free(c);
+        }
+}
+
+char const *
+CodecError(Codec const *c)
+{
+        return c->msg;
+}
+
+bool
+CodecHave(char const *lib)
+{
+        brotli();
+
+        return (strcmp(lib, "brotlidec") == 0) ? HaveBrDec
+             : (strcmp(lib, "brotlienc") == 0) ? HaveBrEnc
+             :                                   true;
+}
+
+// _codec.open(coding: String, encode: Bool, level: Int = 0) -> Ptr | String
+TY_BUILTIN(codec_open)
+{
+        char const *err;
+        Codec *c = CodecNew((char const *)ss(coding), sN(coding), encode, level, &err);
+
+        return (c == NULL) ? vSsz(err) : autoptr(ty, c, codec_free);
+}
 
 // _codec.run(z: Ptr, data: String | Blob | nil, out: Blob, op: Int = 0, limit: Int = -1) -> Int
 TY_BUILTIN(codec_run)
@@ -631,32 +717,14 @@ TY_BUILTIN(codec_run)
 
         bytes_arg(ty, _name__, "data", data, &in, &len);
 
-        switch (c->kind) {
-        case K_INFLATE:  return INTEGER(inflate_run(ty, c, in, len, out, limit));
-        case K_BR_DEC:   return INTEGER(brdec_run(ty, c, in, len, out, limit));
-        case K_ZSTD_DEC: return INTEGER(zdec_run(ty, c, in, len, out, limit));
-        }
-
-        if (!c->open) {
-                return INTEGER(fail(c, "encoder is closed"));
-        }
-
-        return INTEGER(
-                (c->kind == K_DEFLATE) ? deflate_run(ty, c, in, len, op, out)
-              : (c->kind == K_BR_ENC)  ? brenc_run(ty, c, in, len, op, out)
-              :                          zenc_run(ty, c, in, len, op, out)
-        );
+        return INTEGER(CodecRun(ty, c, in, len, op, (CodecBytes *)out, true, limit));
 }
 
 // _codec.finish(z: Ptr) -> Bool
 TY_BUILTIN(codec_finish)
 {
         Codec *c = codec_arg(ty, _name__, z);
-
-        bool ok = (c->kind == K_INFLATE)  ? (c->end || c->first)
-                : (c->kind == K_BR_DEC)   ? (c->end || !c->any)
-                : (c->kind == K_ZSTD_DEC) ? (c->left == 0)
-                :                           true;
+        bool ok = CodecDone(c);
 
         codec_close(c);
 
@@ -666,21 +734,7 @@ TY_BUILTIN(codec_finish)
 // _codec.reset(z: Ptr) -> nil
 TY_BUILTIN(codec_reset)
 {
-        Codec *c = codec_arg(ty, _name__, z);
-
-        c->total = 0;
-
-        if (!c->open) {
-                return NIL;
-        }
-
-        switch (c->kind) {
-        case K_INFLATE:  c->end = false; inflateReset(&c->z);                        break;
-        case K_DEFLATE:  deflateReset(&c->z);                                        break;
-        case K_ZSTD_DEC: c->left = 0; ZSTD_DCtx_reset(c->zd, ZSTD_reset_session_only); break;
-        case K_ZSTD_ENC: ZSTD_CCtx_reset(c->zc, ZSTD_reset_session_only);            break;
-        }
-
+        CodecReset(codec_arg(ty, _name__, z));
         return NIL;
 }
 

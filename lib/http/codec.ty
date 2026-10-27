@@ -1,15 +1,16 @@
 /**
- * HTTP content codings: gzip, deflate, br and zstd, as incremental
- * decoders and encoders. Shared by the client (response decoding, request
- * compression), the server (response compression) and WebSocket
- * permessage-deflate.
- *
- * zlib and zstd are built in; brotli is used when its libraries load
- * (`available()` lists what is usable).
+ * HTTP content codings: gzip, deflate, br and zstd. zlib and zstd are built
+ * in; brotli is used when its libraries load (`available()` lists what is
+ * usable). The server and client compress and decode in the native core;
+ * these are the same codecs for direct use.
  */
-import _codec as native
+import _codec as z
 
-pub ZLIB_VERSION = native.zlib-version()
+pub ZLIB_VERSION = z.zlib-version()
+
+const RUN_TOO_BIG = -2
+
+const DEFAULT_LEVELS = %{'gzip': 6, 'x-gzip': 6, 'deflate': 6, 'raw-deflate': 6, 'br': 4, 'zstd': 3}
 
 pub class CodecError < RuntimeError {
     coding:   String
@@ -24,18 +25,13 @@ pub class CodecError < RuntimeError {
 
 /// Content codings usable in this process, most preferred first.
 pub fn available() -> Array[String] {
-    let out = []
-    out.push('zstd')
-    if native.has?('brotlidec') {
-        out.push('br')
-    }
-    out + ['gzip', 'deflate']
+    z.has?('brotlidec') ? ['zstd', 'br', 'gzip', 'deflate'] : ['zstd', 'gzip', 'deflate']
 }
 
 pub fn supported?(coding: String) -> Bool {
     match coding {
         /^(?:x-gzip|gzip|deflate|identity|zstd)$/i => true,
-        /^br$/i                                    => native.has?('brotlidec'),
+        /^br$/i                                    => z.has?('brotlidec'),
         _                                          => false
     }
 }
@@ -43,198 +39,81 @@ pub fn supported?(coding: String) -> Bool {
 pub fn encodable?(coding: String) -> Bool {
     match coding {
         /^(?:x-gzip|gzip|deflate|identity|zstd)$/i => true,
-        /^br$/i                                    => native.has?('brotlienc'),
+        /^br$/i                                    => z.has?('brotlienc'),
         _                                          => false
     }
 }
 
 /// An `Accept-Encoding` value covering every available coding.
 pub fn accept-encoding() -> String {
-    ['gzip', 'deflate', *(native.has?('brotlidec') ? ['br'] : []), 'zstd'].join(', ')
+    z.has?('brotlidec') ? 'gzip, deflate, br, zstd' : 'gzip, deflate, zstd'
 }
 
-fn blob(data: String | Blob) -> Blob {
-    (data :: Blob) ? data : Blob(data)
+fn open(coding: String, encode: Bool, level: Int = 0) -> Ptr {
+    match z.open(coding.lower(), encode, level) {
+        p: Ptr => p,
+        why    => throw CodecError(coding, why)
+    }
 }
 
-/// Incremental decoder. `feed` returns whatever output the input produced;
-/// `finish` checks that the stream ended cleanly and releases the native
-/// state (call `close()` instead when abandoning a stream). Output beyond
-/// `limit` bytes throws `CodecError` with `too-big?` set.
+/// Incremental decoder: `feed` returns the output its input produced and
+/// `finish` checks that the stream ended cleanly. Output beyond `limit`
+/// bytes throws `CodecError` with `too-big?` set.
 pub class Decoder {
     coding: String
     limit:  Int | nil
-    total:  Int = 0
 
-    __count(out: Blob) -> Blob {
-        total += #out
-        if limit != nil && total > limit {
-            close()
-            throw CodecError(coding, "decoded body exceeds {limit} bytes", true)
-        }
-        out
-    }
-
-    feed(data: String | Blob) -> Blob {
-        __count(blob(data))
-    }
-
-    finish() -> Blob {
-        Blob()
-    }
-
-    reset() {
-        total = 0
-    }
-
-    close() {
-    }
-}
-
-class NativeDecoder < Decoder {
     __z: Ptr
 
-    init(coding: String, limit: Int | nil) {
-        super(coding, limit)
-        __z = match native.open(coding, false) {
-            z: Ptr => z,
-            why    => throw CodecError(coding, why)
-        }
+    init(coding: String, limit: Int | nil = nil) {
+        self.coding = coding
+        self.limit  = limit
+        __z         = open(coding, false)
     }
 
     feed(data: String | Blob) -> Blob {
         let out = Blob()
-        match native.run(__z, data, out, 0, limit ?? -1) {
-            0  => nil,
-            -2 => throw CodecError(coding, "decoded body exceeds {limit} bytes", true),
-            _  => throw CodecError(coding, native.message(__z))
+        match z.run(__z, data, out, 0, limit ?? -1) {
+            0           => out,
+            RUN_TOO_BIG => throw CodecError(coding, "decoded body exceeds {limit} bytes", true),
+            _           => throw CodecError(coding, z.message(__z))
         }
-        total += #out
-        out
-    }
-
-    reset() {
-        total = 0
-        native.reset(__z)
     }
 
     finish() -> Blob {
-        if !native.finish(__z) {
+        if !z.finish(__z) {
             throw CodecError(coding, 'truncated stream')
         }
         Blob()
     }
 
-    close() {
-        native.close(__z)
-    }
-}
-
-/// Decodes a chain of codings (a `Content-Encoding` list, applied in reverse).
-pub class Chain < Decoder {
-    __parts: Array[Decoder]
-
-    init(parts: Array[Decoder], limit: Int | nil) {
-        super(parts.map(&.coding).join(', '), limit)
-        __parts = parts
-    }
-
-    feed(data: String | Blob) -> Blob {
-        let out = blob(data)
-        for d in __parts {
-            out = d.feed(out)
-        }
-        out
-    }
-
-    finish() -> Blob {
-        let out = Blob()
-        for d in __parts {
-            out = d.feed(out)
-            out.push(d.finish())
-        }
-        out
+    reset() {
+        z.reset(__z)
     }
 
     close() {
-        for d in __parts {
-            d.close()
-        }
+        z.close(__z)
     }
-}
-
-/// A decoder for one coding, or nil when it is not supported.
-pub fn decoder(coding: String, limit: Int | nil = nil) -> Decoder | nil {
-    match coding {
-        /^\s*(?:identity)?\s*$/i  => Decoder('identity', limit),
-        /^\s*(?:x-)?gzip\s*$/i    => NativeDecoder('gzip', limit),
-        /^\s*deflate\s*$/i        => NativeDecoder('deflate', limit),
-        /^\s*raw-deflate\s*$/i    => NativeDecoder('raw-deflate', limit),
-        /^\s*br\s*$/i             => native.has?('brotlidec') ? NativeDecoder('br', limit) : nil,
-        /^\s*zstd\s*$/i           => NativeDecoder('zstd', limit),
-        _                         => nil
-    }
-}
-
-/// A decoder for a `Content-Encoding` header value. Throws `CodecError`
-/// for unsupported codings.
-pub fn decoder-for(header: String | nil, limit: Int | nil = nil) -> Decoder {
-    let names = (header ?? '').matches(/[^\s,]+/).filter!(n -> !n.ieq?('identity'))
-    match names {
-        [] => Decoder('identity', limit),
-        [one] => decoder(one, limit) ?? throw CodecError(one, 'unsupported content coding'),
-        many => Chain(
-            many.reverse().map(n -> decoder(n, limit) ?? throw CodecError(n, 'unsupported content coding')),
-            limit
-        )
-    }
-}
-
-pub fn decode(coding: String, data: String | Blob, limit: Int | nil = nil) -> Blob {
-    let d = decoder-for(coding, limit)
-    let out = d.feed(data)
-    out.push(d.finish())
-    out
 }
 
 /// Incremental encoder: `write` returns compressed output produced so far
-/// (`flush: true` forces everything written out, at some cost in ratio);
-/// `finish` ends the stream and releases the native state (`close()` when
-/// abandoning it).
+/// (`flush: true` forces everything out), `finish` ends the stream.
 pub class Encoder {
     coding: String
     level:  Int
 
-    write(data: String | Blob, flush: Bool = false) -> Blob {
-        blob(data)
-    }
-
-    finish() -> Blob {
-        Blob()
-    }
-
-    reset() {
-    }
-
-    close() {
-    }
-}
-
-class NativeEncoder < Encoder {
     __z: Ptr
 
-    init(coding: String, level: Int) {
-        super(coding, level)
-        __z = match native.open(coding, true, level) {
-            z: Ptr => z,
-            why    => throw CodecError(coding, why)
-        }
+    init(coding: String, level: Int | nil = nil) {
+        self.coding = coding
+        self.level  = level ?? DEFAULT_LEVELS[coding.lower()] ?? 0
+        __z         = open(coding, true, self.level)
     }
 
-    __run(input: String | Blob, op: Int) -> Blob {
+    __run(data: String | Blob | nil, op: Int) -> Blob {
         let out = Blob()
-        if native.run(__z, input, out, op) != 0 {
-            throw CodecError(coding, native.message(__z))
+        if z.run(__z, data, out, op) != 0 {
+            throw CodecError(coding, z.message(__z))
         }
         out
     }
@@ -243,39 +122,45 @@ class NativeEncoder < Encoder {
         __run(data, flush ? 1 : 0)
     }
 
-    reset() {
-        native.reset(__z)
-    }
-
     finish() -> Blob {
-        let out = __run(Blob(), 2)
-        close()
+        let out = __run(nil, 2)
+        z.close(__z)
         out
     }
 
+    reset() {
+        z.reset(__z)
+    }
+
     close() {
-        native.close(__z)
+        z.close(__z)
     }
 }
 
-const DEFAULT_LEVELS = %{'gzip': 6, 'deflate': 6, 'raw-deflate': 6, 'br': 4, 'zstd': 3}
-
-pub fn encoder(coding: String, level: Int | nil = nil) -> Encoder {
-    let name = coding.strip().lower()
-    let lvl = level ?? (DEFAULT_LEVELS[name] ?? 0)
-    match name {
-        'identity'       => Encoder('identity', 0),
-        'gzip', 'x-gzip' => NativeEncoder('gzip', lvl),
-        'deflate'        => NativeEncoder('deflate', lvl),
-        'raw-deflate'    => NativeEncoder('raw-deflate', lvl),
-        'br'             => NativeEncoder('br', lvl),
-        'zstd'           => NativeEncoder('zstd', lvl),
-        other            => throw CodecError(other, 'unsupported content coding')
+/// Decodes `data` encoded with `coding`, a `Content-Encoding` list applied
+/// in reverse order.
+pub fn decode(coding: String, data: String | Blob, limit: Int | nil = nil) -> Blob {
+    let out = (data :: Blob) ? data : Blob(data)
+    for name in coding.matches(/[^\s,]+/).reverse() {
+        if name.ieq?('identity') {
+            continue
+        }
+        let d = Decoder(name, limit)
+        try {
+            out = d.feed(out)
+            d.finish()
+        } finally {
+            d.close()
+        }
     }
+    out
 }
 
 pub fn encode(coding: String, data: String | Blob, level: Int | nil = nil) -> Blob {
-    let e = encoder(coding, level)
+    if coding.ieq?('identity') {
+        return (data :: Blob) ? data : Blob(data)
+    }
+    let e = Encoder(coding, level)
     let out = e.write(data)
     out.push(e.finish())
     out
@@ -303,11 +188,8 @@ pub fn negotiate(accept: String | nil, offered: Array[String] = ['zstd', 'br', '
     let best = nil
     let best-q = 0.0
     for name in offered {
-        if !encodable?(name) {
-            continue
-        }
         let w = q[name] ?? q['*'] ?? 0.0
-        if w > best-q {
+        if encodable?(name) && w > best-q {
             best = name
             best-q = w
         }

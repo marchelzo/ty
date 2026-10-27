@@ -1,71 +1,851 @@
-import http.core as core (
-    Config,
-    Response,
-    HttpError,
-    AccessEntry
+import _http as c
+import log
+import os
+import json
+import time
+import ssl
+import http.loop as hl (
+    Loop,
+    Task,
+    Handler,
+    Exchange,
+    ConnectionClosed,
+    CanceledError,
+    suspend,
+    task,
+    in-task?,
+    on-loop?,
+    EV_BODY,
+    EV_READABLE,
+    EV_DRAIN,
+    EV_CLOSE,
+    EV_MESSAGE
 )
-import http.wire (Request)
-import http.ws as wsock (WebSocket)
-import http.form (percent-decode)
-import http.status (status-name)
+import http.message (Request, Headers, HttpError, status-name)
+import http.cookies (format-set-cookie)
+import http.codec as codec
 import http.files as files (StaticFiles)
 import http.session (Sessions)
-import http.metrics as metrics-mod (Metrics)
-import http.codec as codec
-import http.backend (Backend)
-import http.loop (
-    Loop,
-    Conn,
-    Host,
-    Proto,
-    LoopExchange,
-    default-backend,
-    make-backend,
-    HAVE_KQUEUE
-)
-import http.h1 (H1)
-import http.deflate as deflate
-import os hiding (sleep, spawn)
-import thread
-import json
-import log
-import ssl
-import time
 
-import http.h2 (session as h2-session)
+const S_REQUESTS     = 0
+const S_1XX          = 1
+const S_BYTES        = 6
+const S_ERRORS       = 7
+const S_ABORTED      = 8
+const S_IN_FLIGHT    = 9
+const S_WS           = 10
+const S_WS_TOTAL     = 11
+const S_CONNS_TOTAL  = 12
+const S_REJECTED     = 13
+const S_LATENCY      = 14
+const S_BUCKET       = 15
+const S_N            = 29
 
-const NO_PARAMS: Dict[String, String] = %{}
+pub const BUCKETS = [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
 
-const OVERLOADED = 'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 19\r\nConnection: close\r\nRetry-After: 1\r\n\r\nService Unavailable'
+const OP_TEXT   = 0x1
+const OP_BINARY = 0x2
+const OP_PING   = 0x9
 
-const REQUEST_ID = /^[A-Za-z0-9._:\-]{1,128}$/
+const CLOSE_NORMAL   = 1000
+const CLOSE_INTERNAL = 1011
+
+const COMPRESSIBLE = /^\s*(?:text\/[^;\s]*|[^;\s]*\+(?:json|xml)|application\/(?:json|javascript|xml|wasm|x-ndjson))\s*(?:;|$)/i
 
 let ACCESS = log.Logger('http.access')
+
+pub class TimeoutError < RuntimeError {
+    init(what: String = 'operation timed out') {
+        super(what)
+    }
+}
+
+pub use AccessEntry = {
+    id:       String | nil,
+    time:     Float,
+    remote:   String | nil,
+    method:   String,
+    target:   String,
+    route:    String | nil,
+    protocol: String,
+    status:   Int,
+    bytes:    Int,
+    seconds:  Float,
+    referer:  String | nil,
+    agent:    String | nil
+};
+
+pub use AccessLog = String | Bool | ((AccessEntry) -> _) | nil;
+
+/// Every limit and timeout of a `Server` (seconds for timeouts); pass them
+/// as keywords to `Server`.
+pub class Config {
+    threads:                     Int = os.ncpu()
+    backlog:                     Int = 1024
+    reuse-port:                  Bool = false
+    max-connections:             Int = 10000
+    max-header-size:             Int = 64 * 1024
+    max-headers:                 Int = 100
+    max-body-size:               Int = 16 * 1024 * 1024
+    max-requests-per-connection: Int = 0
+    max-write-buffer:            Int = 8 * 1024 * 1024
+    write-high-water:            Int = 256 * 1024
+    header-timeout:              Int | Float = 10
+    request-timeout:             Int | Float = 60
+    idle-timeout:                Int | Float = 60
+    write-timeout:               Int | Float = 60
+    handshake-timeout:           Int | Float = 10
+    linger-timeout:              Int | Float = 2
+    shutdown-timeout:            Int | Float = 10
+    ws-max-message:              Int = 16 * 1024 * 1024
+    ws-compression:              Bool = true
+    ws-compress-min:             Int = 256
+    ws-ping-interval:            Int | Float = 30
+    ws-idle-timeout:             Int | Float = 120
+    sse-keepalive:               Int | Float = 15
+    h2:                          Bool = true
+    h2-max-concurrent-streams:   Int = 128
+    h2-initial-window:           Int = 1024 * 1024
+    h2-max-frame:                Int = 16384
+    blocking-threads:            Int = 16
+    server-name:                 String | nil
+    debug:                       Bool = false
+    access-log:                  AccessLog
+    access-log-fd:               Int = 2
+    request-id-header:           String | Bool = 'X-Request-Id'
+    trust-request-id:            Bool = true
+}
+
+const MODE_BUFFERED  = 0
+const MODE_STREAMING = 1
+const MODE_DONE      = 2
+
+fn wake-all(ts: Array[Task] | nil, l: Loop) {
+    if ts {
+        for t in ts {
+            l.resume(t)
+        }
+    }
+}
+
+/// The response being built for one request. Handlers usually fill
+/// `status-code`, headers and a buffered body (`plain`, `json`, `write`...);
+/// `stream()` and `events()` switch to a body written incrementally.
+pub class Response : Exchange {
+    loop:          Loop
+    id:            Int
+    request:       Request
+    status-code:   Int = 200
+    content-type:  String | nil = 'text/html; charset=utf-8'
+    body:          String | Blob | nil
+    stream-length: Int | nil
+    coding:        String | nil
+    level:         Int | nil
+
+    __headers:  Headers | nil
+    __mode:     Int = MODE_BUFFERED
+    __hooks:    Array[(Response) -> _] | nil
+    __writer:   BodyWriter | nil
+    __closed?:  Bool = false
+    __closers:  Array[() -> _] | nil
+    __closing:  Array[Task] | nil
+    __drainers: Array[Task] | nil
+    __reader:   Task | nil
+    __body:     ((Response) -> _) | nil
+    __stream?:  Bool = false
+
+    headers -> Headers {
+        if __headers {
+            return __headers
+        }
+        let h = Headers()
+        __headers = h
+        h
+    }
+
+    __table -> Dict[String, _] | nil {
+        __headers.?table
+    }
+
+    core -> Ptr {
+        loop.core
+    }
+
+    event(kind: Int, a: _, b: _) {
+        match kind {
+            EV_BODY => {
+                match a {
+                    s: String => request.body = s,
+                    413       => return __reject(413),
+                    _         => return __abandon()
+                }
+                if let $f = __body {
+                    __body = nil
+                    f(self)
+                }
+            },
+            EV_READABLE => {
+                if let $t = __reader {
+                    __reader = nil
+                    loop.resume(t)
+                }
+            },
+            EV_DRAIN => {
+                let ts = __drainers
+                __drainers = nil
+                wake-all(ts, loop)
+            },
+            EV_CLOSE => __closed()
+        }
+    }
+
+    __reject(status: Int) {
+        error(status)
+        finish()
+        loop.detach(id)
+    }
+
+    __abandon() {
+        __closed()
+        loop.detach(id)
+    }
+
+    __closed() {
+        if __closed? {
+            return
+        }
+        __closed? = true
+        if let $fs = __closers {
+            __closers = nil
+            for f in fs {
+                try {
+                    f()
+                } catch e {
+                    log::error!("error in on-close callback", err: e)
+                }
+            }
+        }
+        let rd = __reader
+        __reader = nil
+        if rd != nil {
+            loop.resume(rd)
+        }
+        wake-all(__closing, loop)
+        wake-all(__drainers, loop)
+        __closing = nil
+        __drainers = nil
+    }
+
+    closed? -> Bool {
+        __closed? || (on-loop?(loop) && c.closed?(core, id))
+    }
+
+    /// True once the connection or stream has gone away.
+    gone? -> Bool {
+        __closed?
+    }
+
+    after-body(f: (Response) -> _) {
+        __body = f
+    }
+
+    buffered -> Int {
+        on-loop?(loop) ? c.buffered(core, id) : 0
+    }
+
+    bytes -> Int {
+        c.sent(core, id)
+    }
+
+    started? -> Bool {
+        __mode != MODE_BUFFERED
+    }
+
+    /// True once the response switched to a streamed body (also inside
+    /// `on-headers` hooks).
+    streaming? -> Bool {
+        __stream?
+    }
+
+    /// Runs `f(rsp)` just before the response head is sent.
+    on-headers(f: (Response) -> _) {
+        match __hooks {
+            nil => __hooks = [f],
+            xs  => xs.push(f)
+        }
+    }
+
+    __fire() {
+        if let $hs = __hooks {
+            __hooks = nil
+            for f in hs {
+                f(self)
+            }
+        }
+    }
+
+    status(code: Int | nil = nil) -> Int {
+        if code != nil {
+            if code < 100 || code > 999 {
+                throw ValueError("http: invalid status code: {code}")
+            }
+            status-code = code
+        }
+        status-code
+    }
+
+    header(k: String, v: Any = nil) -> String | nil {
+        if k.ieq?('content-type') {
+            if v != nil {
+                content-type = str(v)
+                if !c.valid-header?(content-type) {
+                    throw ValueError("http: invalid character in header: {content-type:.64}")
+                }
+            }
+            return content-type
+        }
+        if v == nil {
+            return __headers.?get(k)
+        }
+        headers.set(k, v)
+        headers[k]
+    }
+
+    add-header(k: String, v: Any) {
+        headers.add(k, v)
+    }
+
+    remove-header(k: String) {
+        if k.ieq?('content-type') {
+            content-type = nil
+        } else if __headers {
+            __headers.remove(k)
+        }
+    }
+
+    /// Compresses the body with `coding` (gzip, deflate, br, zstd); set from
+    /// an `on-headers` hook together with Content-Encoding.
+    compress(coding: String, level: Int | nil = nil) {
+        self.coding = coding
+        self.level  = level
+    }
+
+    __append(x: Any) {
+        let data = (x :: String | Blob) ? x : str(x)
+        match body {
+            nil       => body = data,
+            b: Blob   => b.push(data),
+            s: String => body = Blob(s).push(data)
+        }
+    }
+
+    write(x: Any) -> Response {
+        if __mode == MODE_STREAMING {
+            writer().write(x)
+        } else {
+            __append(x)
+        }
+        self
+    }
+
+    json(x: Any) -> Response {
+        body = json::encode(x)
+        content-type = 'application/json'
+        self
+    }
+
+    plain(x: Any) -> Response {
+        __append(x)
+        content-type = 'text/plain; charset=utf-8'
+        self
+    }
+
+    html(x: Any) -> Response {
+        __append(x)
+        content-type = 'text/html; charset=utf-8'
+        self
+    }
+
+    redirect(url: String, code: Int = 302) -> Response {
+        status-code = code
+        header('Location', url)
+        self
+    }
+
+    error(code: Int, message: String | nil = nil) -> Response {
+        status-code  = code
+        content-type = 'text/plain; charset=utf-8'
+        body         = message ?? status-name(code)
+        self
+    }
+
+    set-cookie(
+        name: String,
+        value: String,
+        max-age: Int | nil = nil,
+        expires: Int | Float | nil = nil,
+        path: String | Bool = '/',
+        domain: String | nil = nil,
+        secure: Bool | nil = nil,
+        http-only: Bool = true,
+        same-site: String | Bool = 'Lax',
+        partitioned: Bool = false
+    ) -> Response {
+        let cookie = format-set-cookie(
+            name,
+            value,
+            max-age: max-age,
+            expires: expires,
+            path: path,
+            domain: domain,
+            secure: secure ?? ((request.scheme == 'https') ? true : nil),
+            http-only: http-only,
+            same-site: same-site,
+            partitioned: partitioned
+        )
+        headers.add('Set-Cookie', cookie)
+        self
+    }
+
+    clear-cookie(name: String, path: String | Bool = '/', domain: String | nil = nil) -> Response {
+        set-cookie(name, '', max-age: 0, expires: 0, path: path, domain: domain, http-only: false, same-site: false, secure: false)
+    }
+
+    /// Sends a file (see `http.files.send-file` for options).
+    file(path: String, %kwargs) -> Response {
+        files.send-file(request, self, path, **kwargs)
+        self
+    }
+
+    /// Starts a streamed body. With `length` the response carries a
+    /// Content-Length and must write exactly that many bytes.
+    stream(length: Int | nil = nil) -> BodyWriter {
+        if __mode == MODE_BUFFERED {
+            __start(length)
+        }
+        writer()
+    }
+
+    __start(length: Int | nil) {
+        stream-length = length
+        __stream? = true
+        __fire()
+        __mode = MODE_STREAMING
+        if !c.start(core, id, status-code, content-type, __table, length ?? -1, coding, level) {
+            throw ConnectionClosed()
+        }
+    }
+
+    writer() -> BodyWriter {
+        if __writer {
+            return __writer
+        }
+        let w = BodyWriter(self)
+        __writer = w
+        w
+    }
+
+    events() -> EventStream {
+        if __mode == MODE_BUFFERED {
+            content-type = 'text/event-stream'
+            header('Cache-Control', 'no-cache')
+            header('X-Accel-Buffering', 'no')
+            coding = nil
+            __start(nil)
+            __writer = EventStream(self)
+        }
+        match __writer {
+            es: EventStream => es,
+            _               => throw RuntimeError('http: response is already streaming')
+        }
+    }
+
+    /// Streams `length` bytes of the open descriptor `fd` from `offset`
+    /// after `stream(length: ...)`. The response takes ownership of `fd`.
+    send-file(fd: Int, offset: Int, length: Int) {
+        __mode = MODE_DONE
+        c.send-file(core, id, fd, offset, length)
+    }
+
+    finish() {
+        match __mode {
+            MODE_BUFFERED => {
+                __fire()
+                __mode = MODE_DONE
+                c.respond(core, id, status-code, content-type, __table, body, coding)
+            },
+            MODE_STREAMING => {
+                __mode = MODE_DONE
+                c.end(core, id)
+            },
+            _ => {}
+        }
+    }
+
+    reset() {
+        if __mode == MODE_BUFFERED {
+            body         = nil
+            __headers    = nil
+            coding       = nil
+            content-type = 'text/html; charset=utf-8'
+        }
+    }
+
+    abort() {
+        __mode = MODE_DONE
+        c.abort(core, id)
+    }
+
+    /// Waits until the output buffered for this response drops to `below`
+    /// bytes; throws ConnectionClosed if the peer goes away first.
+    wait-drain(below: Int) {
+        while !c.drain(core, id, below) {
+            if __closed? {
+                break
+            }
+            let t = task()!
+            match __drainers {
+                nil => __drainers = [t],
+                xs  => xs.push(t)
+            }
+            suspend()
+        }
+        if __closed? || c.closed?(core, id) {
+            throw ConnectionClosed()
+        }
+    }
+
+    wait-closed() {
+        if __closed? {
+            return
+        }
+        c.notify(core, id)
+        while !__closed? {
+            let t = task()!
+            match __closing {
+                nil => __closing = [t],
+                xs  => xs.push(t)
+            }
+            suspend()
+        }
+    }
+
+    on-close(f: () -> _) {
+        if __closed? {
+            return f()
+        }
+        c.notify(core, id)
+        match __closers {
+            nil => __closers = [f],
+            xs  => xs.push(f)
+        }
+    }
+
+    read-body(max: Int) -> String | nil {
+        if !in-task?(loop) {
+            throw RuntimeError('http: request bodies must be read from the handler task')
+        }
+        while true {
+            match c.read(core, id, max) {
+                s: String => return s,
+                nil       => return nil,
+                -1        => do {
+                    if __closed? {
+                        throw ConnectionClosed()
+                    }
+                    __reader = task()
+                    suspend()
+                },
+                -2 => throw HttpError(413),
+                _  => throw ConnectionClosed()
+            }
+        }
+        nil
+    }
+}
+
+/// Streaming response body. Every method may be called from any thread:
+/// calls from other threads are forwarded to the connection's loop. Writes
+/// from the handler's task wait while the peer is slow; writes from
+/// elsewhere never block, and a peer whose backlog exceeds
+/// `max-write-buffer` is disconnected.
+pub class BodyWriter {
+    response: Response
+
+    loop -> Loop {
+        response.loop
+    }
+
+    closed? -> Bool {
+        response.closed?
+    }
+
+    buffered -> Int {
+        response.buffered
+    }
+
+    bytes -> Int {
+        on-loop?(loop) ? response.bytes : 0
+    }
+
+    write(data: Any) -> Bool {
+        let chunk = (data :: String | Blob) ? data : str(data)
+        let l = loop
+
+        if !on-loop?(l) {
+            if response.gone? {
+                return false
+            }
+            l.post(-> write(chunk))
+            return true
+        }
+
+        let n = c.write(l.core, response.id, chunk)
+
+        if n < 0 {
+            if in-task?(l) {
+                throw ConnectionClosed()
+            }
+            return false
+        }
+
+        if in-task?(l) {
+            if n > server-config(l).write-high-water {
+                response.wait-drain(server-config(l).write-high-water / 2)
+            }
+        } else if n > server-config(l).max-write-buffer {
+            log::warn!('closing slow stream: write buffer limit exceeded')
+            response.abort()
+            return false
+        }
+
+        true
+    }
+
+    flush() {
+        if in-task?(loop) && !response.gone? {
+            response.wait-drain(0)
+        }
+    }
+
+    end() {
+        let l = loop
+        if !on-loop?(l) {
+            l.post(-> end())
+            return
+        }
+        response.finish()
+    }
+
+    wait() {
+        if !in-task?(loop) {
+            throw RuntimeError('http: wait() must be called from the stream\'s own task')
+        }
+        response.wait-closed()
+    }
+
+    on-close(f: () -> _) {
+        let l = loop
+        if !on-loop?(l) {
+            l.post(-> response.on-close(f))
+            return
+        }
+        response.on-close(f)
+    }
+}
+
+/// Server-Sent Events stream (text/event-stream); thread-safe like
+/// BodyWriter. Idle streams get a comment every `sse-keepalive` seconds.
+pub class EventStream < BodyWriter {
+    init(rsp: Response) {
+        super(rsp)
+        let secs = float(server-config(rsp.loop).sse-keepalive)
+        if secs > 0.0 {
+            c.keepalive(rsp.core, rsp.id, secs)
+        }
+    }
+
+    send(data: Any = nil, event: String | nil = nil, id: Any = nil, retry: Int | nil = nil) -> Bool {
+        write(event-chunk(data, event, id, retry))
+    }
+
+    comment(text: String = '') -> Bool {
+        write(": {text.sub(/[\r\n]/, ' ')}\n\n")
+    }
+}
+
+/// The `data:`/`event:`/`id:`/`retry:` lines of one Server-Sent Event;
+/// non-string data is sent as JSON.
+pub fn event-chunk(data: _ = nil, event: String | nil = nil, id: String | Int | nil = nil, retry: Int | nil = nil) -> String {
+    let text = match data {
+        nil       => nil,
+        s: String => s,
+        b: Blob   => b.str!(),
+        x         => json::encode(x)
+    }
+    c.sse(text, event, (id == nil) ? nil : str(id), retry)
+}
+
+/// A server-side WebSocket. `send`, `ping` and `close` may be called from
+/// any thread; `recv` must be called from the handler's task.
+pub class WebSocket : Exchange {
+    loop:         Loop
+    id:           Int
+    request:      Request
+    protocol:     String | nil
+    close-code:   Int | nil
+    close-reason: String | nil
+
+    __inbox:    Queue[String | Blob] = Queue()
+    __size:     Int = 0
+    __paused?:  Bool = false
+    __closed?:  Bool = false
+    __waiting:  Array[Task] = []
+    __drainers: Array[Task] = []
+    __closers:  Array[() -> _] = []
+
+    event(kind: Int, a: _, b: _) {
+        match kind {
+            EV_MESSAGE => {
+                __inbox.push(a)
+                __size += a.size()
+                if !__paused? && __size >= server-config(loop).ws-max-message {
+                    __paused? = true
+                    c.pause(loop.core, id, true)
+                }
+                if #__waiting > 0 {
+                    loop.resume(__waiting.shift())
+                }
+            },
+            EV_DRAIN => {
+                let ts = __drainers
+                __drainers = []
+                wake-all(ts, loop)
+            },
+            EV_CLOSE => __closed(a, b)
+        }
+    }
+
+    __closed(code: Int | nil, reason: String | nil) {
+        if __closed? {
+            return
+        }
+        __closed? = true
+        close-code ?= code
+        close-reason ?= reason
+        let ws = __waiting + __drainers
+        __waiting = []
+        __drainers = []
+        wake-all(ws, loop)
+        let fs = __closers
+        __closers = []
+        for f in fs {
+            try {
+                f()
+            } catch e {
+                log::error!("error in websocket on-close callback", err: e)
+            }
+        }
+    }
+
+    closed? -> Bool {
+        __closed?
+    }
+
+    buffered -> Int {
+        on-loop?(loop) ? c.buffered(loop.core, id) : 0
+    }
+
+    recv() -> String | Blob | nil {
+        if !in-task?(loop) {
+            throw RuntimeError('http: WebSocket.recv() must be called from the handler task')
+        }
+        while #__inbox == 0 {
+            if __closed? {
+                return nil
+            }
+            __waiting.push(task()!)
+            suspend()
+        }
+        let msg = __inbox.pop()
+        __size -= msg.size()
+        if __paused? && __size < server-config(loop).ws-max-message / 2 {
+            __paused? = false
+            c.pause(loop.core, id, false)
+        }
+        msg
+    }
+
+    __send(op: Int, msg: String | Blob) -> Bool {
+        let l = loop
+        if !on-loop?(l) {
+            if __closed? {
+                return false
+            }
+            l.post(-> __send(op, msg))
+            return true
+        }
+        let n = c.ws-send(l.core, id, msg, op)
+        if n < 0 {
+            if in-task?(l) && op != OP_PING {
+                throw ConnectionClosed('websocket closed')
+            }
+            return false
+        }
+        let cfg = server-config(l)
+        if in-task?(l) {
+            while n > cfg.write-high-water && !__closed? {
+                if c.drain(l.core, id, cfg.write-high-water / 2) {
+                    break
+                }
+                __drainers.push(task()!)
+                suspend()
+                n = c.buffered(l.core, id)
+            }
+        } else if n > cfg.max-write-buffer {
+            log::warn!('closing slow websocket: write buffer limit exceeded')
+            c.abort(l.core, id)
+            return false
+        }
+        true
+    }
+
+    send(msg: String | Blob) -> Bool {
+        __send((msg :: String) ? OP_TEXT : OP_BINARY, msg)
+    }
+
+    ping(data: String | Blob = '') -> Bool {
+        __send(OP_PING, data)
+    }
+
+    close(code: Int = CLOSE_NORMAL, reason: String = '') {
+        loop.call(-> c.ws-close(loop.core, id, code, reason))
+    }
+
+    on-close(f: () -> _) {
+        loop.call(fn () {
+            if __closed? {
+                f()
+            } else {
+                __closers.push(f)
+            }
+        })
+    }
+}
+
+fn server-config(l: Loop) -> Config {
+    match l.handler {
+        s: Server => s.config,
+        _         => Config()
+    }
+}
 
 pub use RequestHandler = _;
 pub use SocketHandler  = _;
 pub use Middleware     = (Request, Response, () -> _) -> _;
 pub use ErrorHandler   = (Request, Response, RuntimeError) -> _;
 
-use H2Session = (Conn, Host) -> Proto;
-
-fn compressible-type?(ctype: String) -> Bool {
-    ctype :: /^\s*(?:text\/[^;\s]*|[^;\s]*\+(?:json|xml)|application\/(?:json|javascript|xml|wasm|x-ndjson))\s*(?:;|$)/i
-}
-
-let probe-lock = Mutex()
-let uring-probe: Ok[nil] | Err[String] | nil = nil
-
-fn probe-uring() -> Ok[nil] | Err[String] {
-    let ^_ = probe-lock.lock()
-    uring-probe ?? (uring-probe = try {
-        let b = make-backend('io_uring', 8)
-        b.close()
-        Ok(nil)
-    } catch e {
-        Err(str(e))
-    })
-}
+const NO_PARAMS: Dict[String, String] = %{}
 
 fn make-pattern(route: String) -> (Array[String], RegexV) {
     let route   = route.sub(/<(\w+)>/, [_, name] -> "<{name}:[^/]+>")
@@ -109,7 +889,6 @@ class Routes[H] {
             t[(route.size() > 1 && route.ends?('/')) ? route.comb(/\/$/) : "{route}/"] = fun
             return
         }
-
         let (params, pattern) = make-pattern(route)
         let rs = dynamic[method] ?? (dynamic[method] = [])
         rs.push({route, params, pattern, fun})
@@ -117,20 +896,15 @@ class Routes[H] {
     }
 
     find(method: String, url: String) -> (H, Dict[String, String], String) | nil {
-        if let $t = exact[method] {
-            if let $f = t[url] {
-                return (f, NO_PARAMS, url)
-            }
+        if let $t = exact[method] and let $f = t[url] {
+            return (f, NO_PARAMS, url)
         }
-
         let $rs = dynamic[method] or return nil
-
         for r in rs {
             if let $m = url.match(r.pattern) {
-                return (r.fun, %{r.params[i]: percent-decode(m[i + 1]!) for i in ..#r.params}, r.route)
+                return (r.fun, %{r.params[i]: c.percent-decode(m[i + 1]!) for i in ..#r.params}, r.route)
             }
         }
-
         nil
     }
 
@@ -169,31 +943,63 @@ class Table {
 
 let __tls::table: Table | nil = nil
 
-/// An HTTP server. Positional arguments are `(host, port)`, `(port)`, or an
-/// already-bound listening socket (also `sock: fd`, e.g. a Unix socket);
-/// keywords are `Config` options plus `tls`, which takes an `ssl.Context`
-/// or `{cert, key}` (PEM text or paths).
-pub class Server : Host {
+fn listen(addr: String, port: Int, cfg: Config) -> Int {
+    let v6? = addr.contains?(':')
+    let host = addr.sub(/^\[(.*)\]$/, &1)
+
+    let $info = match os.getaddrinfo(host, str(port), v6? ? os.AF_INET6 : os.AF_INET, os.SOCK_STREAM, 0) {
+        Ok([info, *]) => info,
+        _             => nil
+    } or throw OSError("http: cannot resolve listen address {addr}")
+
+    let fd = os.socket(v6? ? os.AF_INET6 : os.AF_INET, os.SOCK_STREAM, 0)
+    if fd < 0 {
+        throw OSError('socket')
+    }
+
+    os.setsockopt(fd, os.SOL_SOCKET, os.SO_REUSEADDR, 1)
+
+    if cfg.reuse-port {
+        os.setsockopt(fd, os.SOL_SOCKET, __linux__ ? 15 : 0x200, 1)
+    }
+
+    if os.bind(fd, info) != 0 {
+        let e = OSError("http: bind({addr}:{port})")
+        os.close(fd)
+        throw e
+    }
+
+    if os.listen(fd, cfg.backlog) != 0 {
+        let e = OSError('http: listen()')
+        os.close(fd)
+        throw e
+    }
+
+    fd
+}
+
+/// An HTTP server. Positional arguments are `(host, port)`, `(port)`, or
+/// an already-bound listening socket (also `sock: fd`, e.g. a Unix
+/// socket); keywords are `Config` options plus `tls`, which takes an
+/// `ssl.Context` or `{cert, key}` (PEM text or paths).
+pub class Server : Handler {
     config: Config
 
-    __tls:        ssl.Context | nil
-    __sock:       Int
-    __owns-sock:  Bool
-    __table:      Table
-    __version:    Atomic = Atomic(0)
-    __lock:       Mutex = Mutex()
-    __loops:      Array[Loop] = []
-    __active:     Atomic = Atomic(0)
-    __served:     Atomic = Atomic(0)
-    __running:    Atomic = Atomic(0)
-    __stopping:   Atomic = Atomic(0)
-    __streams:    Atomic = Atomic(0)
-    __h2:         H2Session | nil
-    __not-found:  RequestHandler | nil
-    __on-error:   ErrorHandler | nil
-    __metrics:    Metrics = Metrics()
-    __rid:        String = ssl.random-bytes(4).hex()
-    __log-mtx:    Mutex = Mutex()
+    __tls:       ssl.Context | nil
+    __sock:      Int
+    __owns?:     Bool
+    __group:     Ptr
+    __table:     Table
+    __version:   Atomic = Atomic(0)
+    __lock:      Mutex = Mutex()
+    __loops:     Array[Loop] = []
+    __totals:    Array[Int] = []
+    __running:   Atomic = Atomic(0)
+    __stopping:  Atomic = Atomic(0)
+    __streams:   Bool = false
+    __not-found: RequestHandler | nil
+    __on-error:  ErrorHandler | nil
+    __log-mtx:   Mutex = Mutex()
 
     init(
         *args: Int | String,
@@ -209,82 +1015,26 @@ pub class Server : Host {
             log.default-level('http.access', log.INFO)
         }
 
-        if self.config.h2 {
-            __h2 = h2-session
-        }
-
-        if self.config.backend == 'auto' && default-backend() == 'io_uring' {
-            if let Err(why) = probe-uring() {
-                if !HAVE_KQUEUE {
-                    throw RuntimeError("http: io_uring is unavailable ({why}) and libkqueue is not installed")
-                }
-                log::warn!("io_uring unavailable; using kqueue via libkqueue", reason: why)
-                self.config.backend = 'kqueue'
-            }
-        }
-
-        if backend == 'kqueue' && !HAVE_KQUEUE {
-            throw RuntimeError('http: kqueue backend unavailable: libkqueue is not installed')
-        }
-
         __tls = match tls {
             nil              => nil,
             ctx: ssl.Context => ctx,
-            {cert, key}      => ssl.Context.server(cert, key, alpn: (__h2 != nil) ? ['h2', 'http/1.1'] : ['http/1.1'])
+            {cert, key}      => ssl.Context.server(cert, key, alpn: self.config.h2 ? ['h2', 'http/1.1'] : ['http/1.1'])
         }
 
-        (__sock, __owns-sock) = match (sock, args) {
-            (fd: Int, _)                   => (__adopt(fd), false),
-            (_, [])                        => (__listen('0.0.0.0', 8080), true),
-            (_, [port: Int])               => (__listen('0.0.0.0', port), true),
-            (_, [addr: String, port: Int]) => (__listen(addr, port), true),
-            (_, [fd: Int, *])              => (__adopt(fd), false),
+        (__sock, __owns?) = match (sock, args) {
+            (fd: Int, _)                   => (fd, false),
+            (_, [])                        => (listen('0.0.0.0', 8080, self.config), true),
+            (_, [port: Int])               => (listen('0.0.0.0', port, self.config), true),
+            (_, [addr: String, port: Int]) => (listen(addr, port, self.config), true),
+            (_, [fd: Int, *])              => (fd, false),
             _                              => throw ValueError("http: bad listen address: {args}")
         }
-    }
 
-    __adopt(fd: Int) -> Int {
-        os.listen(fd, config.backlog)
-        fd
-    }
-
-    __listen(addr: String, port: Int) -> Int {
-        let v6? = addr.contains?(':')
-        let host = addr.sub(/^\[(.*)\]$/, &1)
-
-        let $info = match getaddrinfo(host, str(port), v6? ? AF_INET6 : AF_INET, SOCK_STREAM, 0) {
-            Ok([info, *]) => info,
-            _             => nil
-        } or throw OSError("http: cannot resolve listen address {addr}")
-
-        let fd = socket(v6? ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            throw OSError('socket')
+        if !__owns? {
+            os.listen(__sock, self.config.backlog)
         }
 
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, 1)
-
-        if config.reuse-port {
-#|if __linux__
-            setsockopt(fd, SOL_SOCKET, 15, 1)
-#|else
-            setsockopt(fd, SOL_SOCKET, 0x200, 1)
-#|]
-        }
-
-        if bind(fd, info) != 0 {
-            let e = OSError("http: bind({addr}:{port})")
-            os.close(fd)
-            throw e
-        }
-
-        if os.listen(fd, config.backlog) != 0 {
-            let e = OSError('http: listen()')
-            os.close(fd)
-            throw e
-        }
-
-        fd
+        __group = c.group(__sock, members(self.config), __tls.?ptr, __tls)
     }
 
     tls -> ssl.Context | nil {
@@ -296,62 +1046,141 @@ pub class Server : Host {
     }
 
     address -> (String, String) {
-        getnameinfo(getsockname(__sock), NI_NUMERICHOST | NI_NUMERICSERV)
+        os.getnameinfo(os.getsockname(__sock), os.NI_NUMERICHOST | os.NI_NUMERICSERV)
     }
 
     port -> Int {
-        int(address.1)
+        int(address.1, 10)
     }
 
     url -> String {
         let (host, port) = address
         let h = (host == '0.0.0.0' || host == '::') ? '127.0.0.1' : host
-        "{(tls != nil) ? 'https' : 'http'}://{h.contains?(':') ? "[{h}]" : h}:{port}"
+        "{(__tls != nil) ? 'https' : 'http'}://{h.contains?(':') ? "[{h}]" : h}:{port}"
     }
 
     h2? -> Bool {
-        __h2 != nil
+        config.h2
     }
 
-    backend -> String {
-        (config.backend == 'auto') ? default-backend() : config.backend
+    /// The I/O backend of the running loops: 'io_uring', 'epoll' or 'kqueue'.
+    backend -> String | nil {
+        let ^_ = __lock.lock()
+        (#__loops > 0) ? __loops[0].backend : nil
     }
 
     active-connections -> Int {
-        __active.load()
-    }
-
-    requests-served -> Int {
-        __served.load()
+        c.active(__group)
     }
 
     running? -> Bool {
         __running.load() != 0
     }
 
-    connection-opened(loop: Loop) -> Bool {
-        if __active.fetch-add(1) >= config.max-connections {
-            __active.fetch-sub(1)
-            loop.metrics.rejected.fetch-add(1)
-            return false
-        }
-        loop.metrics.connections-total.fetch-add(1)
-        true
+    stopping? -> Bool {
+        __stopping.load() != 0
     }
 
-    overload-response -> String | nil {
-        (tls == nil) ? OVERLOADED : nil
-    }
-
-    metrics -> Metrics {
+    __counters() -> Array[Int] {
         let ^_ = __lock.lock()
-        metrics-mod.combine([__metrics, *__loops.map(&.metrics)])
+        let out = [*__totals]
+        for l in __loops {
+            l.stats(out)
+        }
+        while #out < S_N {
+            out.push(0)
+        }
+        out
+    }
+
+    requests-served -> Int {
+        __counters()[S_REQUESTS]
     }
 
     /// Point-in-time counters (requests, responses by class, latency, bytes,
     /// connections, websockets). Safe to call from any thread.
     stats() -> Dict[String, Int | Float | Dict[String, Int]] {
-        metrics.snapshot(__active.load())
+        let s = __counters()
+        let n = s[S_REQUESTS]
+        %{
+            'requests':          n,
+            'responses':         %{"{k}xx": s[S_1XX + k - 1] for k in 1..6},
+            'bytes_out':         s[S_BYTES],
+            'errors':            s[S_ERRORS],
+            'aborted':           s[S_ABORTED],
+            'in_flight':         s[S_IN_FLIGHT],
+            'websockets':        s[S_WS],
+            'websockets_total':  s[S_WS_TOTAL],
+            'connections':       c.active(__group),
+            'connections_total': s[S_CONNS_TOTAL],
+            'rejected':          s[S_REJECTED],
+            'latency_avg_ms':    (n == 0) ? 0.0 : float(s[S_LATENCY]) / float(n) / 1000.0
+        }
+    }
+
+    /// The counters in the Prometheus text format.
+    prometheus(prefix: String = 'http') -> String {
+        let s = __counters()
+        let p = prefix
+        let out = []
+        let fmt = (x: Float) -> do { let t = str(x); (t.contains?('.') || t.contains?('e')) ? t : "{t}.0" }
+
+        out.push("# HELP {p}_requests_total Completed HTTP requests by status class.")
+        out.push("# TYPE {p}_requests_total counter")
+        for k in 1..6 {
+            out.push("{p}_requests_total\{code=\"{k}xx\"\} {s[S_1XX + k - 1]}")
+        }
+
+        out.push("# HELP {p}_request_duration_seconds Time from request dispatch to response completion.")
+        out.push("# TYPE {p}_request_duration_seconds histogram")
+        let acc = 0
+        for b; i in BUCKETS {
+            acc += s[S_BUCKET + i]
+            out.push("{p}_request_duration_seconds_bucket\{le=\"{fmt(b)}\"\} {acc}")
+        }
+        acc += s[S_BUCKET + #BUCKETS]
+        out.push("{p}_request_duration_seconds_bucket\{le=\"+Inf\"\} {acc}")
+        out.push("{p}_request_duration_seconds_sum {fmt(float(s[S_LATENCY]) / 1000000.0)}")
+        out.push("{p}_request_duration_seconds_count {acc}")
+
+        for (name, kind, help, v) in [
+            ('response_bytes_total', 'counter', 'Response body bytes sent.', s[S_BYTES]),
+            ('handler_errors_total', 'counter', 'Requests whose handler raised an unexpected exception.', s[S_ERRORS]),
+            ('aborted_total', 'counter', 'Requests whose connection closed before completion.', s[S_ABORTED]),
+            ('requests_in_flight', 'gauge', 'Requests currently being handled.', s[S_IN_FLIGHT]),
+            ('connections', 'gauge', 'Open connections.', c.active(__group)),
+            ('connections_total', 'counter', 'Accepted connections.', s[S_CONNS_TOTAL]),
+            ('connections_rejected_total', 'counter', 'Connections refused at max-connections.', s[S_REJECTED]),
+            ('websockets', 'gauge', 'Open WebSocket connections.', s[S_WS]),
+            ('websockets_total', 'counter', 'Accepted WebSocket connections.', s[S_WS_TOTAL])
+        ] {
+            out.push("# HELP {p}_{name} {help}")
+            out.push("# TYPE {p}_{name} {kind}")
+            out.push("{p}_{name} {v}")
+        }
+
+        out.join('\n') + '\n'
+    }
+
+    __mutate(f: (Table) -> _) {
+        let ^_ = __lock.lock()
+        let t = __table.next()
+        f(t)
+        __table = t
+        __version.store(t.version)
+    }
+
+    __current() -> Table {
+        let v = __version.load()
+        if table && table.owner == self && table.version == v {
+            return table
+        }
+        let t = do {
+            let ^_ = __lock.lock()
+            __table
+        }
+        table = t
+        t
     }
 
     /// Adds middleware `f(req, rsp, next)`; call `next()` to continue to the
@@ -368,9 +1197,7 @@ pub class Server : Host {
         s
     }
 
-    /// Serves files from `dir` under `prefix` (see `StaticFiles` and
-    /// `send-file` for options such as `max-age`, `precompressed`, `index`,
-    /// `fallback`, `dotfiles`).
+    /// Serves files from `dir` under `prefix` (see `StaticFiles`).
     static-files(prefix: String, dir: String, %kwargs: _) -> StaticFiles {
         let sf = StaticFiles(dir, **kwargs)
         let p = prefix.comb(/\/+$/)
@@ -379,12 +1206,12 @@ pub class Server : Host {
         sf
     }
 
-    /// Compresses responses with the best coding the client accepts
-    /// (`Accept-Encoding`) out of `codings`, when the Content-Type is textual
-    /// (or matches `types`): buffered bodies of at least `min-size` bytes,
-    /// and streamed bodies without a declared length (each write is flushed,
-    /// so streaming stays incremental). Event streams, ranges, and bodies
-    /// that already carry a Content-Encoding are sent as they are.
+    /// Compresses responses with the best coding the client accepts out of
+    /// `codings`, when the Content-Type is textual (or matches `types`):
+    /// buffered bodies of at least `min-size` bytes, and streamed bodies
+    /// without a declared length (each write is flushed). Event streams,
+    /// ranges, and bodies that already carry a Content-Encoding are sent as
+    /// they are.
     compression(
         codings: Array[String] = ['zstd', 'br', 'gzip'],
         min-size: Int = 1024,
@@ -392,7 +1219,7 @@ pub class Server : Host {
         types: ((String) -> Bool) | nil = nil
     ) -> Middleware {
         let usable = codings.filter(codec.encodable?)
-        let compressible? = types ?? compressible-type?
+        let compressible? = types ?? (ctype -> ctype :: COMPRESSIBLE)
         self.use(fn (req, rsp, next) {
             let accept = req.header('accept-encoding')
             if accept != nil && req.method != 'HEAD' {
@@ -400,29 +1227,22 @@ pub class Server : Host {
                     if r.header('content-encoding') != nil {
                         return
                     }
+                    let ctype = r.content-type ?? ''
                     if r.streaming? {
-                        let ctype = r.content-type ?? ''
                         if r.stream-length != nil || ctype.starts?('text/event-stream') || !compressible?(ctype) {
                             return
                         }
-                        r.add-header('Vary', 'Accept-Encoding')
-                        let $coding = codec.negotiate(accept, usable) or return
-                        r.header('Content-Encoding', coding)
-                        r.compress-with(codec.encoder(coding, level))
-                        return
-                    }
-                    let code = r.status-code
-                    if code < 200 || code == 204 || code == 304 || code == 206 || #r.body < min-size {
-                        return
-                    }
-                    if !compressible?(r.content-type ?? '') {
-                        return
+                    } else {
+                        let code = r.status-code
+                        if code < 200 || code == 204 || code == 304 || code == 206 || (r.body.?size() ?? 0) < min-size || !compressible?(ctype) {
+                            return
+                        }
                     }
                     r.add-header('Vary', 'Accept-Encoding')
                     let $coding = codec.negotiate(accept, usable) or return
-                    r.body = codec.encode(coding, r.body, level)
                     r.header('Content-Encoding', coding)
-                    if let etag: String = r.header('etag') {
+                    r.compress(coding, level)
+                    if let $etag = r.header('etag') {
                         r.header('ETag', etag.sub(/"$/, "-{coding}\""))
                     }
                 })
@@ -444,25 +1264,299 @@ pub class Server : Host {
         })
     }
 
-    /// Adds a Prometheus text-format endpoint for `metrics`.
+    /// Adds a Prometheus text-format endpoint.
     metrics-endpoint(path: String = '/metrics') {
         route('GET', path, fn (req, rsp) {
             rsp.header('Cache-Control', 'no-store')
             rsp.content-type = 'text/plain; version=0.0.4; charset=utf-8'
-            rsp.write(metrics.prometheus(__active.load()))
+            rsp.write(prometheus())
         })
     }
 
-    __request-id(req: Request, loop: Loop) -> String {
-        if config.trust-request-id {
-            if let $given = req.header('x-request-id') {
-                if given.match?(REQUEST_ID) {
-                    return given
+    /// Registers `f(req, rsp, **params)` for `method` and `route`. With
+    /// `stream: true` the handler starts once the headers arrive and reads
+    /// the body with `req.read(max)` / `req.read-all()`. `<name>` matches one
+    /// path segment and `<name:regex>` a custom pattern; captures are
+    /// URL-decoded and passed as keywords. A handler may return an Int
+    /// status. Routes may be added while the server is running.
+    __route(method: String, path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler {
+        let m = method.upper()
+        __mutate(t -> t.routes.add(m, path, Endpoint(f, stream)))
+        if stream && !__streams {
+            __streams = true
+            c.streams(__group, true)
+        }
+        f
+    }
+
+    route(method: String, path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler {
+        __route(method, path, f, stream)
+    }
+
+    route(f: RequestHandler, method: String, path: String, stream: Bool = false) -> RequestHandler {
+        __route(method, path, f, stream)
+    }
+
+    get(    path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler { route('GET',     path, f, stream) }
+    post(   path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler { route('POST',    path, f, stream) }
+    put(    path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler { route('PUT',     path, f, stream) }
+    delete( path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler { route('DELETE',  path, f, stream) }
+    patch(  path: String, f: RequestHandler, stream: Bool = false) -> RequestHandler { route('PATCH',   path, f, stream) }
+    head(   path: String, f: RequestHandler)                       -> RequestHandler { route('HEAD',    path, f)         }
+    options(path: String, f: RequestHandler)                       -> RequestHandler { route('OPTIONS', path, f)         }
+
+    get    (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('GET',     path, f, stream) }
+    post   (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('POST',    path, f, stream) }
+    put    (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PUT',     path, f, stream) }
+    delete (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('DELETE',  path, f, stream) }
+    patch  (f: RequestHandler, path: String, stream: Bool = false) -> RequestHandler { route('PATCH',   path, f, stream) }
+    head   (f: RequestHandler, path: String)                       -> RequestHandler { route('HEAD',    path, f)         }
+    options(f: RequestHandler, path: String)                       -> RequestHandler { route('OPTIONS', path, f)         }
+
+    ws(path: String, f: SocketHandler, protocols: Array[String] = []) -> SocketHandler {
+        __mutate(t -> t.sockets.add('GET', path, Socket(f, protocols)))
+        f
+    }
+
+    ws(f: SocketHandler, path: String, protocols: Array[String] = []) -> SocketHandler {
+        ws(path, f, protocols)
+    }
+
+    not-found(f: RequestHandler) -> RequestHandler {
+        __not-found = f
+        f
+    }
+
+    on-error(f: ErrorHandler) -> ErrorHandler {
+        __on-error = f
+        f
+    }
+
+    request(l: Loop, id: Int, req: Request, pending: Int) {
+        let rsp = Response(l, id, req)
+        req.exchange = rsp
+        l.attach(id, rsp)
+
+        if req.headers.table['upgrade'] != nil && __upgrade(l, rsp) {
+            return
+        }
+
+        if pending != 0 {
+            let streaming? = match __current().routes.find(req.method, req.url) {
+                (e, *) => e.stream?,
+                _      => false
+            }
+            if !streaming? {
+                rsp.after-body(r -> l.spawn('request', __serve, r))
+                c.buffer(l.core, id)
+                return
+            }
+        }
+
+        l.spawn('request', __serve, rsp)
+    }
+
+    __handle(req: Request, rsp: Response) {
+        let t = __current()
+        if !t.middleware {
+            return __route(t.routes, req, rsp)
+        }
+        __chain(t.middleware, 0, t.routes, req, rsp)
+    }
+
+    __chain(chain: Array[Middleware], i: Int, routes: Routes[Endpoint], req: Request, rsp: Response) {
+        if i == #chain {
+            return __route(routes, req, rsp)
+        }
+        let called = [false]
+        chain[i](req, rsp, fn () {
+            if !called[0] {
+                called[0] = true
+                __chain(chain, i + 1, routes, req, rsp)
+            }
+        })
+    }
+
+    __route(routes: Routes[Endpoint], req: Request, rsp: Response) {
+        let method = req.method
+        let found  = routes.find(method, req.url) ?? ((method == 'HEAD') ? routes.find('GET', req.url) : nil)
+
+        if let (e, params, route) = found {
+            req.route = route
+            let status = (e.fun)(req, rsp, **params)
+            if status :: Int {
+                rsp.status(status)
+            }
+            return
+        }
+
+        if __not-found {
+            rsp.status(404)
+            let status = __not-found(req, rsp)
+            if status :: Int {
+                rsp.status(status)
+            }
+            return
+        }
+
+        let allowed = routes.methods-for(req.url)
+        if allowed {
+            rsp.header('Allow', allowed.join(', '))
+            rsp.error(405)
+        } else {
+            rsp.error(404)
+        }
+    }
+
+    __serve(rsp: Response) {
+        let req = rsp.request
+        let status = 0
+        let logged? = config.access-log != nil && config.access-log != false
+
+        if logged? {
+            req.start = time.now()
+        }
+
+        try {
+            with log::span!("request", req: req.id) {
+                status = __respond(rsp)
+            }
+        } finally {
+            if logged? {
+                __access(req, rsp, (status == 0) ? 499 : status, time.now() - req.start, (status == 0) ? 0 : rsp.bytes)
+            }
+            rsp.loop.detach(rsp.id)
+        }
+    }
+
+    __respond(rsp: Response) -> Int {
+        let req = rsp.request
+        let l   = rsp.loop
+
+        try {
+            __handle(req, rsp)
+        } catch _: ConnectionClosed {
+            rsp.abort()
+            return 0
+        } catch _: CanceledError {
+            rsp.abort()
+            return 0
+        } catch e: HttpError {
+            if rsp.started? {
+                rsp.abort()
+                return 0
+            }
+            rsp.reset()
+            rsp.error(e.status, e.detail)
+        } catch e {
+            c.count(l.core, S_ERRORS, 1)
+            if rsp.started? {
+                log::error!("exception while streaming response", method: req.method, url: req.url, err: e)
+                rsp.abort()
+                return 0
+            }
+            if __on-error {
+                rsp.reset()
+                rsp.status(500)
+                try {
+                    __on-error(req, rsp, e)
+                } catch e2 {
+                    log::error!("error handler failed", err: e2)
+                    rsp.error(500)
+                }
+            } else {
+                log::error!("exception while handling request", method: req.method, url: req.url, err: e)
+                rsp.reset()
+                if config.debug {
+                    rsp.error(500, "Exception: {e}\n\nBacktrace:\n{e.trace()}")
+                } else {
+                    rsp.error(500)
                 }
             }
         }
-        loop.request-seq += 1
-        "{__rid}-{loop.index}-{loop.request-seq}"
+
+        if rsp.gone? {
+            return 0
+        }
+
+        try {
+            rsp.finish()
+        } catch e {
+            log::error!("failed to finish response", method: req.method, url: req.url, err: e)
+            c.count(l.core, S_ERRORS, 1)
+            if rsp.started? {
+                rsp.abort()
+                return 0
+            }
+            rsp.reset()
+            rsp.error(500)
+            rsp.finish()
+        }
+
+        rsp.status-code
+    }
+
+    __upgrade(l: Loop, rsp: Response) -> Bool {
+        let req = rsp.request
+        let up  = req.header('upgrade') ?? ''
+
+        if req.method != 'GET' || !(up :: /websocket/i) {
+            return false
+        }
+
+        let reject = fn (status: Int, extra: String | nil = nil) {
+            if extra != nil {
+                rsp.header('Sec-WebSocket-Version', extra)
+            }
+            rsp.error(status)
+            rsp.finish()
+            l.detach(rsp.id)
+            true
+        }
+
+        let (s, params, route) = __current().sockets.find('GET', req.url) ?? return reject(404)
+        let $key = req.header('sec-websocket-key') or return reject(400)
+
+        if !((req.header('connection') ?? '') :: /upgrade/i) || key.size() != 24 {
+            return reject(400)
+        }
+
+        if req.header('sec-websocket-version') != '13' {
+            return reject(426, '13')
+        }
+
+        let offered  = (req.header('sec-websocket-protocol') ?? '').split(/\s*,\s*/).filter(\_.size() > 0)
+        let protocol = s.protocols.find(\_ in offered)
+
+        req.route = route
+
+        if !c.ws-accept(l.core, rsp.id, key, protocol, req.header('sec-websocket-extensions')) {
+            l.detach(rsp.id)
+            return true
+        }
+
+        let sock = WebSocket(l, rsp.id, req, protocol)
+        l.attach(rsp.id, sock)
+        l.spawn('websocket', __socket, sock, s.fun, req, params)
+
+        true
+    }
+
+    __socket(sock: WebSocket, handler: SocketHandler, req: Request, params: Dict[String, String]) {
+        let code = CLOSE_NORMAL
+        try {
+            handler(sock, req, **params)
+        } catch _: ConnectionClosed {
+        } catch _: CanceledError {
+        } catch e {
+            log::error!("exception in websocket handler", url: req.url, err: e)
+            code = CLOSE_INTERNAL
+        } finally {
+            if !sock.closed? {
+                c.ws-close(sock.loop.core, sock.id, code, nil)
+            }
+            sock.loop.detach(sock.id)
+        }
     }
 
     __access(req: Request, rsp: Response, status: Int, seconds: Float, bytes: Int) {
@@ -473,7 +1567,7 @@ pub class Server : Host {
             method:   req.method,
             target:   req.target,
             route:    req.route,
-            protocol: (req.version.major == 2) ? 'HTTP/2' : "HTTP/1.{req.version.minor}",
+            protocol: req.http-version,
             status:   status,
             bytes:    bytes,
             seconds:  seconds,
@@ -500,7 +1594,7 @@ pub class Server : Host {
                 )
                 return
             },
-            'json'           => json.encode(entry),
+            'json' => json.encode(entry),
             true, 'combined' => do {
                 let when = time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime(int(entry.time)))
                 let clean = (s: String | nil) -> (s ?? '-').sub(/["\\\x00-\x1F]/, '?')
@@ -524,376 +1618,26 @@ pub class Server : Host {
         os.write(config.access-log-fd, line + '\n')
     }
 
-    connection-closed() {
-        __active.fetch-sub(1)
-    }
-
-    __mutate(f: (Table) -> _) {
-        let ^_ = __lock.lock()
-        let t = __table.next()
-        f(t)
-        __table = t
-        __version.store(t.version)
-    }
-
-    __current() -> Table {
-        let v = __version.load()
-        if let $t = table and t.owner == self and t.version == v {
-            return t
-        }
-        let t = do {
+    __run-loop(index: Int) {
+        let l = Loop(__group, index, self)
+        do {
             let ^_ = __lock.lock()
-            __table
-        }
-        table = t
-        t
-    }
-
-    /// Registers `f(req, rsp, **params)` for `method` and `route`.
-    /// With `stream: true` the handler starts once the headers arrive and
-    /// reads the body incrementally with `req.read(max)` / `req.read-all()`.
-    /// `<name>` matches one path segment and `<name:regex>` a custom pattern;
-    /// captures are URL-decoded and passed as keywords. A handler may return
-    /// an Int status. Routes may be added while the server is running.
-    route(
-        method: String,
-        a: String | RequestHandler,
-        b: RequestHandler | String | nil = nil,
-        stream: Bool = false
-    ) -> RequestHandler {
-        let (route, f) = match (a, b) {
-            (r: String, f: RequestHandler) => (r, f),
-            (f: RequestHandler, r: String) => (r, f),
-            _                              => throw ValueError('http: expected a route string and a handler')
-        }
-        let m = method.upper()
-        __mutate(t -> t.routes.add(m, route, Endpoint(f, stream)))
-        if stream {
-            __streams.store(1)
-        }
-        f
-    }
-
-    get(a: String | RequestHandler, b: RequestHandler | String | nil = nil, stream: Bool = false) -> RequestHandler {
-        route('GET', a, b, stream)
-    }
-
-    post(a: String | RequestHandler, b: RequestHandler | String | nil = nil, stream: Bool = false) -> RequestHandler {
-        route('POST', a, b, stream)
-    }
-
-    put(a: String | RequestHandler, b: RequestHandler | String | nil = nil, stream: Bool = false) -> RequestHandler {
-        route('PUT', a, b, stream)
-    }
-
-    delete(a: String | RequestHandler, b: RequestHandler | String | nil = nil, stream: Bool = false) -> RequestHandler {
-        route('DELETE', a, b, stream)
-    }
-
-    patch(a: String | RequestHandler, b: RequestHandler | String | nil = nil, stream: Bool = false) -> RequestHandler {
-        route('PATCH', a, b, stream)
-    }
-
-    head(a: String | RequestHandler, b: RequestHandler | String | nil = nil) -> RequestHandler {
-        route('HEAD', a, b)
-    }
-
-    options(a: String | RequestHandler, b: RequestHandler | String | nil = nil) -> RequestHandler {
-        route('OPTIONS', a, b)
-    }
-
-    streams? -> Bool {
-        __streams.load() != 0
-    }
-
-    streaming-route?(method: String, url: String) -> Bool {
-        match __current().routes.find(method, url) {
-            (e, *) => e.stream?,
-            nil    => false
-        }
-    }
-
-    ws(
-        a: String | SocketHandler,
-        b: SocketHandler | String | nil = nil,
-        protocols: Array[String] = []
-    ) -> SocketHandler {
-        let (route, f) = match (a, b) {
-            (r: String, f: SocketHandler) => (r, f),
-            (f: SocketHandler, r: String) => (r, f),
-            _                             => throw ValueError('http: expected a route string and a handler')
-        }
-        __mutate(t -> t.sockets.add('GET', route, Socket(f, protocols)))
-        f
-    }
-
-    not-found(f: RequestHandler) -> RequestHandler {
-        __not-found = f
-        f
-    }
-
-    on-error(f: ErrorHandler) -> ErrorHandler {
-        __on-error = f
-        f
-    }
-
-    __handle(req: Request, rsp: Response) {
-        let t = __current()
-        if !t.middleware {
-            return __route(t.routes, req, rsp)
-        }
-        __chain(t.middleware, 0, t.routes, req, rsp)
-    }
-
-    __chain(chain: Array[Middleware], i: Int, routes: Routes[Endpoint], req: Request, rsp: Response) {
-        if i == #chain {
-            return __route(routes, req, rsp)
-        }
-        let called = [false]
-        chain[i](req, rsp, fn () {
-            if !called[0] {
-                called[0] = true
-                __chain(chain, i + 1, routes, req, rsp)
+            __loops.push(l)
+            if __stopping.load() != 0 {
+                l.stop()
             }
-        })
-    }
-
-    __route(routes: Routes[Endpoint], req: Request, rsp: Response) {
-        let method = req.method
-
-        let found = routes.find(method, req.url)
-                 ?? ((method == 'HEAD') ? routes.find('GET', req.url) : nil)
-
-        if let (e, params, route) = found {
-            req.route = route
-            let status = (e.fun)(req, rsp, **params)
-            if status :: Int {
-                rsp.status(status)
-            }
-            return
         }
-
-        if let $nf = __not-found {
-            rsp.status(404)
-            let status = nf(req, rsp)
-            if status :: Int {
-                rsp.status(status)
-            }
-            return
-        }
-
-        let allowed = routes.methods-for(req.url)
-        if allowed {
-            rsp.header('Allow', allowed.join(', '))
-            rsp.error(405)
-        } else {
-            rsp.error(404)
-        }
-    }
-
-    serve(x: LoopExchange, req: Request) {
-        let loop = x.loop
-        let rsp = Response(x)
-        let status = 0
-
-        req.start = time.now()
-        req.id = __request-id(req, loop)
-
-        if let h: String = config.request-id-header {
-            rsp.header(h, req.id)
-        }
-
-        let m = loop.metrics
-        m.in-flight.fetch-add(1)
-
         try {
-            with log::span!("request", req: req.id) {
-                status = __serve(x, req, rsp)
-            }
-        } finally {
-            m.in-flight.fetch-sub(1)
-            let dt = time.now() - req.start
-            let sent = (status == 0) ? 0 : rsp.bytes
-            if status == 0 {
-                m.aborted.fetch-add(1)
-            }
-            m.observe((status == 0) ? 499 : status, dt, sent)
-            if config.access-log != nil && config.access-log != false {
-                __access(req, rsp, (status == 0) ? 499 : status, dt, sent)
-            }
-        }
-    }
-
-    __serve(x: LoopExchange, req: Request, rsp: Response) -> Int {
-        let loop = x.loop
-
-        try {
-            __handle(req, rsp)
-        } catch e: core.ConnectionClosed {
-            x.abort()
-            return 0
-        } catch e: core.CanceledError {
-            x.abort()
-            return 0
-        } catch e: HttpError {
-            if rsp.started? {
-                x.abort()
-                return 0
-            }
-            rsp.reset()
-            rsp.error(e.status, e.detail)
+            l.run()
         } catch e {
-            loop.metrics.errors.fetch-add(1)
-            if rsp.started? {
-                log::error!("exception while streaming response", method: req.method, url: req.url, err: e)
-                x.abort()
-                return 0
-            }
-            if let $handler = __on-error {
-                rsp.reset()
-                rsp.status(500)
-                try {
-                    handler(req, rsp, e)
-                } catch e2 {
-                    log::error!("error handler failed", err: e2)
-                    rsp.error(500)
-                }
-            } else {
-                log::error!("exception while handling request", method: req.method, url: req.url, err: e)
-                rsp.reset()
-                if config.debug {
-                    rsp.error(500, "Exception: {e}\n\nBacktrace:\n{e.trace()}")
-                } else {
-                    rsp.error(500)
-                }
-            }
-        }
-
-        __served.fetch-add(1)
-
-        if x.closed? {
-            return 0
-        }
-
-        try {
-            rsp.finish()
-        } catch e {
-            log::error!("failed to finish response", method: req.method, url: req.url, err: e)
-            loop.metrics.errors.fetch-add(1)
-            if rsp.started? || x.closed? {
-                x.abort()
-                return 0
-            }
-            rsp.reset()
-            rsp.error(500)
-            rsp.finish()
-        }
-
-        rsp.status-code
-    }
-
-    on-open(conn: Conn) -> Proto {
-        H1(conn, self)
-    }
-
-    on-tls(conn: Conn, alpn: String | nil) -> Proto {
-        if let $h2 = __h2 and alpn == 'h2' {
-            return h2(conn, self)
-        }
-        H1(conn, self)
-    }
-
-    on-h2c(conn: Conn) -> Proto {
-        let $h2 = __h2 or throw RuntimeError('http: HTTP/2 is unavailable')
-        h2(conn, self)
-    }
-
-    try-upgrade(conn: Conn, req: Request) -> Bool {
-        if req.method != 'GET' || !req.upgrade? {
-            return false
-        }
-
-        let $upgrade = req.header('upgrade') or return false
-        if !(upgrade :: /websocket/i) {
-            return false
-        }
-
-        let found = __current().sockets.find('GET', req.url)
-
-        let reject = fn (status: Int, extra: String = '') {
-            let body = status-name(status)
-            conn.write("HTTP/1.1 {status} {body}\r\nContent-Type: text/plain\r\nContent-Length: {body.size()}\r\nConnection: close\r\n{extra}\r\n{body}")
-            conn.close-after-flush()
-            true
-        }
-
-        let (s, params, route) = found ?? return reject(404)
-
-        let $key = req.header('sec-websocket-key') or return reject(400)
-
-        if !((req.header('connection') ?? '') :: /upgrade/i) || key.size() != 24 {
-            return reject(400)
-        }
-
-        if req.header('sec-websocket-version') != '13' {
-            return reject(426, 'Sec-WebSocket-Version: 13\r\n')
-        }
-
-        let offered = (req.header('sec-websocket-protocol') ?? '').split(/\s*,\s*/).filter(\_.size() > 0)
-        let protocol = s.protocols.find(\_ in offered)
-
-        req.route = route
-
-        let ext = config.ws-compression ? deflate.negotiate(req.header('sec-websocket-extensions')) : nil
-        let extra = (ext == nil) ? %{} : %{'Sec-WebSocket-Extensions': ext}
-        conn.write(wsock.handshake-response(key, protocol, extra))
-
-        conn.untimeout(0)
-        let proto = wsock.WSProto(conn, req, protocol, (ext == nil) ? nil : deflate.PerMessage())
-        let wm = conn.loop.metrics
-        wm.websockets.fetch-add(1)
-        wm.websockets-total.fetch-add(1)
-        proto.on-close-callback(-> wm.websockets.fetch-sub(1))
-        conn.proto = proto
-
-        conn.loop.spawn("WS {req.url}", __run-socket, proto, s.fun, req, params)
-
-        if conn.available > 0 {
-            proto.on-data()
-        } else {
-            conn.want-read()
-        }
-
-        true
-    }
-
-    __run-socket(proto: wsock.WSProto, handler: SocketHandler, req: Request, params: Dict[String, String]) {
-        let sock = proto.ws
-        try {
-            handler(sock, req, **params)
-        } catch _: core.ConnectionClosed {
-        } catch _: core.CanceledError {
-        } catch e {
-            log::error!("exception in websocket handler", url: req.url, err: e)
-            proto.start-close(wsock.CLOSE_INTERNAL, '')
-        } finally {
-            if !proto.closed? {
-                proto.start-close(wsock.CLOSE_NORMAL, '')
-            }
-        }
-    }
-
-    __run-loop(loop: Loop) {
-        try {
-            loop.run()
-        } catch e {
-            log::error!("event loop crashed", loop: loop.index, err: e)
+            log::error!("event loop crashed", loop: index, err: e)
             stop()
+        } finally {
+            let ^_ = __lock.lock()
+            l.stats(__totals)
+            __loops.filter!(\_ != l)
+            l.free()
         }
-    }
-
-    stopping? -> Bool {
-        __stopping.load() != 0
     }
 
     /// Serves until `stop()` is called (from any thread or handler), then
@@ -903,32 +1647,17 @@ pub class Server : Host {
             throw RuntimeError('http: server is already running')
         }
 
+        hl.set-blocking-threads(config.blocking-threads)
+
         let threads = []
 
         try {
-            let loops = [Loop(self, config, i, __sock) for i in ..config.threads]
-            do {
-                let ^_ = __lock.lock()
-                __loops = loops
-            }
-            if stopping? {
-                for l in loops {
-                    l.stop()
-                }
-            }
-            threads = [Thread(__run-loop, l) for l in loops.drop(1)]
-            __run-loop(loops[0])
+            threads = [Thread(__run-loop, i) for i in 1..max(config.threads, 1)]
+            __run-loop(0)
         } finally {
             stop()
             for t in threads {
                 t.join()
-            }
-            do {
-                let ^_ = __lock.lock()
-                for l in __loops {
-                    __metrics.add(l.metrics)
-                }
-                __loops = []
             }
             __stopping.store(0)
             __running.store(0)
@@ -939,7 +1668,7 @@ pub class Server : Host {
         let loops = do {
             let ^_ = __lock.lock()
             __stopping.store(1)
-            __loops
+            [*__loops]
         }
         for l in loops {
             l.stop()
@@ -948,11 +1677,9 @@ pub class Server : Host {
 
     close() {
         stop()
-        if __owns-sock && __sock >= 0 {
+        if __owns? && __sock >= 0 {
             os.close(__sock)
             __sock = -1
         }
     }
 }
-
-core.set-file-sender(files.send-file)

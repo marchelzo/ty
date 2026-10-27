@@ -20,6 +20,7 @@ BUILD_DEPENDS=	${LOCALBASE}/lib/libffi.a:devel/libffi \
 
 LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc \
 		libnghttp2.so:www/libnghttp2 \
+		libllhttp.so:www/llhttp \
 		libzstd.so:archivers/zstd
 
 RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db

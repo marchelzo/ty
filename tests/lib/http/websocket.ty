@@ -1,6 +1,5 @@
 import http
 import http.ws as ws
-import http.deflate as deflate
 import os
 import time
 import _client (serve, WsClient, Client, KEY)
@@ -237,29 +236,27 @@ pub fn permessage-deflate() {
     serve(routes, fn (srv) {
         let c = WsClient(srv.port, '/echo', %{'Sec-WebSocket-Extensions': 'permessage-deflate; client_max_window_bits'})
         assert(c.status.contains?('Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover'))
-        let pm = deflate.PerMessage()
-
         let big = 'compress me please ' * 500
-        os.write(c.fd, ws.frame(ws.OP_TEXT, pm.compress(big), mask: KEY, rsv1: true))
+        os.write(c.fd, ws.frame(ws.OP_TEXT, ws.deflate(big), mask: KEY, rsv1: true))
         let (op, payload) = c.frame()
         assert(op == ws.OP_TEXT)
         assert(#payload < #big / 10)
-        assert(pm.decompress(payload, 1 << 20).str!() == big)
+        assert(ws.inflate(payload, 1 << 20).str!() == big)
 
         c.send('tiny')
         let (op2, p2) = c.frame()
         assert(p2.str!() == 'tiny')
 
-        let half = pm.compress('fragmented ' * 100)
+        let half = ws.deflate('fragmented ' * 100)
         let cut = #half / 2
         os.write(c.fd, ws.frame(ws.OP_TEXT, half.slice(0, cut), fin: false, mask: KEY, rsv1: true))
         os.write(c.fd, ws.frame(ws.OP_CONT, half.slice(cut, #half - cut), mask: KEY))
         let (_, p3) = c.frame()
-        assert(pm.decompress(p3, 1 << 20).str!() == 'fragmented ' * 100)
+        assert(ws.inflate(p3, 1 << 20).str!() == 'fragmented ' * 100)
         c.close()
 
         let bomb = WsClient(srv.port, '/echo', %{'Sec-WebSocket-Extensions': 'permessage-deflate'})
-        os.write(bomb.fd, ws.frame(ws.OP_BINARY, pm.compress(Blob.zeros(100000)), mask: KEY, rsv1: true))
+        os.write(bomb.fd, ws.frame(ws.OP_BINARY, ws.deflate(Blob.zeros(100000)), mask: KEY, rsv1: true))
         assert(bomb.close-code() == ws.CLOSE_TOO_BIG)
         bomb.close()
 

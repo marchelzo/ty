@@ -1,7 +1,7 @@
 import os
 import time
-import http.core (Response, HttpError, http-date, this-loop)
-import http.wire (Request)
+import _http as c
+import http.message (Request, HttpError)
 
 pub import http.form (MIME, mime-of)
 
@@ -10,7 +10,6 @@ const S_IFREG = 0o100000
 const S_IFDIR = 0o040000
 
 const INLINE_MAX = 64 * 1024
-const CHUNK      = 256 * 1024
 
 fn regular?(st: os.Stat) -> Bool {
     (st.mode & S_IFMT) == S_IFREG
@@ -27,23 +26,18 @@ fn etag-of(st: os.Stat, suffix: String) -> String {
 
 fn parse-date(s: String) -> Int | nil {
     try {
-        let tm = time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT')
-        time.time(tm, utc: true)
+        time.time(time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT'), utc: true)
     } catch _ {
         nil
     }
 }
 
 fn etag-match?(header: String, etag: String) -> Bool {
-    let weak = (t: String) -> t.comb(/^W\//)
-    let want = weak(etag)
-    for item in header.split(',') {
+    let want = etag.comb(/^W\//)
+    header.split(',').any?(fn (item) {
         let t = item.strip()
-        if t == '*' || weak(t) == want {
-            return true
-        }
-    }
-    false
+        t == '*' || t.comb(/^W\//) == want
+    })
 }
 
 fn not-modified?(req: Request, etag: String, mtime: Int) -> Bool {
@@ -53,10 +47,8 @@ fn not-modified?(req: Request, etag: String, mtime: Int) -> Bool {
     if let $inm = req.header('if-none-match') {
         return etag-match?(inm, etag)
     }
-    if let $ims = req.header('if-modified-since') {
-        if let $t = parse-date(ims) {
-            return mtime <= t
-        }
+    if let $ims = req.header('if-modified-since') and let $t = parse-date(ims) {
+        return mtime <= t
     }
     false
 }
@@ -71,11 +63,9 @@ fn range-of(req: Request, size: Int, etag: String, mtime: Int) -> Whole | Part[(
         return Whole
     }
     if let $ir = req.header('if-range') {
-        let fresh = if ir.starts?('"') || ir.starts?('W/') {
-            !ir.starts?('W/') && !etag.starts?('W/') && ir == etag
-        } else {
-            parse-date(ir) == mtime
-        }
+        let fresh = (ir.starts?('"') || ir.starts?('W/'))
+                  ? (!ir.starts?('W/') && !etag.starts?('W/') && ir == etag)
+                  : (parse-date(ir) == mtime)
         if !fresh {
             return Whole
         }
@@ -85,24 +75,22 @@ fn range-of(req: Request, size: Int, etag: String, mtime: Int) -> Whole | Part[(
     if #ranges != 1 {
         return Whole
     }
-    let r = ranges[0].strip()
-    let [_, a, b] = r.match(/^(\d*)-(\d*)$/) ?? return Whole
+    let [_, a, b] = ranges[0].strip().match(/^(\d*)-(\d*)$/) ?? return Whole
     if a == '' && b == '' {
         return Whole
     }
     let (start, end) = if a == '' {
-        let n = int(b)
+        let n = int(b, 10)
         if n == 0 {
             return Unsatisfiable
         }
         (max(size - n, 0), size - 1)
     } else {
-        let s = int(a)
-        let e = (b == '') ? size - 1 : min(int(b), size - 1)
-        if b != '' && int(b) < s {
+        let s = int(a, 10)
+        if b != '' && int(b, 10) < s {
             return Whole
         }
-        (s, e)
+        (s, (b == '') ? size - 1 : min(int(b, 10), size - 1))
     }
     if start >= size || size == 0 {
         return Unsatisfiable
@@ -123,11 +111,11 @@ fn accepts?(req: Request, coding: String) -> Bool {
 
 /// Sends the file at `path` on `rsp`, honouring conditional requests
 /// (ETag / If-Modified-Since → 304), single byte ranges (206 / 416), HEAD,
-/// and precompressed `.br`/`.gz` siblings. Large files are read without
-/// blocking the event loop and written with backpressure.
+/// and precompressed `.br`/`.gz` siblings. Large files are streamed by the
+/// native core with backpressure.
 pub fn send-file(
     req: Request,
-    rsp: Response,
+    rsp: _,
     path: String,
     download: String | Bool | nil = nil,
     content-type: String | nil = nil,
@@ -147,16 +135,12 @@ pub fn send-file(
     let coding = nil
 
     if precompressed {
-        for (c, ext) in [('br', '.br'), ('gzip', '.gz')] {
-            if accepts?(req, c) {
-                if let $alt = os.stat(path + ext) {
-                    if regular?(alt) {
-                        file = path + ext
-                        st = alt
-                        coding = c
-                        break
-                    }
-                }
+        for (name, ext) in static!([('br', '.br'), ('gzip', '.gz')]) {
+            if accepts?(req, name) and let $alt = os.stat(path + ext) and regular?(alt) {
+                file = path + ext
+                st = alt
+                coding = name
+                break
             }
         }
         rsp.header('Vary', 'Accept-Encoding')
@@ -173,7 +157,7 @@ pub fn send-file(
         rsp.header('ETag', et)
     }
     if last-modified {
-        rsp.header('Last-Modified', http-date(mtime))
+        rsp.header('Last-Modified', c.date(mtime))
     }
     if max-age != nil {
         rsp.header('Cache-Control', "public, max-age={max-age}{immutable ? ', immutable' : ''}")
@@ -207,49 +191,37 @@ pub fn send-file(
         _ => (0, size)
     }
 
+    if req.method == 'HEAD' {
+        rsp.stream(length: length)
+        return
+    }
+
     let fd = os.open(file, os.O_RDONLY)
     if fd < 0 {
         throw HttpError(404)
     }
 
-    try {
-        if length <= INLINE_MAX || req.method == 'HEAD' {
-            if req.method == 'HEAD' {
-                rsp.stream(length: length)
-                return
-            }
-            rsp.body.push(os.pread(fd, length, start))
-            return
+    if length <= INLINE_MAX {
+        try {
+            rsp.body = os.pread(fd, length, start)
+        } finally {
+            os.close(fd)
         }
-
-        let $loop = this-loop() or throw RuntimeError('http: send-file() must be called from a server task')
-        let w = rsp.stream(length: length)
-        let off = start
-        let end = start + length
-        while off < end {
-            let n = min(CHUNK, end - off)
-            let chunk = loop.read-at(fd, n, off)
-            if #chunk == 0 {
-                break
-            }
-            if !w.write(chunk) {
-                break
-            }
-            off += #chunk
-        }
-    } finally {
-        os.close(fd)
+        return
     }
+
+    rsp.stream(length: length)
+    rsp.send-file(fd, start, length)
 }
 
 /// Serves files below `root` for requests under a route prefix.
 pub class StaticFiles {
-    root:          String
-    index:         Array[String]
-    dotfiles:      String
-    fallback:      String | nil
-    options:       Dict[String, _]
-    symlinks:      Bool
+    root:     String
+    index:    Array[String]
+    dotfiles: String
+    fallback: String | nil
+    options:  Dict[String, _]
+    symlinks: Bool
 
     init(
         root: String,
@@ -281,10 +253,7 @@ pub class StaticFiles {
             if seg == '' || seg == '.' {
                 continue
             }
-            if seg == '..' {
-                return nil
-            }
-            if seg.starts?('.') && dotfiles != 'allow' && seg != '.well-known' {
+            if seg == '..' || (seg.starts?('.') && dotfiles != 'allow' && seg != '.well-known') {
                 return nil
             }
             parts.push(seg)
@@ -297,38 +266,32 @@ pub class StaticFiles {
         symlinks ? full : real
     }
 
-    serve(req: Request, rsp: Response, rel: String) {
+    serve(req: Request, rsp: _, rel: String) {
         if req.method != 'GET' && req.method != 'HEAD' {
             rsp.header('Allow', 'GET, HEAD')
             rsp.error(405)
             return
         }
 
-        let target = __resolve(rel)
-
-        if let $p = target {
-            if let $st = os.stat(p) {
-                if directory?(st) {
-                    if !req.url.ends?('/') {
-                        rsp.redirect(req.url + '/' + ((req.query == nil) ? '' : "?{req.query}"), 301)
-                        return
-                    }
-                    for name in index {
-                        let candidate = "{p}/{name}"
-                        if let $ist = os.stat(candidate) {
-                            if regular?(ist) {
-                                return send-file(req, rsp, candidate, **options)
-                            }
-                        }
-                    }
-                } else if regular?(st) {
-                    return send-file(req, rsp, p, **options)
+        if let $p = __resolve(rel) and let $st = os.stat(p) {
+            if directory?(st) {
+                if !req.url.ends?('/') {
+                    rsp.redirect(req.url + '/' + ((req.query == nil) ? '' : "?{req.query}"), 301)
+                    return
                 }
+                for name in index {
+                    let candidate = "{p}/{name}"
+                    if let $ist = os.stat(candidate) and regular?(ist) {
+                        return send-file(req, rsp, candidate, **options)
+                    }
+                }
+            } else if regular?(st) {
+                return send-file(req, rsp, p, **options)
             }
         }
 
-        if let $fb = fallback {
-            return send-file(req, rsp, "{root}/{fb}", **options)
+        if fallback {
+            return send-file(req, rsp, "{root}/{fallback}", **options)
         }
 
         if dotfiles == 'deny' && rel.split('/').any?(\_.starts?('.')) {

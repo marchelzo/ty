@@ -1,7 +1,9 @@
 /**
- * HTTP server: HTTP/1.1, HTTP/2 (via nghttp2, built in), TLS (via `ssl`),
- * WebSockets and Server-Sent Events, on io_uring (Linux) or kqueue
- * (macOS/BSD; Linux with libkqueue) event loops.
+ * HTTP server and client: HTTP/1.1, HTTP/2 (nghttp2), TLS (OpenSSL),
+ * WebSockets and Server-Sent Events. The native `_http` core runs the
+ * event loops (io_uring with an epoll fallback on Linux, kqueue on macOS and
+ * the BSDs), parses and frames every protocol, and builds the request and
+ * header objects handed to handlers.
  *
  * ```
  * import http
@@ -28,21 +30,18 @@
  * ```
  *
  * Each of `threads` event loops runs request handlers as coroutines.
- * `http.sleep`, `ws.recv`, streaming writes and `http.blocking` suspend only
- * the calling handler; any other blocking call stalls every connection on
- * that loop, so offload it with `http.blocking(f, *args)`.
+ * `http.sleep`, `ws.recv`, streaming writes, client requests and
+ * `http.blocking` suspend only the calling handler; any other blocking call
+ * stalls every connection on that loop, so offload it with
+ * `http.blocking(f, *args)`.
  *
  * Handlers on different loops run in parallel. Synchronize access to your
- * own shared state; the server's state (routes, connection tables, streams,
- * sockets) is synchronized internally, and `BodyWriter`, `EventStream` and
- * `WebSocket` methods may be called from any thread.
+ * own shared state; `BodyWriter`, `EventStream` and `WebSocket` methods may be
+ * called from any thread.
  *
  * Request bodies are buffered up to `max-body-size` unless the route is
  * registered with `stream: true`, in which case the handler starts after the
- * headers and reads with `req.read(max)`. WebSockets negotiate
- * permessage-deflate (`ws-compression`).
- *
- * Batteries:
+ * headers and reads with `req.read(max)`.
  *
  * ```
  * srv.use(fn (req, rsp, next) { ...; next(); ... })   // middleware
@@ -52,66 +51,52 @@
  * rsp.set-cookie('theme', 'dark', max-age: 86400); req.cookie('theme')
  * srv.health()                                        // GET /healthz
  * srv.metrics-endpoint()                              // GET /metrics (Prometheus)
- * srv.stats()                                         // counters as a Dict
  * http.Server(..., access-log: true | 'json' | 'log' | fn (entry) { ... })
  * ```
  *
- * Every request gets `req.id` (echoed as X-Request-Id; an incoming
- * well-formed X-Request-Id is reused unless `trust-request-id: false`).
- *
- * Every limit and timeout is a keyword argument of `Server` (see `Config`).
- *
- * The client side lives in `http.client` and is re-exported here:
+ * The client lives in `http.client` and is re-exported here:
  *
  * ```
  * let r = http.get('https://example.com/api', params: {q: 'ty'})
  * r.raise-for-status().json()
- * r.show()
  *
- * let c = http.Client(base-url: srv.url, http2: true)
+ * let c = http.Client(base-url: srv.url)
  * c.post('/items', json: {name: 'x'})
  * ```
- *
- * Both sides share the wire parser, HTTP/2 bindings, content codings
- * (`http.codec`), cookies, SSE, multipart encoding, `Headers` and `URL`.
  */
-pub import http.core as core (
+pub import http.server (
+    Server,
+    Server as HttpServer,
     Config,
     Response,
     Response as HttpResponse,
     BodyWriter,
     EventStream,
-    HttpError,
-    ConnectionClosed,
+    WebSocket,
     TimeoutError,
-    CanceledError,
-    Task,
     AccessEntry,
-    event-chunk
-)
-pub import http.server (
-    Server,
-    Server as HttpServer,
     RequestHandler,
     SocketHandler,
     Middleware,
-    ErrorHandler
+    ErrorHandler,
+    event-chunk
 )
-pub import http.wire (Request, Request as HttpRequest)
-pub import http.ws as wsock (WebSocket)
-pub import http.form (
-    HttpHeaders,
+pub import http.message (
+    Request,
+    Request as HttpRequest,
+    Headers,
+    HttpError,
     HttpVersion,
-    urldecode,
-    urlencode,
-    percent-decode,
-    decode-query,
-    encode-query
+    Upload
 )
+pub import http.loop (ConnectionClosed, CanceledError, Task, sleep, blocking, spawn)
 pub import http.status (..)
-pub import http.files as files (send-file, StaticFiles, mime-of)
+pub import http.files (send-file, StaticFiles, mime-of)
 pub import http.session (Sessions, Session, Store, MemoryStore, sign, unsign)
-pub import http.metrics as metrics-mod (Metrics)
+pub import http.url (URL)
+pub import http.cookies (CookieJar, Cookie)
+pub import http.codec as codec
+pub import _http (percent-encode, percent-decode, decode-query, encode-query)
 
 pub import http.client as client (
     Client,
@@ -119,6 +104,7 @@ pub import http.client as client (
     Request as ClientRequest,
     Response as ClientResponse,
     WebSocket as ClientWebSocket,
+    Event,
     Timeout,
     Limits,
     Retry,
@@ -144,26 +130,3 @@ pub import http.client as client (
     events,
     websocket
 )
-pub import http.headers (Headers)
-pub import http.url (URL)
-pub import http.cookies (CookieJar, Cookie)
-pub import http.codec as codec
-
-/// Suspends the current handler for `seconds` without blocking its loop.
-pub fn sleep(seconds: Int | Float) {
-    let $l = core.loop() or throw RuntimeError('http.sleep() must be called from a server task')
-    l.sleep(seconds)
-}
-
-/// Runs `f(*args)` on a worker thread pool and suspends the current handler
-/// until it returns; exceptions are rethrown in the handler.
-pub fn blocking[a](f: (*_) -> a, *args: _) -> a {
-    let $l = core.loop() or throw RuntimeError('http.blocking() must be called from a server task')
-    l.blocking(f, *args)
-}
-
-/// Starts `f(*args, **kwargs)` as a background task on the current loop.
-pub fn spawn(f: (*_) -> _, *args: _, %kwargs: _) -> Task {
-    let $l = core.loop() or throw RuntimeError('http.spawn() must be called on a server thread')
-    l.spawn('task', f, *args, **kwargs)
-}

@@ -1,9 +1,0 @@
-import ffi as c
-
-pub fn libkqueue() -> Ptr[Any] | nil {
-    c.open('kqueue', versions: [0, nil], env: 'TY_LIBKQUEUE')
-}
-
-pub fn kqueue?() -> Bool {
-    __apple__ || __bsd__ || libkqueue() != nil
-}
