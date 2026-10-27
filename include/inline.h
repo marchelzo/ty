@@ -43,6 +43,8 @@ typedef enum {
         TY_INLINE_NOT,
         TY_INLINE_SET_FIELD,
         TY_INLINE_GIVEN,
+        TY_INLINE_BYTE,
+        TY_INLINE_ELSE,
 } TyInlineOp;
 
 typedef struct {

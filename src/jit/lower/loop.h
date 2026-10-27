@@ -418,7 +418,7 @@ string_byte_at(BcLir const *c, i32 off)
 }
 
 static bool
-planned(BcLir const *c, BcLirNode const *n)
+plan_at(BcLir const *c, BcLirNode const *n, Plan *p)
 {
         if (
                 !c->speculate
@@ -432,10 +432,34 @@ planned(BcLir const *c, BcLirNode const *n)
         }
 
         Value const *callee = vm_global(c->ctx, n->global);
-        Plan         p      = {0};
 
         return inlinable(c, callee, n->argc)
-            && analyze(&p, callee, TY_INLINE_GLOBAL, n->argc);
+            && analyze(p, callee, TY_INLINE_GLOBAL, n->argc);
+}
+
+static bool
+planned(BcLir const *c, BcLirNode const *n)
+{
+        Plan p = {0};
+        return plan_at(c, n, &p);
+}
+
+static bool
+plan_bytes(BcLir const *c, BcLirNode const *n)
+{
+        Plan p = {0};
+
+        if (!plan_at(c, n, &p)) {
+                return false;
+        }
+
+        for (i32 i = 0; i < p.plan.count; ++i) {
+                if (p.plan.insns[i].op == TY_INLINE_BYTE) {
+                        return true;
+                }
+        }
+
+        return false;
 }
 
 inline static bool
@@ -461,6 +485,53 @@ calls_out(BcLir const *c, BcLoop const *loop)
                      && !planned(c, n)
                 ) {
                         return true;
+                }
+        }
+
+        return false;
+}
+
+static void
+callees(BcLir const *c, BcLoop *loop)
+{
+        loop->ncallees = 0;
+
+        if (!promoted(loop) || calls_out(c, loop) || getenv("TY_JIT_NO_HOIST_CALLEES") != NULL) {
+                return;
+        }
+
+        for (i32 off = loop->head; off <= loop->end; ++off) {
+                BcLirNode const *n = &c->nodes[off];
+                bool             seen = false;
+
+                if (
+                        dead(n)
+                     || !planned(c, n)
+                     || !SymbolIsFunction(compiler_global_sym(c->ctx, n->global))
+                ) {
+                        continue;
+                }
+
+                for (i32 k = 0; k < loop->ncallees; ++k) {
+                        seen = seen || (loop->callees[k] == n->global);
+                }
+
+                if (!seen && loop->ncallees < (i32)countof(loop->callees)) {
+                        loop->callees[loop->ncallees++] = n->global;
+                }
+        }
+}
+
+static bool
+proven_callee(BcLir const *c, i32 global)
+{
+        for (i32 i = 0; i < c->nactive; ++i) {
+                BcLoop const *loop = &c->loops[c->active[i]];
+
+                for (i32 k = 0; k < loop->ncallees; ++k) {
+                        if (loop->callees[k] == global) {
+                                return true;
+                        }
                 }
         }
 
@@ -494,7 +565,7 @@ containers(BcLir const *c, BcLoop *loop, i32 *score)
                         return;
                 }
 
-                any = any || bytes || indexes(n->op);
+                any = any || bytes || indexes(n->op) || plan_bytes(c, n);
 
                 exclude_captures(c, off, score);
 
@@ -822,6 +893,8 @@ shape(BcLir *c, i32 i, i32 *score)
         if (promoted(loop)) {
                 loop->deopt = coldlabel(c);
         }
+
+        callees(c, loop);
 }
 
 static bool
@@ -1120,6 +1193,14 @@ loop_enter(BcLir *c, i32 off)
 
                 for (i32 k = 0; k < loop->narrays; ++k) {
                         hold(c, loop, k);
+                }
+
+                for (i32 k = 0; k < loop->ncallees; ++k) {
+                        i32 g = loop->callees[k];
+
+                        if (!proven_callee(c, g)) {
+                                guard_self(c, global_addr(c, g), vm_global(c->ctx, g), loop->deopt);
+                        }
                 }
 
                 if (loop->stack) {

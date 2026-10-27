@@ -251,6 +251,9 @@ in_range(BcLir const *c, i32 idx, i32 cont, u8 shift);
 static LirReg const *
 held_string(BcLir const *c, i32 i);
 
+static bool
+proven_callee(BcLir const *c, i32 global);
+
 inline static LirLabel
 dest(BcLir *c, BcLirNode const *node)
 {

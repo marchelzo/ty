@@ -1,0 +1,125 @@
+class FakeText {
+    init() { }
+
+    byte(i) {
+        i * 2
+    }
+}
+
+fn byte-or-zero(s: String, i: Int) -> Int {
+    s.byte(i) ?? 0
+}
+
+fn byte-or(s: String, i: Int, d: Int) -> Int {
+    s.byte(i) ?? d
+}
+
+fn byte-of(s: String, i: Int) -> Int | nil {
+    s.byte(i)
+}
+
+fn byte-sum(s: String, i: Int) -> Int {
+    (s.byte(i) ?? 0) + (s.byte(i + 1) ?? 100)
+}
+
+fn either(x: Int | nil, d: Int) -> Int {
+    x ?? d
+}
+
+fn loose-byte(s, i) {
+    s.byte(i) ?? -1
+}
+
+fn reference(s: String, i: Int) -> Int | nil {
+    let bs = s.bytes()
+    let j  = (i < 0) ? i + #bs : i
+    (j >= 0 && j < #bs) ? bs[j] : nil
+}
+
+fn digit?(c: Int) -> Bool {
+    c >= 48 && c <= 57
+}
+
+fn count-digits(s: String) -> Int {
+    let n = #s
+    let i = 0
+    let k = 0
+    while i < n {
+        while i < n && digit?(byte-or-zero(s, i)) {
+            i += 1
+            k += 1
+        }
+        i += 1
+    }
+    k
+}
+
+let step = fn (x: Int) -> Int { x + 1 }
+
+fn step-all(n: Int, swap: Int) -> Int {
+    let t = 0
+    let i = 0
+    while i < n {
+        t += step(i)
+        if i == swap {
+            step = fn (x: Int) -> Int { x * 100 }
+        }
+        i += 1
+    }
+    step = fn (x: Int) -> Int { x + 1 }
+    t
+}
+
+fn check-bytes(s: String, i: Int, r: Int) {
+    let want = reference(s, i)
+    assert(byte-or-zero(s, i) == (want ?? 0))
+    assert(byte-or(s, i, r) == (want ?? r))
+    assert(byte-of(s, i) == want)
+    assert(byte-sum(s, i) == (want ?? 0) + (reference(s, i + 1) ?? 100))
+}
+
+fn check-either(r: Int) {
+    let x = (r % 3 == 0) ? nil : r
+    assert(either(x, -r) == ((r % 3 == 0) ? -r : r))
+}
+
+fn check-receivers(fake: FakeText, r: Int) {
+    assert(loose-byte('abc', r % 5) == (reference('abc', r % 5) ?? -1))
+    assert(loose-byte(fake, r) == 2 * r)
+}
+
+pub fn test-byte-defaults-follow-string-byte() {
+    let words = ['', 'a', 'xyz', 'hello, world', 'ünï']
+    for r in ..12000 {
+        check-bytes(words[r % #words], (r % 13) - 6, r)
+    }
+}
+
+pub fn test-nil-defaults-pick-the-right-side() {
+    for r in ..12000 {
+        check-either(r)
+    }
+}
+
+pub fn test-byte-receivers-that-are-not-strings() {
+    let fake = FakeText()
+    for r in ..12000 {
+        check-receivers(fake, r)
+    }
+}
+
+pub fn test-byte-loops-over-held-strings() {
+    let texts = ['a1b22c333', '9999', '', 'x', '12 34 56 78']
+    for r in ..8000 {
+        let s = texts[r % #texts] * (1 + r % 3)
+        assert(count-digits(s) == s.bytes().filter(digit?).len())
+    }
+}
+
+pub fn test-loop-callees-stay-rebindable() {
+    for r in ..8000 {
+        let n    = 10 + r % 7
+        let swap = r % n
+        assert(step-all(n, swap) == (..n).map(i -> (i <= swap) ? i + 1 : i * 100).sum())
+    }
+}

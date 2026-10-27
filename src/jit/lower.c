@@ -86,6 +86,8 @@ typedef struct bc_loop {
         i32      akind[4];
         LirReg   areg[4][3];
         i32      narrays;
+        i32      callees[8];
+        i32      ncallees;
         bool     lazy;
         u8       written;
         u8       escaping;

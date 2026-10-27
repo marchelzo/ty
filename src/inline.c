@@ -387,8 +387,31 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         break;
                 }
 
+                case INSTR_CALL_METHOD:
+                {
+                        i32 argc;
+                        i32 member;
+                        i32 nkw;
+                        if (
+                                !read_bytes(&ip, end, &argc,   sizeof argc)
+                             || !read_bytes(&ip, end, &member, sizeof member)
+                             || !read_bytes(&ip, end, &nkw,    sizeof nkw)
+                             || (argc   != 1)
+                             || (nkw    != 0)
+                             || (member != M_ID("byte"))
+                        ) {
+                                return false;
+                        }
+                        insn.op = TY_INLINE_BYTE;
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
+                        break;
+                }
+
                 case INSTR_JUMP_AND:
                 case INSTR_JUMP_OR:
+                case INSTR_JUMP_WTF:
                 {
                         i32 relative;
                         if (
@@ -400,7 +423,9 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                                 return false;
                         }
                         joins[pending].target = (int)(ip - code) + relative;
-                        joins[pending].op     = (op == INSTR_JUMP_AND) ? TY_INLINE_AND : TY_INLINE_OR;
+                        joins[pending].op     = (op == INSTR_JUMP_AND) ? TY_INLINE_AND
+                                              : (op == INSTR_JUMP_OR)  ? TY_INLINE_OR
+                                              :                          TY_INLINE_ELSE;
                         pending              += 1;
                         logic_count          += 1;
                         break;
@@ -566,6 +591,8 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case TY_INLINE_GE:
                 case TY_INLINE_AND:
                 case TY_INLINE_OR:
+                case TY_INLINE_ELSE:
+                case TY_INLINE_BYTE:
                         if (depth < 2) {
                                 return false;
                         }

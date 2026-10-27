@@ -225,6 +225,49 @@ plan_not(BcLir *c, i32 slot, LirLabel slow)
         put_scalar(c, slot, VALUE_BOOLEAN, lir_r(binop(c, LIR_XOR, LIR_I64, lir_r(x), lir_i(1))));
 }
 
+static LirReg
+wrapped(BcLir *c, LirOpnd i, LirReg n)
+{
+        LirReg sign = vop(c, LIR_SAR, LIR_I64, i, lir_i(63));
+        LirReg back = vop(c, LIR_AND, LIR_I64, lir_r(sign), lir_r(n));
+
+        return vop(c, LIR_ADD, LIR_I64, i, lir_r(back));
+}
+
+static void
+plan_byte(BcLir *c, i32 at, i32 text, LirLabel slow)
+{
+        LirLabel none = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        expect(c, c->ops, vat(text), VALUE_STRING,  slow);
+        expect(c, c->ops, vat(at),   VALUE_INTEGER, slow);
+
+        LirReg n   = ldx(c, LIR_LD_U32, LIR_I64, c->ops, vat(text) + VOFF(bytes));
+        LirReg i   = wrapped(c, lir_r(int_at(c, at)), n);
+        LirReg str = ldp(c, c->ops, vat(text) + VOFF(str));
+
+        jcc(c, LIR_UGE, lir_r(i), lir_r(n), none);
+        put_scalar(c, at, VALUE_INTEGER, lir_r(vop(c, LIR_LD_U8, LIR_I64, lir_m(str, i, 1, 0))));
+        jump(c, done);
+
+        bind(c, none);
+        put_scalar(c, at, VALUE_NIL, lir_i(0));
+
+        bind(c, done);
+}
+
+static void
+plan_else(BcLir *c, i32 left, i32 right)
+{
+        LirLabel done = newlabel(c);
+
+        unless(c, tag_of(c, left), VALUE_NIL, done);
+        copy(c, c->ops, vat(left), c->ops, vat(right));
+
+        bind(c, done);
+}
+
 static void
 guard_plan(BcLir *c, Plan const *p, LirLabel slow)
 {
@@ -333,6 +376,14 @@ plan_insn(BcLir *c, Plan const *p, i32 i, i32 top, LirLabel const *labels, LirLa
 
         case TY_INLINE_NOT:
                 plan_not(c, top - 1, slow);
+                break;
+
+        case TY_INLINE_BYTE:
+                plan_byte(c, top - 2, top - 1, slow);
+                break;
+
+        case TY_INLINE_ELSE:
+                plan_else(c, top - 2, top - 1);
                 break;
 
         case TY_INLINE_BRANCH_TRUE: {

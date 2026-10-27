@@ -2290,8 +2290,17 @@ vs_string_byte(BcLir *c, BcLirNode const *node)
 typedef struct {
         bool    real;
         bool    flag;
+        bool    text;
+        bool    maybe;
         LirOpnd v;
+        LirReg  aux;
 } Lane;
+
+inline static bool
+scalar(Lane l)
+{
+        return !l.text && !l.maybe;
+}
 
 static i32
 lane_kind(BcLir *c, Value const *callee, i32 pos, i32 index)
@@ -2299,6 +2308,10 @@ lane_kind(BcLir *c, Value const *callee, i32 pos, i32 index)
         u8     kind  = c->vs[pos].kind;
         Class *class = param_class(c, callee, index);
         i32    want  = (class == NULL) ? -1 : class->i;
+
+        if (want == CLASS_STRING) {
+                return boxed(kind) ? CLASS_STRING : -1;
+        }
 
         if (want != -1 && want != CLASS_INT && want != CLASS_FLOAT) {
                 return -1;
@@ -2316,9 +2329,33 @@ lane_kind(BcLir *c, Value const *callee, i32 pos, i32 index)
 }
 
 static Lane
+lane_text(BcLir *c, i32 pos, LirLabel failed)
+{
+        LirReg const *held = held_string(c, pos);
+
+        if (held != NULL) {
+                return (Lane) { .text = true, .v = lir_r(held[2]), .aux = held[1] };
+        }
+
+        Spot s = spot(c, pos);
+
+        typecheck(c, s, VALUE_STRING, failed);
+
+        return (Lane) {
+                .text = true,
+                .v    = lir_r(ldp(c, s.base, s.at + VOFF(str))),
+                .aux  = ldx(c, LIR_LD_U32, LIR_I64, s.base, s.at + VOFF(bytes))
+        };
+}
+
+static Lane
 lane_arg(BcLir *c, i32 pos, i32 class, LirLabel failed)
 {
         bool real = (class == CLASS_FLOAT);
+
+        if (class == CLASS_STRING) {
+                return lane_text(c, pos, failed);
+        }
 
         if (intish(c->vs[pos].kind)) {
                 return (Lane) { .real = false, .v = iopnd(c, pos) };
@@ -2373,6 +2410,8 @@ lane_arith(BcLir *c, u8 op, Lane *a, Lane b, bool emit, LirLabel failed)
              || (divide && !real && b.v.kind == LO_IMM && (b.v.imm == 0 || b.v.imm == -1))
              || a->flag
              || b.flag
+             || !scalar(*a)
+             || !scalar(b)
         ) {
                 return false;
         }
@@ -2413,7 +2452,7 @@ lane_compare(BcLir *c, u8 op, Lane *a, Lane b, bool emit)
         bool real  = a->real || b.real;
         bool mixed = (a->real != b.real) && (op == TY_INLINE_EQ || op == TY_INLINE_NE);
 
-        if (a->flag || b.flag || mixed) {
+        if (a->flag || b.flag || mixed || !scalar(*a) || !scalar(b)) {
                 return false;
         }
 
@@ -2439,6 +2478,103 @@ lane_logic(BcLir *c, u8 op, Lane *a, Lane b, bool emit)
         if (emit) {
                 a->v = lir_r(vop(c, (op == TY_INLINE_AND) ? LIR_AND : LIR_OR, LIR_I64, a->v, b.v));
         }
+
+        return true;
+}
+
+static bool
+lane_byte(BcLir *c, TyInlinePlan const *plan, i32 i, Lane *a, Lane b, bool emit)
+{
+        TyInlineInsn const *next  = &plan->insns[i + 1];
+        bool                fused = (i + 2 < plan->count)
+                                 && (next[0].op == TY_INLINE_INTEGER)
+                                 && (next[1].op == TY_INLINE_ELSE);
+
+        if (!b.text || !scalar(*a) || a->real || a->flag) {
+                return false;
+        }
+
+        if (!emit) {
+                *a = (Lane) { .maybe = !fused };
+                return true;
+        }
+
+        LirReg   x    = (a->v.kind == LO_IMM) ? ival(c, a->v.imm) : a->v.reg;
+        LirReg   n    = b.aux;
+        LirReg   r    = lir_reg(c->L, LIR_I64);
+        LirReg   none = fused ? LIR_NONE : lir_reg(c->L, LIR_I64);
+        LirLabel wrap = coldlabel(c);
+        LirLabel out  = coldlabel(c);
+        LirLabel done = newlabel(c);
+
+        jcc(c, LIR_UGE, lir_r(x), lir_r(n), wrap);
+        vset(c, LIR_LD_U8, r, lir_m(b.v.reg, x, 1, 0));
+
+        if (!fused) {
+                vset(c, LIR_MOV, none, lir_i(0));
+        }
+
+        jump(c, done);
+
+        bind(c, wrap);
+
+        LirReg j = wrapped(c, lir_r(x), n);
+
+        jcc(c, LIR_UGE, lir_r(j), lir_r(n), out);
+        vset(c, LIR_LD_U8, r, lir_m(b.v.reg, j, 1, 0));
+
+        if (!fused) {
+                vset(c, LIR_MOV, none, lir_i(0));
+        }
+
+        jump(c, done);
+
+        bind(c, out);
+        vset(c, LIR_MOV, r, lir_i(fused ? next->integer : 0));
+
+        if (!fused) {
+                vset(c, LIR_MOV, none, lir_i(1));
+        }
+
+        jump(c, done);
+
+        bind(c, done);
+
+        *a = (Lane) { .maybe = !fused, .v = lir_r(r), .aux = none };
+
+        return true;
+}
+
+static bool
+lane_else(BcLir *c, Lane *a, Lane b, bool emit)
+{
+        if (!a->maybe) {
+                return !a->text;
+        }
+
+        if (!scalar(b) || b.real || b.flag) {
+                return false;
+        }
+
+        if (!emit) {
+                *a = (Lane) {0};
+                return true;
+        }
+
+        LirReg   r    = lir_reg(c->L, LIR_I64);
+        LirLabel nil  = newlabel(c);
+        LirLabel done = newlabel(c);
+
+        jnz(c, a->aux, nil);
+        vset(c, LIR_MOV, r, a->v);
+        jump(c, done);
+
+        bind(c, nil);
+        vset(c, LIR_MOV, r, b.v);
+
+        bind(c, done);
+
+        *a = (Lane) { .v = lir_r(r) };
 
         return true;
 }
@@ -2525,7 +2661,10 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                         }
                         st[d] = emit
                               ? lane_arg(c, first + insn->local, kinds[insn->local], failed)
-                              : (Lane) { .real = (kinds[insn->local] == CLASS_FLOAT) };
+                              : (Lane) {
+                                        .real = (kinds[insn->local] == CLASS_FLOAT),
+                                        .text = (kinds[insn->local] == CLASS_STRING)
+                                };
                         break;
 
                 case TY_INLINE_INTEGER:
@@ -2571,7 +2710,7 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                         bool set = (insn->op == TY_INLINE_SET_FIELD);
                         i32  j   = same_field(plan, i);
 
-                        if ((set && d < 1) || p->fields[j].class == NULL) {
+                        if ((set && (d < 1 || !scalar(st[d - 1]))) || p->fields[j].class == NULL) {
                                 return false;
                         }
 
@@ -2617,6 +2756,18 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
                         }
                         break;
 
+                case TY_INLINE_BYTE:
+                        if (d < 2 || !lane_byte(c, plan, i, &st[d - 2], st[d - 1], emit)) {
+                                return false;
+                        }
+                        break;
+
+                case TY_INLINE_ELSE:
+                        if (d < 2 || !lane_else(c, &st[d - 2], st[d - 1], emit)) {
+                                return false;
+                        }
+                        break;
+
                 case TY_INLINE_NOT:
                         if (d < 1 || !st[d - 1].flag) {
                                 return false;
@@ -2635,7 +2786,7 @@ lane_plan(BcLir *c, Plan const *p, i32 first, i32 const *kinds, Lane *out, bool 
 
         *out = st[0];
 
-        return true;
+        return scalar(*out);
 }
 
 static bool
@@ -2710,13 +2861,16 @@ vs_call_global(BcLir *c, BcLirNode const *node)
 
         guard_note(
                 c,
-                "inlined `%s`: assumed the global still refers to it and its arguments are numeric",
+                "inlined `%s`: assumed the global still refers to it and its arguments have their declared types",
                 name_of(callee)
         );
 
         LirLabel failed = vs_guard(c);
 
-        guard_self(c, global_addr(c, node->global), callee, failed);
+        if (!proven_callee(c, node->global)) {
+                guard_self(c, global_addr(c, node->global), callee, failed);
+        }
+
         lane_plan(c, &p, first, kinds, &r, true, failed);
         vs_seal(c, failed);
         vs_pop(c, argc);
