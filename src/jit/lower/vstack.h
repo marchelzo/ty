@@ -1918,7 +1918,9 @@ vs_view(BcLir *c, BcLirNode const *node, char const *ip)
 static LirReg
 vs_object(BcLir *c, i32 i, i32 slot, Class const *class)
 {
-        Spot s      = (i < 0) ? lspot(c, slot) : spot(c, i);
+        Spot s      = (i >= 0)      ? spot(c, i)
+                    : c->self_boxed ? (Spot) { self_addr(c), 0 }
+                    :                 lspot(c, slot);
         bool cached = local_ok(c, slot) && (c->proven_gen != NULL);
 
         if (cached && c->proven_gen[slot] == c->gen) {

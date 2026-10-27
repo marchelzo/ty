@@ -2576,9 +2576,10 @@ AttachJit(void)
 }
 
 static void
-OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *classes, u64 const *counts, int n)
+OnSlowSite(void *ctx, char const *ip, char const *kind, u64 miss, u64 cold, i32 const *classes, u64 const *counts, int n)
 {
-        Expr const *e = compiler_find_expr(M.ty, ip - 1);
+        u64         count = miss + cold;
+        Expr const *e     = compiler_find_expr(M.ty, ip - 1);
 
         if (e == NULL || e->mod == NULL) {
                 return;
@@ -2602,7 +2603,19 @@ OnSlowSite(void *ctx, char const *ip, char const *kind, u64 count, i32 const *cl
         }
 
         byte_vector b = {0};
-        dump(&b, "%s missed the fast path %llu times", kind, (unsigned long long)count);
+        if (miss == 0) {
+                dump(&b, "%s has no inline path, %llu calls", kind, (unsigned long long)cold);
+        } else if (cold == 0) {
+                dump(&b, "%s missed the fast path %llu times", kind, (unsigned long long)miss);
+        } else {
+                dump(
+                        &b,
+                        "%s missed the fast path %llu times, %llu more calls with no inline path",
+                        kind,
+                        (unsigned long long)miss,
+                        (unsigned long long)cold
+                );
+        }
 
         for (int i = 0; i < n && i < 4; ++i) {
                 int best = i;

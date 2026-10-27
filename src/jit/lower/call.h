@@ -387,7 +387,7 @@ method_fast(BcLir *c, BcLirNode const *node)
         LirReg  out    = slot_of(c, c->sp - explicit - node->argc);
         LirOpnd self   = explicit ? lir_r(slot_of(c, c->sp - 1)) : lir_i(0);
 
-        miss_site(c);
+        cold_site(c);
         tycall(
                 c,
                 jit_rt_call_builtin_method,
@@ -901,7 +901,7 @@ inline_method(BcLir *c, BcLirNode const *node, LirLabel *done)
         i32      first = c->sp - explicit - node->argc;
         LirReg   self  = explicit
                        ? slot_of(c, c->sp - 1)
-                       : addr(c, c->locals, vat(c->self_index));
+                       : self_addr(c);
 
         *done = newlabel(c);
 

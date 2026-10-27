@@ -1372,11 +1372,15 @@ class JitMisses < Screen {
     init(prof: Profile) {
         super('Fast-path misses')
         self.prof = prof
-        all = ((prof.data['jit_stats'] ?? %{})['sites'] ?? []).filter(\_['miss'] > 0)
-        most = float(max(all.map(\_['miss']).max() ?? 1, 1))
+        all = ((prof.data['jit_stats'] ?? %{})['sites'] ?? []).filter(\calls(_) > 0)
+        most = float(max(all.map(calls).max() ?? 1, 1))
         sort = 'miss'
         desc? = true
         refresh()
+    }
+
+    static calls(r: _) -> Int {
+        r['miss'] + (r['cold'] ?? 0)
     }
 
     rate(r: _) -> Float {
@@ -1384,7 +1388,7 @@ class JitMisses < Screen {
     }
 
     refresh() {
-        let key = (sort == 'rate') ? rate : (r -> r[sort])
+        let key = (sort == 'rate') ? rate : calls
         rows = all
             .filter(r -> matches?(r['func'], r['file'], filter) || matches?(r['kind'], '', filter))
             .sort!(by=key, desc=desc?)
@@ -1411,7 +1415,7 @@ class JitMisses < Screen {
         let r = rows[i]
         let rt = rate(r)
         [
-            hot(r['miss'] / most, fmt-count(r['miss']).fit(9, 1)),
+            hot(calls(r) / most, fmt-count(calls(r)).fit(9, 1)),
             (rt >= 0) ? pct(rt).fit(7, 1) : dim('—'.fit(7, 1)),
             r['kind'].fit(17),
             "{place(r['file'], r['line'])}{dim(":{r['col']}")}".fit(26),
@@ -1426,15 +1430,14 @@ class JitMisses < Screen {
         }
         let r = rows[sel]
         let rt = rate(r)
-        let counts = if rt >= 0 {
-            [
-                "{fmt-count(r['fast'])} inline hits",
-                "{fmt-count(r['miss'])} misses",
-                "{100 * rt:.1f}% miss rate"
-            ].join(' · ')
-        } else {
-            "{fmt-count(r['miss'])} calls into the generic path"
-        }
+        let inline = (rt >= 0) ? [
+            "{fmt-count(r['fast'])} inline hits",
+            "{fmt-count(r['miss'])} misses",
+            "{100 * rt:.1f}% miss rate"
+        ] : []
+        let cold = (r['cold'] ?? 0) > 0 ? ["{fmt-count(r['cold'])} calls with no inline path"] : []
+        let warm = (r['warm'] ?? 0) > 0 ? ["{fmt-count(r['warm'])} before tier-up"] : []
+        let counts = [*inline, *cold, *warm].join(' · ')
         let notes = ["{bold(r['kind'])} at column {r['col']}  {dim(counts)}"]
         let all = float(max(r['types'].map(\_[2]).sum() ?? 0, 1))
         for t in r['types'].sort(by=\_[2], desc=true)[;6] {

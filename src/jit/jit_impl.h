@@ -137,7 +137,10 @@ jit_log_compile(JitCompileRecord rec);
 JitCompileRecord const *
 jit_compile_records(usize *n);
 
-typedef void JitSlowSiteFn(void *ctx, char const *ip, char const *kind, u64 count, i32 const *classes, u64 const *counts, int n);
+typedef void JitSlowSiteFn(void *ctx, char const *ip, char const *kind, u64 miss, u64 cold, i32 const *classes, u64 const *counts, int n);
+
+void
+jit_site_code(void const *body, usize size, bool warm, char const *bc, u32 const *cold, u32 n);
 
 void
 jit_slow_sites(JitSlowSiteFn *fn, void *ctx);
@@ -210,9 +213,6 @@ jit_rt_gt(Ty *ty, Value *result, Value *a, Value *b);
 
 void
 jit_rt_ge(Ty *ty, Value *result, Value *a, Value *b);
-
-void
-jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id);
 
 void
 jit_rt_try_member(Ty *ty, Value *top, int member_id);
@@ -417,6 +417,9 @@ typedef struct {
         u32            n;
         JitCallProfile sites[];
 } JitProfile;
+
+void
+jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id, JitCallProfile *site);
 
 inline static void
 jit_profile_note(JitCallProfile *p, uptr key)

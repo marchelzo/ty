@@ -334,6 +334,29 @@ numeric_getter(
 }
 
 static void
+member_arms(BcLir *c, LirReg value, LirReg out, i32 member, LirLabel done)
+{
+        uptr keys[JIT_PROFILE_WAYS];
+        u32  n = seen_keys(c, &c->nodes[c->at], keys);
+
+        for (u32 i = 0; i < n; ++i) {
+                Class   *class = (keys[i] < (uptr)class_count(c->ctx)) ? class_get(c->ctx, keys[i]) : NULL;
+                LirLabel next  = newlabel(c);
+                LirReg   slot  = known_field_slot(c, value, class, member, false, next);
+
+                if (slot != LIR_NONE) {
+                        copy(c, out, 0, slot, 0);
+                        count_fast(c, SITE_MEMBER);
+                        jump(c, done);
+                } else {
+                        known_getter(c, value, class, member, c->sp - 1, next, done);
+                }
+
+                bind(c, next);
+        }
+}
+
+static bool
 fast_member(
         BcLir *c,
         LirReg value,
@@ -346,8 +369,21 @@ fast_member(
 {
         Class *class = self ? self_class(c) : hint_class(c, c->at);
 
+        if (
+                c->compact
+             && (class != NULL)
+             && (offset_of(class, member, false, OFF_GETTER) != OFF_NOT_FOUND)
+        ) {
+                return false;
+        }
+
         if (!self && numeric_getter(c, value, class, member, slow, done)) {
-                return;
+                return true;
+        }
+
+        if (!self && (class == NULL || class->is_trait)) {
+                member_arms(c, value, out, member, done);
+                class = NULL;
         }
 
         bool     field = extended(class) && (offset_of(class, member, false, OFF_FIELD) != OFF_NOT_FOUND);
@@ -356,7 +392,7 @@ fast_member(
 
         if (slot == LIR_NONE) {
                 if (known_getter(c, value, class, member, c->sp - !self, slow, done)) {
-                        return;
+                        return true;
                 }
                 slot = any_field_slot(c, value, class, member, false, slow);
         } else if (other != slow) {
@@ -373,6 +409,8 @@ fast_member(
         count_fast(c, SITE_MEMBER);
 
         jump(c, done);
+
+        return true;
 }
 
 static void
@@ -382,21 +420,20 @@ lower_member(BcLir *c, i32 member, bool self)
         LirLabel done  = newlabel(c);
         LirReg   out   = slot_of(c, c->sp - !self);
         bool     known = self && (c->self_index >= 0);
-        LirReg   value = known ? addr(c, c->locals, vat(c->self_index)) : out;
-
-        if ((!self && !c->compact) || known) {
-                fast_member(c, value, out, member, self, slow, done);
-        }
+        LirReg   value = known ? self_addr(c) : out;
+        bool     inl   = ((!self && !c->compact) || known)
+                      && fast_member(c, value, out, member, self, slow, done);
 
         bind(c, slow);
-        miss_site(c);
+        (inl ? miss_site : cold_site)(c);
         tycall(
                 c,
                 jit_rt_member,
                 LT_VOID,
                 preg(out),
                 { LT_PTR, self ? lir_i(0) : lir_r(out) },
-                imm32(member)
+                imm32(member),
+                pimm(self ? NULL : profile_site(c, &c->nodes[c->at]))
         );
 
         bind(c, done);

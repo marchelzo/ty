@@ -241,7 +241,7 @@ member_assign(BcLir *c, BcLirNode const *node, char const *ip)
         LirLabel slow   = newlabel(c);
         LirLabel done   = newlabel(c);
         LirReg   obj    = self
-                        ? addr(c, c->locals, vat(c->self_index))
+                        ? self_addr(c)
                         : slot_of(c, c->sp - 1);
         Class   *class  = self
                         ? class_get(c->ctx, c->function->info[FUN_INFO_CLASS])
@@ -303,6 +303,11 @@ swap_top(BcLir *c)
 static void
 push_self(BcLir *c)
 {
+        if (c->self_boxed) {
+                copy(c, c->ops, vat(c->sp++), self_addr(c), 0);
+                return;
+        }
+
         if (c->self_index >= 0) {
                 local_load(c, c->self_index);
                 return;

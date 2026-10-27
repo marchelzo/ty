@@ -767,12 +767,20 @@ static char const *site_kind_names[] = {
 #define SITE_TYPES      8
 #define SITE_PROBES     32
 
+enum {
+        PATH_INLINE,
+        PATH_COLD,
+        PATH_WARM
+};
+
 typedef struct {
         char const *ip;
         u8          kind;
         bool        inl;
         u64        *fast;
         _Atomic u64 miss;
+        _Atomic u64 cold;
+        _Atomic u64 warm;
         struct {
                 i32         a;
                 i32         b;
@@ -783,14 +791,25 @@ typedef struct {
 typedef struct {
         void const *ra;
         u8          kind;
+        u8          path;
         JitSite    *site;
 } JitSiteRef;
 
-static JitSite    site_table[SITE_TABLE_SIZE];
-static u64        site_fast[SITE_TABLE_SIZE];
-static int        site_nfast;
+typedef struct {
+        uptr        lo;
+        uptr        hi;
+        bool        warm;
+        char const *bc;
+        u32        *cold;
+        u32         n;
+} SiteCode;
 
-static JitSite *
+static JitSite       site_table[SITE_TABLE_SIZE];
+static u64           site_fast[SITE_TABLE_SIZE];
+static int           site_nfast;
+static vec(SiteCode) site_codes;
+
+static JitSiteRef
 site_lookup(Ty *ty, void const *ra, int kind);
 static JitSiteRef site_refs[SITE_TABLE_SIZE];
 static TySpinLock SiteLock;
@@ -836,31 +855,75 @@ site_at(char const *ip, int kind)
         return site;
 }
 
-static _Thread_local struct {
-        void const *ra;
-        u8          kind;
-        JitSite    *site;
-} site_cache[64];
+static _Thread_local JitSiteRef site_cache[64];
 
-static JitSite *
-site_of(Ty *ty, void const *ra, int kind)
+void
+jit_site_code(void const *body, usize size, bool warm, char const *bc, u32 const *cold, u32 n)
 {
-        uptr c = (((uptr)ra >> 2) ^ (uptr)kind) & 63;
+        uptr lo   = (uptr)body;
+        uptr hi   = lo + size;
+        u32 *copy = (n > 0) ? memcpy(malloc(n * sizeof *cold), cold, n * sizeof *cold) : NULL;
 
-        if (site_cache[c].ra == ra && site_cache[c].kind == kind) {
-                return site_cache[c].site;
+        TySpinLockLock(&SiteLock);
+
+        for (usize i = 0; i < vN(site_codes);) {
+                SiteCode *sc = v_(site_codes, i);
+                if (sc->lo < hi && lo < sc->hi) {
+                        free(sc->cold);
+                        *sc = *vvL(site_codes);
+                        vN(site_codes) -= 1;
+                } else {
+                        i += 1;
+                }
         }
 
-        JitSite *site = site_lookup(ty, ra, kind);
+        xvP(site_codes, ((SiteCode) {
+                .lo   = lo,
+                .hi   = hi,
+                .warm = warm,
+                .bc   = bc,
+                .cold = copy,
+                .n    = n
+        }));
 
-        site_cache[c].ra   = ra;
-        site_cache[c].kind = kind;
-        site_cache[c].site = site;
-
-        return site;
+        TySpinLockUnlock(&SiteLock);
 }
 
-static JitSite *
+static u8
+site_path(void const *ra, char const *ip)
+{
+        uptr at = (uptr)ra;
+
+        for (usize i = 0; i < vN(site_codes); ++i) {
+                SiteCode const *sc = v_(site_codes, i);
+                if (at <= sc->lo || at > sc->hi) {
+                        continue;
+                }
+                for (u32 j = 0; j < sc->n; ++j) {
+                        if (sc->bc + sc->cold[j] == ip) {
+                                return sc->warm ? PATH_WARM : PATH_COLD;
+                        }
+                }
+                break;
+        }
+
+        return PATH_INLINE;
+}
+
+static JitSiteRef
+site_of(Ty *ty, void const *ra, int kind)
+{
+        uptr        c   = (((uptr)ra >> 2) ^ (uptr)kind) & 63;
+        JitSiteRef *hit = &site_cache[c];
+
+        if (hit->ra != ra || hit->kind != kind) {
+                *hit = site_lookup(ty, ra, kind);
+        }
+
+        return *hit;
+}
+
+static JitSiteRef
 site_lookup(Ty *ty, void const *ra, int kind)
 {
         uptr h = site_hash(ra, kind);
@@ -874,18 +937,24 @@ site_lookup(Ty *ty, void const *ra, int kind)
                 }
 
                 if (key == ra && r->kind == kind) {
-                        return r->site;
+                        return *r;
                 }
         }
 
-        char const *ip   = prof_jit_ip(ty, ra);
-        JitSite    *site = (ip != NULL) ? site_at(ip, kind) : NULL;
+        char const *ip  = prof_jit_ip(ty, ra);
+        JitSiteRef  ref = {
+                .ra   = ra,
+                .kind = kind,
+                .site = (ip != NULL) ? site_at(ip, kind) : NULL
+        };
 
-        if (site == NULL) {
-                return NULL;
+        if (ref.site == NULL) {
+                return ref;
         }
 
         TySpinLockLock(&SiteLock);
+
+        ref.path = site_path(ra, ip);
 
         for (int i = 0; i < SITE_PROBES; ++i) {
                 JitSiteRef *r = &site_refs[(h + i) & (SITE_TABLE_SIZE - 1)];
@@ -896,7 +965,8 @@ site_lookup(Ty *ty, void const *ra, int kind)
 
                 if (r->ra == NULL) {
                         r->kind = kind;
-                        r->site = site;
+                        r->path = ref.path;
+                        r->site = ref.site;
                         __atomic_store_n(&r->ra, ra, __ATOMIC_RELEASE);
                         break;
                 }
@@ -904,7 +974,7 @@ site_lookup(Ty *ty, void const *ra, int kind)
 
         TySpinLockUnlock(&SiteLock);
 
-        return site;
+        return ref;
 }
 
 static void
@@ -939,15 +1009,19 @@ jit_site_miss(Ty *ty, void const *ra, int kind, Value const *a, Value const *b)
                 return;
         }
 
-        JitSite *s = site_of(ty, ra, kind);
+        JitSiteRef   r = site_of(ty, ra, kind);
+        JitSite     *s = r.site;
 
         if (s == NULL) {
                 return;
         }
 
-        u64 n = s->miss;
+        _Atomic u64 *count = (r.path == PATH_WARM) ? &s->warm
+                           : (r.path == PATH_COLD) ? &s->cold
+                           :                         &s->miss;
+        u64          n     = *count;
 
-        atomic_store_explicit(&s->miss, n + 1, memory_order_relaxed);
+        atomic_store_explicit(count, n + 1, memory_order_relaxed);
 
         if (n < 64 || (n & 7) == 0) {
                 site_type(s, (a != NULL) ? ClassOf(a) : -1, (b != NULL) ? ClassOf(b) : -1);
@@ -1015,8 +1089,8 @@ site_cmp(void const *a, void const *b)
 {
         JitSite const *x = a;
         JitSite const *y = b;
-        u64 mx = x->miss;
-        u64 my = y->miss;
+        u64 mx = x->miss + x->cold;
+        u64 my = y->miss + y->cold;
         if (mx != my) {
                 return (my > mx) - (my < mx);
         }
@@ -1118,20 +1192,19 @@ jit_stats_json(Ty *ty, FILE *f)
         u64 fast[SITE_KIND_COUNT] = {0};
         u64 miss[SITE_KIND_COUNT] = {0};
         u64 slow[SITE_KIND_COUNT] = {0};
+        u64 warm = 0;
         JitSite *sorted = malloc(SITE_TABLE_SIZE * sizeof *sorted);
         int n = 0;
 
         for (int i = 0; i < SITE_TABLE_SIZE; ++i) {
                 JitSite const *site = &site_table[i];
                 u64 hits = (site->fast != NULL) ? *site->fast : 0;
-                if (site->ip != NULL && (hits + site->miss) > 0) {
+                if (site->ip != NULL && (hits + site->miss + site->cold + site->warm) > 0) {
                         fast[site->kind] += hits;
-                        if (site->inl) {
-                                miss[site->kind] += site->miss;
-                        } else {
-                                slow[site->kind] += site->miss;
-                        }
-                        sorted[n++] = *site;
+                        miss[site->kind] += site->miss;
+                        slow[site->kind] += site->cold;
+                        warm             += site->warm;
+                        sorted[n++]       = *site;
                 }
         }
 
@@ -1147,6 +1220,7 @@ jit_stats_json(Ty *ty, FILE *f)
         first = json_path(f, first, "method call",       st->call_method_baked + st->call_method_builtin, slow[SITE_METHOD] + miss[SITE_METHOD], true);
         first = json_path(f, first, "arithmetic",        0,                     slow[SITE_ARITH] + miss[SITE_ARITH],     false);
         first = json_path(f, first, "comparison",        0,                     slow[SITE_COMPARE] + miss[SITE_COMPARE], false);
+        first = json_path(f, first, "before tier-up",    0,                     warm,                                    false);
 
         qsort(sorted, n, sizeof sorted[0], site_cmp);
 
@@ -1160,9 +1234,11 @@ jit_stats_json(Ty *ty, FILE *f)
                 json_str(f, site_kind_names[site->kind]);
                 fprintf(
                         f,
-                        ",\"fast\":%llu,\"miss\":%llu,\"inline\":%s,\"file\":",
+                        ",\"fast\":%llu,\"miss\":%llu,\"cold\":%llu,\"warm\":%llu,\"inline\":%s,\"file\":",
                         (unsigned long long)((site->fast != NULL) ? *site->fast : 0),
                         (unsigned long long)site->miss,
+                        (unsigned long long)site->cold,
+                        (unsigned long long)site->warm,
                         site->inl ? "true" : "false"
                 );
                 json_str(f, (e != NULL && e->mod != NULL) ? e->mod->path : "");
@@ -1204,7 +1280,7 @@ jit_slow_sites(JitSlowSiteFn *fn, void *ctx)
                 u64 counts[SITE_TYPES];
                 int n = 0;
 
-                if (s->ip == NULL || s->miss == 0) {
+                if (s->ip == NULL || (s->miss + s->cold) == 0) {
                         continue;
                 }
 
@@ -1216,7 +1292,7 @@ jit_slow_sites(JitSlowSiteFn *fn, void *ctx)
                         }
                 }
 
-                fn(ctx, s->ip, site_kind_names[s->kind], s->miss, classes, counts, n);
+                fn(ctx, s->ip, site_kind_names[s->kind], s->miss, s->cold, classes, counts, n);
         }
 }
 
@@ -1464,7 +1540,7 @@ jit_rt_getter(Ty *ty, ptrdiff_t idx, Value const *obj, Value const *fn)
 }
 
 void
-jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
+jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id, JitCallProfile *site)
 {
         ptrdiff_t idx = result - vv(STACK);
         vN(STACK) = idx + 1;
@@ -1472,6 +1548,10 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
         if (obj == NULL) {
                 obj = vm_get_self(ty);
                 v_L(STACK) = *obj;
+        }
+
+        if (site != NULL) {
+                jit_profile_note(site, (obj->type == VALUE_OBJECT && obj->class > 0) ? (uptr)obj->class : 0);
         }
 
         SITE_MISS(SITE_MEMBER, obj, NULL);

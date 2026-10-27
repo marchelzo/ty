@@ -112,6 +112,7 @@ typedef struct bc_lir {
         bool                  ok;
         bool                  dynamic;
         bool                  has_try;
+        bool                  self_boxed;
         bool                  compact;
         bool                  speculate;
         bool                  vsaves;
@@ -142,6 +143,8 @@ typedef struct bc_lir {
         u32                   nosr;
         u32                   last_call;
         i32                  *tier;
+        u32                  *cold;
+        u32                   ncold;
         JitProfile           *profile;
         JitProfile const     *seen;
 
@@ -2005,10 +2008,16 @@ rt_method(
 static bool
 profiled(BcLirNode const *node)
 {
-        return decoded(node)
-            && (node->op == INSTR_CALL || node->op == INSTR_CALL_METHOD)
-            && (node->nkw == 0)
-            && (node->argc >= 0);
+        if (!decoded(node)) {
+                return false;
+        }
+
+        switch (node->op) {
+        case INSTR_MEMBER_ACCESS: return true;
+        case INSTR_CALL:
+        case INSTR_CALL_METHOD:   return (node->nkw == 0) && (node->argc >= 0);
+        default:                  return false;
+        }
 }
 
 static void
@@ -2858,6 +2867,8 @@ plan_nodes(BcLir *c)
         for (i32 off = 0; off < c->size; ++off) {
                 if (reached(&c->nodes[off])) {
                         plan_node(c, off);
+                        c->self_boxed = c->self_boxed
+                                     || ((c->self_index >= 0) && captures(c, off, c->self_index));
                 }
         }
 
@@ -3764,6 +3775,10 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNot
         Expr const *source = !from_eval(f) ? expr_of(f) : NULL;
 
         jit_perf_map(code->body, code->size, name_of(f), source);
+
+        if (JitStatsOn) {
+                jit_site_code(code->body, code->size, c->tier != NULL, code_of(f), c->cold, c->ncold);
+        }
 
         if (from_eval(f)) {
                 code           = lir_code_adopt(ty, code);

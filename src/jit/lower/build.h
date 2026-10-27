@@ -227,6 +227,16 @@ captures(BcLir const *c, i32 off, i32 slot)
 }
 
 static LirReg
+reference(BcLir *c, i32 local, bool all);
+
+static LirReg
+self_addr(BcLir *c)
+{
+        return c->self_boxed ? reference(c, c->self_index, false)
+             :                 addr(c, c->locals, vat(c->self_index));
+}
+
+static LirReg
 loop_reg(BcLir const *c, i32 slot);
 
 static void
@@ -521,6 +531,24 @@ miss_site(BcLir *c)
         if (JitStatsOn) {
                 effect(c, LIR_SITE, (LirOpnd[]) { lir_i(c->at + 1) }, 1);
         }
+}
+
+inline static void
+cold_site(BcLir *c)
+{
+        if (!JitStatsOn) {
+                return;
+        }
+
+        if (c->cold == NULL) {
+                c->cold = new(c, u32, c->size);
+        }
+
+        if (c->ncold < (u32)c->size) {
+                c->cold[c->ncold++] = c->at + 1;
+        }
+
+        miss_site(c);
 }
 
 inline static void
