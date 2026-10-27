@@ -930,6 +930,28 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
 void
 _value_mark(Ty *ty, Value const *v);
 
+inline static void
+GCMarkPush(Ty *ty, Value *v)
+{
+        enum : u64 {
+                INERT = (1ULL << VALUE_INTEGER)
+                      | (1ULL << VALUE_REAL)
+                      | (1ULL << VALUE_BOOLEAN)
+                      | (1ULL << VALUE_NIL)
+                      | (1ULL << VALUE_NONE)
+                      | (1ULL << VALUE_TAG)
+                      | (1ULL << VALUE_SENTINEL)
+                      | (1ULL << VALUE_INDEX)
+        };
+
+        if ((v->src == 0) && ((INERT >> (v->type & 63)) & 1)) {
+                return;
+        }
+
+        xvP(ty->marking, v);
+}
+
+
 static inline Array *
 value_array_new(Ty *ty)
 {

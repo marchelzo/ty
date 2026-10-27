@@ -89,15 +89,15 @@ heap_mark(Ty *ty, Heap *h)
         MARK(h);
 
         for (usize i = 0; i < vN(h->xs); ++i) {
-                xvP(ty->marking, v_(h->xs, i));
+                GCMarkPush(ty, v_(h->xs, i));
         }
 
         if (!IsNone(h->order.by)) {
-                xvP(ty->marking, &h->order.by);
+                GCMarkPush(ty, &h->order.by);
         }
 
         if (!IsNone(h->order.cmp)) {
-                xvP(ty->marking, &h->order.cmp);
+                GCMarkPush(ty, &h->order.cmp);
         }
 }
 

@@ -7,6 +7,9 @@
 #include "prof.h"
 
 #include <ctype.h>
+#ifndef _WIN32
+#include <sched.h>
+#endif
 #include <errno.h>
 #include <locale.h>
 #include <setjmp.h>
@@ -445,6 +448,7 @@ InitThreadGroup(ThreadGroup *group, u8 id, ThreadGroup *parent)
         TySpinLockInit(&group->Lock);
         TySpinLockInit(&group->GCLock);
         TySpinLockInit(&group->DLock);
+        TySpinLockInit(&group->RefLock);
         TyMutexInit(&group->GCPhaseLock);
         TyCondVarInit(&group->GCPhaseCond);
         group->GCPhase = GC_PHASE_NONE;
@@ -509,6 +513,10 @@ BequeathAllocs(ThreadGroup *group)
 
         xvPv(heir->DeadAllocs, group->DeadAllocs);
         xvPv(heir->DeadFinalizable, group->DeadFinalizable);
+        xvPv(heir->DeadFFIAutos, group->DeadFFIAutos);
+        xvPv(heir->DeadPinned, group->DeadPinned);
+        xvPv(heir->DeadCleanup, group->DeadCleanup);
+        GCAdoptBlocks(&heir->DeadBlocks, &group->DeadBlocks, bits);
         heir->DeadUsed += group->DeadUsed;
 
         TySpinLockUnlock(&heir->DLock);
@@ -534,6 +542,26 @@ WaitForGCPhase(Ty *ty, int bits)
 }
 
 inline static void
+AwaitReady(ThreadGroup *group, int n)
+{
+        for (u32 spins = 0; atomic_load_explicit(&group->GCReadyCount, memory_order_acquire) < n; ++spins) {
+                if (spins < 4096) {
+#if defined(__x86_64__)
+                        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+                        __asm__ __volatile__("yield");
+#endif
+                } else {
+#ifdef _WIN32
+                        SwitchToThread();
+#else
+                        sched_yield();
+#endif
+                }
+        }
+}
+
+inline static void
 StartGC(Ty *ty)
 {
         TyMutexLock(&ty->group->GCPhaseLock);
@@ -546,6 +574,7 @@ StartGC(Ty *ty)
 inline static void
 EndGC(Ty *ty)
 {
+        GCDropRefIndex(ty->group);
         TyMutexLock(&ty->group->GCPhaseLock);
         ty->group->GCPhase = GC_PHASE_NONE;
         TyMutexUnlock(&ty->group->GCPhaseLock);
@@ -555,9 +584,7 @@ EndGC(Ty *ty)
 inline static void
 NextGCPhase(Ty *ty, int phase, int n_running)
 {
-        while (ty->group->GCReadyCount < n_running) {
-                ;
-        }
+        AwaitReady(ty->group, n_running);
         TyMutexLock(&ty->group->GCPhaseLock);
         ty->group->GCReadyCount = 0;
         ty->group->GCPhase = phase;
@@ -641,7 +668,7 @@ WaitGC(Ty *ty)
         }
 
         MarkStorage(ty);
-        MarkPendingFFIAutoValues(ty, &ty->allocs);
+        MarkPendingFFIAutoValues(ty, &ty->ffi_autos);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
@@ -748,12 +775,13 @@ DoGC(Ty *ty)
         MarkStorage(ty);
 
         for (int i = 0; i < nBlocked; ++i) {
-                MarkPendingFFIAutoValues(ty, &v__(ty->group->TyList, blockedThreads[i])->allocs);
+                MarkPendingFFIAutoValues(ty, &v__(ty->group->TyList, blockedThreads[i])->ffi_autos);
         }
-        MarkPendingFFIAutoValues(ty, &ty->allocs);
+        MarkPendingFFIAutoValues(ty, &ty->ffi_autos);
 
         TySpinLockLock(&ty->group->DLock);
-        MarkPendingFFIAutoValues(ty, &ty->group->DeadAllocs);
+        GCMarkPinned(ty, &ty->group->DeadPinned);
+        MarkPendingFFIAutoValues(ty, &ty->group->DeadFFIAutos);
         for (int i = 0; i < vN(ty->group->Finalize); ++i) {
                 value_mark(ty, v_(ty->group->Finalize, i));
         }
@@ -783,9 +811,7 @@ DoGC(Ty *ty)
                 DebugMarkRoots(ty);
         }
 
-        while (ty->group->GCReadyCount < nRunning) {
-                ;
-        }
+        AwaitReady(ty->group, nRunning);
 
         GCQueueFinalizers(ty, &ty->group->Finalize);
 
@@ -811,7 +837,9 @@ DoGC(Ty *ty)
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
         TySpinLockLock(&ty->group->DLock);
+        GCDropFFIAutos(&ty->group->DeadFFIAutos);
         GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+        GCSweepDeadBlocks(ty);
         TySpinLockUnlock(&ty->group->DLock);
 
         NextGCPhase(ty, GC_PHASE_DONE, nRunning);
@@ -1566,10 +1594,11 @@ CheckFlags(Ty *ty, char const *ip)
 {
         bool signaled = TakePendingSignals();
 
-        if (UNLIKELY(GC_IS_WAITING | signaled | (VmPoll.any != 0))) {
+        if (UNLIKELY(GC_IS_WAITING | signaled | (VmPoll.any != 0) | ty->gc_deferred)) {
                 if (GC_IS_WAITING & (ty->GC_OFF_COUNT == 0)) {
                         WaitGC(ty);
                 }
+                CheckDeferredGC(ty);
                 if (UNLIKELY(signaled)) {
                         HandlePendingSignals(ty);
                 }
@@ -2513,16 +2542,53 @@ plain_arm(FnExpr const *fn)
         return true;
 }
 
-static bool
-arm_fits(FnExpr const *fn, int argc)
-{
-        int required = 0;
+typedef struct {
+        bool plain;
+        int  n;
+        struct {
+                i32 id;
+                i16 required;
+                i16 params;
+        } arm[];
+} ArmPlan;
 
-        for (int i = 0; i < vN(fn->params); ++i) {
-                required += (v__(fn->dflts, i) == NULL);
+static ArmPlan const *
+arm_plan(Expr const *e, bool method)
+{
+        void **slot = &((FnExpr *)e->fn)->arms;
+        void  *have = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+
+        if (have != NULL) {
+                return have;
         }
 
-        return (argc >= required) && (argc <= vN(fn->params));
+        int      n    = vN(e->fn->functions);
+        ArmPlan *plan = mrealloc(NULL, sizeof *plan + n * sizeof plan->arm[0]);
+
+        plan->plain = true;
+        plan->n     = n;
+
+        for (int i = 0; i < n; ++i) {
+                Expr const   *arm      = v__(e->fn->functions, i);
+                FnExpr const *fn       = arm_fn(arm);
+                int           required = 0;
+
+                for (int j = 0; j < vN(fn->params); ++j) {
+                        required += (v__(fn->dflts, j) == NULL);
+                }
+
+                plan->plain           = plan->plain && plain_arm(fn);
+                plan->arm[i].id       = method ? M_ID(fn->name) : ((Stmt const *)arm)->target->symbol->i;
+                plan->arm[i].required = required;
+                plan->arm[i].params   = vN(fn->params);
+        }
+
+        if (!__atomic_compare_exchange_n(slot, &have, plan, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                xmF(plan);
+                return have;
+        }
+
+        return plan;
 }
 
 inline static bool
@@ -2553,24 +2619,22 @@ dispatch(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwa
                 }
         }
 
-        for (int i = 0; i < vN(e->fn->functions); ++i) {
-                if (!plain_arm(arm_fn(v__(e->fn->functions, i)))) {
-                        return false;
-                }
+        ArmPlan const *plan = arm_plan(e, method);
+
+        if (!plan->plain) {
+                return false;
         }
 
         gP(&self);
 
-        for (int i = 0; i < vN(e->fn->functions); ++i) {
-                Expr const   *arm = v__(e->fn->functions, i);
-                FnExpr const *fn  = arm_fn(arm);
-                Value const  *g   = method
-                                  ? class_lookup_method_i(ty, self.class, M_ID(fn->name))
-                                  : v_(Globals, ((Stmt const *)arm)->target->symbol->i);
-
-                if (!arm_fits(fn, argc)) {
+        for (int i = 0; i < plan->n; ++i) {
+                if (argc < plan->arm[i].required || argc > plan->arm[i].params) {
                         continue;
                 }
+
+                Value const *g = method
+                               ? class_lookup_method_i(ty, self.class, plan->arm[i].id)
+                               : v_(Globals, plan->arm[i].id);
 
                 if (g == NULL || g->type != VALUE_FUNCTION) {
                         break;
@@ -3111,10 +3175,19 @@ CleanupThread(void *ctx)
                 TySpinLockLock(&ty->group->DLock);
         }
         xvPv(ty->group->DeadAllocs, ty->allocs);
+        xvPv(ty->group->DeadAllocs, ty->special);
+        xvPv(ty->group->DeadPinned, ty->pinned);
+        xvPv(ty->group->DeadCleanup, ty->cleanup);
+        GCAdoptBlocks(&ty->group->DeadBlocks, &ty->blocks, ty->gc_owner);
         xvPv(ty->group->DeadFinalizable, ty->finalizable);
+        xvPv(ty->group->DeadFFIAutos, ty->ffi_autos);
         ty->group->DeadUsed += MemoryUsed;
         v0(ty->allocs);
+        v0(ty->special);
+        v0(ty->pinned);
+        v0(ty->cleanup);
         v0(ty->finalizable);
+        v0(ty->ffi_autos);
         TySpinLockUnlock(&ty->group->DLock);
 
         UnlockTy();
@@ -3142,8 +3215,11 @@ CleanupThread(void *ctx)
                 if (ty->result != NULL) {
                         value_mark(ty, ty->result);
                 }
+                GCMarkPinned(ty, &ty->group->DeadPinned);
                 GCDropFinalizable(ty);
+                GCDropFFIAutos(&ty->group->DeadFFIAutos);
                 GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+                GCSweepDeadBlocks(ty);
                 UnlockTy();
         }
 
@@ -3189,7 +3265,12 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
+        xvF(ty->special);
+        xvF(ty->pinned);
+        xvF(ty->cleanup);
+        GCFreeBlockCache(&ty->blocks);
         xvF(ty->finalizable);
+        xvF(ty->ffi_autos);
         xvF(ty->_2op_cache);
         xvF(ty->err);
         xvF(ty->marking);
@@ -3219,6 +3300,12 @@ CleanupThread(void *ctx)
                 xvF(ty->group->ThreadStates);
                 xvF(ty->group->DeadAllocs);
                 xvF(ty->group->DeadFinalizable);
+                xvF(ty->group->DeadFFIAutos);
+                xvF(ty->group->DeadPinned);
+                xvF(ty->group->DeadCleanup);
+                GCFreeBlockCache(&ty->group->DeadBlocks);
+                xmF(ty->group->RefIndex);
+                TySpinLockDestroy(&ty->group->RefLock);
                 xmF(ty->group->GCBlockedThreads);
         }
 
@@ -3438,6 +3525,8 @@ vm_jit_handle_interrupt(Ty *ty, Value *top, JitDeopt const *info)
         }
 
         JitInterruptFlag = DebugJitOff;
+
+        CheckDeferredGC(ty);
 
         if (TakePendingSignals()) {
                 HandlePendingSignals(ty);
@@ -6730,6 +6819,7 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 }
                 if (v.object->dynamic == NULL) {
                         v.object->dynamic = mA0(sizeof (struct itable));
+                        GCTrackDynamic(ty, v.object);
                 }
                 pushtarget(itable_get(ty, v.object->dynamic, z), v.object);
                 break;
@@ -11059,6 +11149,8 @@ vm_reload_dirs(Ty *ty)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
+        GCBlockInit();
+
 #if defined(TY_CATCH_SIGSEGV)
         signal(SIGSEGV, cringe);
 #endif
@@ -11840,6 +11932,8 @@ MarkStorage(Ty *ty)
                 value_mark(ty, FrameFun(ty, v_(FRAMES, i)));
         }
         LOG_REACHED(" => frame fns reached %llu", TotalReached);
+
+        GCMarkPinned(ty, &ty->pinned);
 }
 
 char const *
@@ -12511,9 +12605,7 @@ TyReloadModule(Ty *ty, char const *module)
 
         StartGC(ty);
 
-        while (ty->group->GCReadyCount < nRunning) {
-                ;
-        }
+        AwaitReady(ty->group, nRunning);
         // ======================================================================================
         GC_STOP();
         TY_BEGIN_LOADING();

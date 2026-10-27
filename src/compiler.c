@@ -449,6 +449,9 @@ static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e);
 
 static void
+unpack_subject(Ty *ty, Scope *scope, Expr *subject, ExprVec const *patterns);
+
+static void
 LangLiteral(Ty *ty, Expr *e);
 
 static bool
@@ -5286,6 +5289,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_pattern(ty, subscope, pat, NULL, true);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
                 }
+                unpack_subject(ty, scope, e->subject, &e->patterns);
                 break;
 
         case EXPRESSION_UNARY_OP:
@@ -5956,6 +5960,84 @@ symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
         }
 }
 
+static bool
+unpackable_arm(Expr const *p, int n)
+{
+        if (p->has_resources) {
+                return false;
+        }
+
+        if (
+                (p->type == EXPRESSION_MATCH_ANY)
+             || (p->type == EXPRESSION_IDENTIFIER && p->constraint == NULL && s_eq(p->identifier, "_"))
+        ) {
+                return true;
+        }
+
+        if (p->type != EXPRESSION_TUPLE || vN(p->es) != n) {
+                return false;
+        }
+
+        for (int i = 0; i < n; ++i) {
+                if (
+                        (v__(p->es, i)->type == EXPRESSION_MATCH_REST)
+                     || (i < vN(p->names) && v__(p->names, i) != NULL)
+                ) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static bool
+plain_tuple_literal(Expr const *e)
+{
+        int n = (e->type == EXPRESSION_TUPLE) ? vN(e->es) : 0;
+
+        if (n < 2 || n > 8) {
+                return false;
+        }
+
+        for (int i = 0; i < n; ++i) {
+                Expr const *cond = (i < vN(TPX(e)->tconds)) ? v__(TPX(e)->tconds, i) : NULL;
+
+                if (
+                        (v__(e->es, i)->type == EXPRESSION_SPREAD)
+                     || (i < vN(e->names) && v__(e->names, i) != NULL)
+                     || (i < vN(TPX(e)->required) && !v__(TPX(e)->required, i))
+                     || (cond != NULL)
+                ) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static void
+unpack_subject(Ty *ty, Scope *scope, Expr *subject, ExprVec const *patterns)
+{
+        int  n    = (subject->type == EXPRESSION_TUPLE) ? vN(subject->es) : 0;
+        bool tidy = plain_tuple_literal(subject) && (vN(*patterns) > 0);
+
+        for (int i = 0; tidy && i < vN(*patterns); ++i) {
+                tidy = unpackable_arm(v__(*patterns, i), n);
+        }
+
+        if (subject->tpx != NULL) {
+                v0(subject->tpx->parts);
+        }
+
+        if (!tidy) {
+                return;
+        }
+
+        for (int i = 0; i < n; ++i) {
+                avP(TPXx(subject)->parts, tmpsymbol(ty, scope));
+        }
+}
+
 static void
 symbolize_match_stmt(Ty *ty, Scope *scope, Stmt *s)
 {
@@ -6206,6 +6288,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_MATCH:
                 symbolize_match_stmt(ty, scope, s);
+                unpack_subject(ty, scope, s->match.e, &s->match.patterns);
                 break;
 
         case STATEMENT_WHILE:
@@ -7124,6 +7207,114 @@ emit_constraint(Ty *ty, Expr const *c)
         SCRATCH_RESTORE();
 }
 
+static Class *
+container_constraint(Ty *ty, Expr const *c)
+{
+        T2Universe *u = t2_global_universe();
+
+        if (
+                (c == NULL)
+             || !is_typed_constraint(c)
+             || (t2_type_kind(u, t2_type_scheme_body(u, c->_type)) != T2_TYPE_NOMINAL)
+        ) {
+                return NULL;
+        }
+
+        Class *class = t2_class_of(ty, c->_type);
+
+        return (class == NULL)           ? NULL
+             : (class->i == CLASS_ARRAY) ? class
+             : (class->i == CLASS_DICT)  ? class
+             : (class->i == CLASS_SET)   ? class
+             :                             NULL;
+}
+
+static Class *
+scalar_constraint(Ty *ty, Expr const *c)
+{
+        T2Universe *u = t2_global_universe();
+
+        if (c == NULL || !is_typed_constraint(c)) {
+                return NULL;
+        }
+
+        switch (t2_type_kind(u, t2_type_scheme_body(u, c->_type))) {
+        case T2_TYPE_STRING: return class_get(ty, CLASS_STRING);
+        case T2_TYPE_BOOL:   return class_get(ty, CLASS_BOOL);
+        default:             return NULL;
+        }
+}
+
+static bool
+classes_meet(Class const *a, Class const *b)
+{
+        for (Class const *k = a; k != NULL; k = k->super) {
+                if (k == b) {
+                        return true;
+                }
+        }
+
+        for (Class const *k = b; k != NULL; k = k->super) {
+                if (k == a) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+arm_admits(Ty *ty, FnExpr const *fn, int i, char const *name, Class const *class)
+{
+        if (fn->rest != -1 || fn->ikwargs != -1) {
+                return true;
+        }
+
+        for (int k = 0; k < vN(fn->params); ++k) {
+                if (k != i && !s_eq(v__(fn->params, k), name)) {
+                        continue;
+                }
+
+                Expr const *c     = (k < vN(fn->constraints)) ? v__(fn->constraints, k) : NULL;
+                Class      *other = (c != NULL && is_typed_constraint(c)) ? t2_class_of(ty, c->_type) : NULL;
+
+                if (other == NULL || classes_meet(class, other)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static Class *
+shallow_constraint(Ty *ty, Expr const *e, int i, Expr const *c)
+{
+        Expr const *multi = e->fn->overload;
+        Class      *class = container_constraint(ty, c);
+        bool        later = false;
+
+        if (RUNTIME_CONSTRAINTS || multi == NULL) {
+                return NULL;
+        }
+
+        if (class == NULL) {
+                return scalar_constraint(ty, c);
+        }
+
+        for (int k = 0; k < vN(multi->fn->functions); ++k) {
+                Expr const   *arm = v__(multi->fn->functions, k);
+                FnExpr const *fn  = IsStmt(arm) ? ((Stmt const *)arm)->value->fn : arm->fn;
+
+                if (fn == e->fn) {
+                        later = true;
+                } else if (later && arm_admits(ty, fn, i, v__(e->fn->params, i), class)) {
+                        return NULL;
+                }
+        }
+
+        return later ? class : NULL;
+}
+
 static void
 emit_assertion(Ty *ty, Expr const *e)
 {
@@ -7550,7 +7741,17 @@ emit_function(Ty *ty, Expr const *e)
                         WITH_STACK() {
                                 usize start = vN(STATE.code);
                                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
-                                if (e->fn->overload != NULL) {
+                                Class *shallow = (i == e->fn->rest || i == e->fn->ikwargs)
+                                               ? NULL
+                                               : shallow_constraint(ty, e, i, constraint);
+                                if (shallow != NULL) {
+                                        INSN(CLASS);
+                                        Ei32(shallow->i);
+                                        INSN(CHECK_MATCH);
+                                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
+                                        INSN(NONE);
+                                        INSN(RETURN);
+                                } else if (e->fn->overload != NULL) {
                                         EC(constraint);
                                         good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
                                         INSN(NONE);
@@ -8911,6 +9112,63 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         return returns;
 }
 
+static symbol_vector const *
+unpacked_parts(Expr const *subject)
+{
+        return (
+                (subject->type == EXPRESSION_TUPLE)
+             && (subject->tpx != NULL)
+             && (vN(subject->tpx->parts) > 0)
+        ) ? &subject->tpx->parts : NULL;
+}
+
+static void
+emit_unpacked_subject(Ty *ty, Expr const *subject, symbol_vector const *parts)
+{
+        for (int i = 0; i < vN(*parts); ++i) {
+                EE(v__(subject->es, i));
+                emit_tgt(ty, v__(*parts, i), STATE.fscope, true);
+                INSN(ASSIGN);
+                INSN(POP);
+        }
+
+        INSN(NIL);
+}
+
+static void
+emit_packed_subject(Ty *ty, symbol_vector const *parts)
+{
+        INSN(POP);
+
+        for (int i = 0; i < vN(*parts); ++i) {
+                emit_load(ty, v__(*parts, i), STATE.fscope);
+        }
+
+        INSN(TUPLE);
+        Ei32(vN(*parts));
+        EP(NULL);
+        STK(1 - (i32)vN(*parts));
+}
+
+static void
+emit_case_match(Ty *ty, Expr const *pattern, bool skip_tag)
+{
+        symbol_vector const *parts = STATE.unpacked;
+
+        STATE.unpacked = NULL;
+
+        if (parts == NULL || pattern->type != EXPRESSION_TUPLE) {
+                emit_try_match(ty, pattern, skip_tag);
+                return;
+        }
+
+        for (int i = 0; i < vN(*parts); ++i) {
+                emit_load(ty, v__(*parts, i), STATE.fscope);
+                emit_try_match(ty, v__(pattern->es, i), false);
+                INSN(POP);
+        }
+}
+
 static bool
 emit_xcase(
         Ty *ty,
@@ -8921,10 +9179,12 @@ emit_xcase(
         bool skip_tag
 )
 {
-        ExprVec assignments = STATE.match_assignments;
+        ExprVec              assignments = STATE.match_assignments;
+        symbol_vector const *unpacked    = STATE.unpacked;
+
         v00(STATE.match_assignments);
 
-        emit_try_match(ty, pattern, skip_tag);
+        emit_case_match(ty, pattern, skip_tag);
 
         if (cond != NULL) {
                 fail_match_if_not(ty, cond);
@@ -8954,6 +9214,7 @@ emit_xcase(
         MATCH_SUCCESS();
 
         STATE.match_assignments = assignments;
+        STATE.unpacked          = unpacked;
 
         return returns;
 }
@@ -9001,10 +9262,12 @@ emit_case(
 static bool
 emit_expr_xcase(Ty *ty, Expr const *pattern, Expr const *e, bool skip_tag)
 {
-        ExprVec assignments = STATE.match_assignments;
+        ExprVec              assignments = STATE.match_assignments;
+        symbol_vector const *unpacked    = STATE.unpacked;
+
         v00(STATE.match_assignments);
 
-        emit_try_match(ty, pattern, skip_tag);
+        emit_case_match(ty, pattern, skip_tag);
         INSN(POP_STACK_POS_POP);
 
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
@@ -9023,6 +9286,7 @@ emit_expr_xcase(Ty *ty, Expr const *pattern, Expr const *e, bool skip_tag)
         MATCH_SUCCESS();
 
         STATE.match_assignments = assignments;
+        STATE.unpacked          = unpacked;
 
         return returns;
 }
@@ -9741,10 +10005,19 @@ emit_match_stmt(Ty *ty, Stmt const *s, bool keep)
         PatternGroup *groups = smA(vN(s->match.patterns) * sizeof *groups);
         int n = build_pattern_groups(ty, &s->match.patterns, groups);
 
-        offset_vector successes_save = STATE.match_successes;
+        offset_vector        successes_save = STATE.match_successes;
+        symbol_vector const *unpacked_save  = STATE.unpacked;
+        symbol_vector const *parts          = unpacked_parts(s->match.e);
+
         v00(STATE.match_successes);
 
-        EE(s->match.e);
+        if (parts != NULL) {
+                emit_unpacked_subject(ty, s->match.e, parts);
+        } else {
+                EE(s->match.e);
+        }
+
+        STATE.unpacked = parts;
 
         bool returns = true;
         bool has_wildcard = (n > 0 && groups[n - 1].kind == PAT_WILDCARD);
@@ -9754,8 +10027,13 @@ emit_match_stmt(Ty *ty, Stmt const *s, bool keep)
         }
 
         if (!has_wildcard) {
+                if (parts != NULL) {
+                        emit_packed_subject(ty, parts);
+                }
                 INSN(BAD_MATCH);
         }
+
+        STATE.unpacked = unpacked_save;
 
         if (!keep) {
                 STK(-1);
@@ -10164,10 +10442,19 @@ emit_match_expr(Ty *ty, Expr const *e)
         bool has_wildcard = (n > 0) && (groups[n - 1].kind == PAT_WILDCARD);
         bool returns = true;
 
-        offset_vector successes_save = STATE.match_successes;
+        offset_vector        successes_save = STATE.match_successes;
+        symbol_vector const *unpacked_save  = STATE.unpacked;
+        symbol_vector const *parts          = unpacked_parts(e->subject);
+
         v00(STATE.match_successes);
 
-        EE(e->subject);
+        if (parts != NULL) {
+                emit_unpacked_subject(ty, e->subject, parts);
+        } else {
+                EE(e->subject);
+        }
+
+        STATE.unpacked = parts;
 
         WITH_STACK() {
                 for (int i = 0; i < n; ++i) {
@@ -10184,10 +10471,15 @@ emit_match_expr(Ty *ty, Expr const *e)
                                 INSN(POP);
                                 emit_return(ty, NULL);
                         } else {
+                                if (parts != NULL) {
+                                        emit_packed_subject(ty, parts);
+                                }
                                 INSN(BAD_MATCH);
                         }
                 }
         }
+
+        STATE.unpacked = unpacked_save;
 
         patch_jumps_to(&STATE.match_successes, vN(STATE.code));
         STATE.match_successes = successes_save;
@@ -11054,6 +11346,50 @@ emit_assignment(Ty *ty, Expr *target, Expr const *e, bool def)
                 EE(e);
                 emit_assignment2(ty, target, def);
         }
+}
+
+static bool
+emit_parallel_assignment(Ty *ty, Expr *target, Expr const *e, bool def)
+{
+        if (
+                (target->type != EXPRESSION_TUPLE)
+             || target->has_resources
+             || !plain_tuple_literal(e)
+             || (vN(target->es) != vN(e->es))
+        ) {
+                return false;
+        }
+
+        int n = vN(e->es);
+
+        for (int i = 0; i < n; ++i) {
+                Expr const *t = v__(target->es, i);
+
+                if (
+                        (t->type != EXPRESSION_IDENTIFIER)
+                     || (t->symbol == NULL)
+                     || (i < vN(target->names) && v__(target->names, i) != NULL)
+                ) {
+                        return false;
+                }
+
+                for (int j = 0; j < i; ++j) {
+                        if (v__(target->es, j)->symbol == t->symbol) {
+                                return false;
+                        }
+                }
+        }
+
+        for (int i = 0; i < n; ++i) {
+                EE(v__(e->es, i));
+        }
+
+        for (int i = n - 1; i >= 0; --i) {
+                emit_assignment2(ty, v__(target->es, i), def);
+                INSN(POP);
+        }
+
+        return true;
 }
 
 static void
@@ -12482,6 +12818,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         returns |= emit_with(ty, s->expression, false);
                         break;
 
+                case EXPRESSION_EQ:
+                        if (emit_parallel_assignment(ty, s->expression->target, s->expression->value, false)) {
+                                break;
+                        }
                 default:
                         returns |= EE(s->expression);
                         if (!returns) {
@@ -12521,8 +12861,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                              || SymbolIsGlobal(s->target->symbol)
                              || (get_loop(ty, 0) != NULL)
                         ) {
-                                emit_assignment(ty, s->target, s->value, true);
-                                INSN(POP);
+                                if (!emit_parallel_assignment(ty, s->target, s->value, true)) {
+                                        emit_assignment(ty, s->target, s->value, true);
+                                        INSN(POP);
+                                }
                         }
                 }
                 break;

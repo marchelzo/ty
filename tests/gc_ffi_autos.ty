@@ -1,0 +1,42 @@
+import ty
+import ffi as c
+
+let freed = [0, 0]
+
+fn track(slot: Int, n: Int) {
+    for i in ..n {
+        let p = c.alloc(16)
+        c.auto(p, q -> do { freed[slot] += 1; c.free(q) })
+    }
+}
+
+fn settle() {
+    for ..4 {
+        ty.gc()
+    }
+}
+
+pub fn auto-pointers-run-their-destructors() {
+    let before = freed[0]
+    track(0, 500)
+    settle()
+    assert(freed[0] - before == 500)
+}
+
+pub fn auto-pointers-made-on-exited-threads() {
+    let before = freed[1]
+    let threads = [Thread(track, 1, 200) for ..4]
+    for t in threads {
+        t.join()
+    }
+    settle()
+    assert(freed[1] - before == 800)
+}
+
+pub fn live-auto-pointers-survive-collections() {
+    let before = freed[0]
+    let kept = [c.auto(c.alloc(16), q -> do { freed[0] += 1; c.free(q) }) for ..50]
+    settle()
+    assert(freed[0] == before)
+    assert(#kept == 50)
+}

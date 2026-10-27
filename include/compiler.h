@@ -257,6 +257,7 @@ typedef struct compiler_state {
         JumpGroup match_fails;
         JumpGroup match_successes;
         ExprVec match_assignments;
+        symbol_vector const *unpacked;
 
         offset_vector co_returns;
 

@@ -1,0 +1,80 @@
+import ty
+import support.process (run)
+
+class P {
+    x: Int
+    y: Int
+
+    init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+}
+
+fn churn(n: Int) -> Int {
+    let t = 0
+    for i in ..n {
+        t += P(i, -i).x
+    }
+    t
+}
+
+fn settle() {
+    for ..3 {
+        ty.gc()
+    }
+}
+
+fn spawn-objects(n: Int) -> Array[P] {
+    let out = [P(i, i + 1) for i in ..n]
+    churn(50000)
+    out
+}
+
+let DYNAMIC = "import procs
+class Bag \{ init() \{ \} \}
+fn stash(o: _, v: Int) \{ o.extra = v; o.more = v + 1; o.other = v + 2; o \}
+let t = 0
+for i in ..600000 \{ t += stash(Bag(), i).extra \}
+print(t)
+print(procs.this().memory.resident >> 20)
+"
+
+pub fn scattered-survivors-outlive-reused-cells() {
+    let keep   = [P(i, 2 * i) for i in ..20000 if i % 7 == 0]
+    let tuples = [(i, "s{i}") for i in ..5000]
+    for ..5 {
+        churn(200000)
+        settle()
+    }
+    for p in keep {
+        assert(p.y == 2 * p.x)
+    }
+    for (i, (a, s)) in tuples.enumerate() {
+        assert(a == i && s == "s{i}")
+    }
+}
+
+pub fn objects-from-exited-threads-stay-valid() {
+    let made = [Thread(spawn-objects, 3000).join() for ..4]
+    for ..3 {
+        churn(300000)
+        settle()
+    }
+    for ps in made {
+        assert(#ps == 3000)
+        for p in ps {
+            assert(p.y == p.x + 1)
+        }
+    }
+}
+
+pub fn dynamic-members-of-dead-objects-are-released() {
+    for args in [[], ['-j']] {
+        let r = run([*args, '-e', DYNAMIC])
+        assert(r.status == 0, r.stderr)
+        let lines = r.stdout.lines()
+        assert(lines[0] == "{(..600000).sum()}", r.stdout)
+        assert(int(lines[1]) < 100, "dynamic members kept {lines[1]} MiB resident ({args})")
+    }
+}

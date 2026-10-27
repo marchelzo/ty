@@ -345,14 +345,16 @@ Unpack(Ty *ty, Class const *c, TyObject *obj)
 TyObject *
 class_new_instance(Ty *ty, int class)
 {
-        Class *c = C(class);
+        Class *c    = C(class);
+        bool   heap = (c->finalizer.type != VALUE_NONE);
+        usize  size = ObjectSize(c);
+        void  *mem  = heap ? gc_alloc_object_heap(ty, size, GC_OBJECT, false, true) : mAo(size, GC_OBJECT);
 
         if (UNLIKELY(c->proto == NULL)) {
-                return NewPristine(c, mAo(ObjectSize(c), GC_OBJECT));
+                return NewPristine(c, mem);
         }
 
-        usize     size = ObjectSize(c);
-        TyObject *obj  = memcpy(mAo(size, GC_OBJECT), c->proto, size);
+        TyObject *obj = memcpy(mem, c->proto, size);
 
         if (vN(c->empty) > 0) {
                 Unpack(ty, c, obj);
@@ -417,7 +419,7 @@ class_mark(Ty *ty, int c)
 
         for (usize i = 0; i < vN(class->s_fields.values); ++i) {
                 Value *v = v_(class->s_fields.values, i);
-                xvP(ty->marking, v);
+                GCMarkPush(ty, v);
         }
 }
 

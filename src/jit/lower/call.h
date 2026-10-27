@@ -1229,9 +1229,12 @@ static void
 raw_object(Ty *ty, Value *dst, i32 class)
 {
         TyObject *obj = class_new_instance(ty, class);
-        u64       w[] = { VALUE_OBJECT, (u32)class, (uptr)obj, 0 };
+        char     *d   = (char *)dst;
 
-        memcpy(dst, w, sizeof w);
+        memcpy(d +  0, &(u64) { VALUE_OBJECT }, sizeof (u64));
+        memcpy(d +  8, &(u64) { (u32)class },   sizeof (u64));
+        memcpy(d + 16, &(u64) { (uptr)obj },    sizeof (u64));
+        memcpy(d + 24, &(u64) { 0 },            sizeof (u64));
 }
 
 static void

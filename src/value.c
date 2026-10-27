@@ -69,7 +69,7 @@ TyValueCleanup(void)
 inline static void
 MarkNext(Ty *ty, Value *v)
 {
-        xvP(ty->marking, v);
+        GCMarkPush(ty, v);
 }
 
 enum {
@@ -2074,9 +2074,9 @@ value_array_mark(Ty *ty, struct array *a)
                 return;
         }
 
-        if (MARKED(a)) return;
-
-        MARK(a);
+        if (!CLAIM(a)) {
+                return;
+        }
 
 #if defined(TY_TRACE_GC)
         if (a->items != NULL) {
@@ -2092,9 +2092,9 @@ value_array_mark(Ty *ty, struct array *a)
 inline static void
 mark_tuple(Ty *ty, Value const *v)
 {
-        if (v->items == NULL || MARKED(v->items)) return;
-
-        MARK(v->items);
+        if (v->items == NULL || !CLAIM(v->items)) {
+                return;
+        }
 
         for (int i = 0; i < v->count; ++i) {
                 MarkNext(ty, &v->items[i]);
@@ -2305,31 +2305,11 @@ lir_code_mark(Ty *ty, LirCode *code)
         }
 }
 
-static bool
-registered_reference(Ty *ty, void const *p)
-{
-        ThreadGroup const *group = ty->group;
-        for (usize i = 0; i < group->TyList.count; ++i) {
-                AllocList const *allocs = &group->TyList.items[i]->allocs;
-                for (usize j = 0; j < allocs->count; ++j) {
-                        if (allocs->items[j]->data == p) {
-                                return true;
-                        }
-                }
-        }
-        for (usize i = 0; i < group->DeadAllocs.count; ++i) {
-                if (group->DeadAllocs.items[i]->data == p) {
-                        return true;
-                }
-        }
-        return false;
-}
-
 inline static void
 mark_pointer(Ty *ty, Value const *v)
 {
         if (v->gcptr != NULL) {
-                if (v->extra == &LirRefRoot && !registered_reference(ty, v->gcptr)) {
+                if (v->extra == &LirRefRoot && !GCRegistered(ty, v->gcptr)) {
                         return;
                 }
                 switch (ALLOC_OF(v->gcptr)->type) {
@@ -2393,7 +2373,7 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        void *arena = source_arena(ty, v->src);
+        void *arena = (v->src == 0) ? NULL : source_arena(ty, v->src);
         if (arena != NULL) {
                 Expr const *src = source_lookup(ty, v->src);
                 MARK(arena);

@@ -2098,6 +2098,7 @@ dobj(JP *p, JNode *n, Value *out)
                                 dany(p, &v);
                                 if (o->dynamic == NULL) {
                                         o->dynamic = mA0(sizeof (struct itable));
+                                        GCTrackDynamic(ty, o);
                                 }
                                 itable_add(ty, o->dynamic, id, v);
                         }

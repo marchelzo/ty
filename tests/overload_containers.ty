@@ -1,0 +1,76 @@
+import time (now)
+
+fn kind(xs: Array[Int]) -> String { 'ints' }
+fn kind(xs: Array[String]) -> String { 'strings' }
+fn kind(xs) -> String { 'other' }
+
+fn parts(xs: Array[String]) -> Int { #xs }
+fn parts(s: String) -> Int { -1 }
+
+fn maybe(xs: Array[String] | nil) -> String { (xs == nil) ? 'nil' : 'array' }
+fn maybe(n: Int) -> String { 'int' }
+
+fn mode(m: 'r') -> String { 'read' }
+fn mode(m: String) -> String { 'string' }
+
+fn flag(b: Bool) -> String { 'bool' }
+fn flag(s: String) -> String { 'string' }
+fn flag(x) -> String { 'other' }
+
+fn table(d: Dict[String, Int]) -> String { 'dict' }
+fn table(s: Set[String]) -> String { 'set' }
+
+fn loose(xs: Array[Int]) -> String { 'ints' }
+fn loose(xs: Array) -> String { 'array' }
+
+class Segments {
+    parts: Array[String]
+
+    init(parts: Array[String]) {
+        self.parts = parts
+    }
+
+    init(s: String) {
+        self.parts = s.split('/')
+    }
+}
+
+fn via(f, x) {
+    f(x)
+}
+
+fn check(r: Int) {
+    assert(via(kind, [r, 2]) == 'ints')
+    assert(via(kind, ['a', str(r)]) == 'strings')
+    assert(via(kind, [1, 'a']) == 'other')
+    assert(via(parts, ['a', 'b', str(r)]) == 3)
+    assert(via(parts, str(r)) == -1)
+    assert(via(maybe, nil) == 'nil')
+    assert(via(maybe, [str(r)]) == 'array')
+    assert(via(maybe, r) == 'int')
+    assert(via(mode, 'r') == 'read')
+    assert(via(mode, str(r)) == 'string')
+    assert(via(flag, r % 2 == 0) == 'bool')
+    assert(via(flag, str(r)) == 'string')
+    assert(via(flag, r) == 'other')
+    assert(via(table, %{str(r): r}) == 'dict')
+    assert(via(table, %[str(r)]) == 'set')
+    assert(via(loose, [r]) == 'ints')
+    assert(via(loose, ['a']) == 'array')
+}
+
+pub fn test-overloads-pick-arms-by-container-type() {
+    for r in ..8000 {
+        check(r)
+    }
+}
+
+pub fn test-overloaded-constructors-take-large-arrays-quickly() {
+    let big: Array[String] = [*(..100000).map(str)]
+    let t0 = now()
+    for ..1000 {
+        assert(#Segments(big).parts == 100000)
+    }
+    assert(now() - t0 < 0.5, "overloaded init checked every element: {now() - t0}s")
+    assert(Segments('a/b/c').parts == ['a', 'b', 'c'])
+}

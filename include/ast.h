@@ -344,6 +344,7 @@ typedef struct fn_expr {
         Stmt *body;
         Class *class;
         Expr *overload;
+        void *arms;
         TypeHintVector type_hints;
         bool has_defer;
         bool must_jit;
@@ -387,6 +388,7 @@ typedef struct {
 typedef struct {
         small_vec(bool) required;
         ExprVec         tconds;
+        symbol_vector   parts;
 } TupleX;
 
 typedef struct {

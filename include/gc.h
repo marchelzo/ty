@@ -26,14 +26,38 @@ RealThreadId(void);
 bool
 HoldingLock(Ty *ty);
 
-#define AddAlloc(ty, a) do {  \
-        xvP(ty->allocs, (a)); \
+#define GC_SPECIAL ( (1U << GC_GENERATOR)     \
+                   | (1U << GC_THREAD)        \
+                   | (1U << GC_REGEX)         \
+                   | (1U << GC_ARENA)         \
+                   | (1U << GC_FUN_INFO)      \
+                   | (1U << GC_JIT_CODE)      \
+                   | (1U << GC_LIR)           \
+                   | (1U << GC_FFI_AUTO)      \
+                   | (1U << GC_MUTEX)         \
+                   | (1U << GC_SPINLOCK)      \
+                   | (1U << GC_CONDVAR)       \
+                   | (1U << GC_NOTE)          \
+                   | (1U << GC_COUNTER)       \
+                   | (1U << GC_CHANNEL)       \
+                   | (1U << GC_SCREEN)        \
+                   | (1U << GC_SHARED_QUEUE)  )
+
+#define AddAlloc(ty, a) do {                            \
+        if (UNLIKELY((GC_SPECIAL >> (a)->type) & 1)) {  \
+                if ((a)->type == GC_FFI_AUTO) {         \
+                        xvP((ty)->ffi_autos, (a));      \
+                }                                       \
+                xvP((ty)->special, (a));                \
+        } else {                                        \
+                xvP((ty)->allocs, (a));                 \
+        }                                               \
 } while (0)
 
 #if !defined(TY_RELEASE)
- #define GC_INITIAL_LIMIT (1ULL << 20)
+ #define GC_INITIAL_LIMIT (1ULL << 22)
 #else
- #define GC_INITIAL_LIMIT (1ULL << 20)
+ #define GC_INITIAL_LIMIT (1ULL << 22)
 #endif
 
 
@@ -93,9 +117,18 @@ gc(Ty *ty);
 inline static void *
 mrealloc(void *p, usize n);
 
+void
+GCRepin(Ty *ty, struct alloc const *old, struct alloc *new);
+
 inline static void *
 gc_resize_unchecked(Ty *ty, void *p, usize n) {
         struct alloc *a;
+
+        if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
+                void *q = gc_resize_unchecked(ty, NULL, n);
+                memcpy(q, p, min(ALLOC_OF(p)->size, n));
+                return q;
+        }
 
         if (p != NULL) {
                 a = ALLOC_OF(p);
@@ -107,6 +140,8 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         MemoryUsed += n;
         NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
 
+        struct alloc *old = a;
+
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
@@ -114,24 +149,48 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
 
         a->size = n;
 
+        if (old == NULL) {
+                a->type = GC_ANY;
+                atomic_init(&a->mark, ty->gc_owner);
+                atomic_init(&a->hard, 0);
+        } else if (UNLIKELY(a != old && atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
+                GCRepin(ty, old, a);
+        }
+
         return a->data;
 }
+
+void
+GCCollect(Ty *ty);
+
+
+void
+GCDefer(Ty *ty);
 
 inline static void
 CheckUsed(Ty *ty)
 {
 #if defined(TY_RELEASE)
-        if (UNLIKELY((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit))) {
+        if (UNLIKELY(MemoryUsed >= MemoryLimit)) {
 #else
-        if ((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC)) {
+        if (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC) {
 #endif
-                GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
-                DoGC(ty);
-                GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
-                while (MemoryUsed >= MemoryLimit / 2) {
-                        MemoryLimit <<= 1;
+                if (ty->GC_OFF_COUNT == 0) {
+                        GCCollect(ty);
+                } else {
+                        GCDefer(ty);
                 }
-                GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
+        }
+}
+
+inline static void
+CheckDeferredGC(Ty *ty)
+{
+        if (UNLIKELY(ty->gc_deferred) && (ty->GC_OFF_COUNT == 0)) {
+                ty->gc_deferred = false;
+                if (MemoryUsed >= MemoryLimit) {
+                        GCCollect(ty);
+                }
         }
 }
 
@@ -211,25 +270,73 @@ gc_alloc0_unchecked(Ty *ty, usize n)
         return a->data;
 }
 
+#define GC_BLOCKABLE ( (1U << GC_STRING)  \
+                     | (1U << GC_TUPLE)   \
+                     | (1U << GC_VALUE)   \
+                     | (1U << GC_ENV)     \
+                     | (1U << GC_OBJECT)  )
+
+void *
+GCBlockAlloc(Ty *ty, usize n, char type);
+
+void
+GCTrackDynamic(Ty *ty, void const *obj);
+
+[[gnu::always_inline]]
 inline static void *
-gc_alloc_object(Ty *ty, usize n, char type)
+gc_block_take(Ty *ty, GCBlock *b, u32 i, usize n, char type)
 {
-        if (n == 0) {
-                return NULL;
+        struct alloc *a = (struct alloc *)(b->cells + (usize)i * b->cell);
+
+        b->taken[i] = 1;
+        b->cursor   = i + 1;
+        b->used    += 1;
+
+        a->type = type;
+        a->size = n;
+        atomic_init(&a->mark, ty->gc_owner);
+        atomic_init(&a->hard, 0);
+
+        MemoryUsed += b->cell;
+
+        return a->data;
+}
+
+[[gnu::always_inline]]
+inline static void *
+gc_block_object(Ty *ty, usize n, char type)
+{
+        GCBlock *b = ty->blocks.cur[GCBlockClass[(n + sizeof (struct alloc) + 15) >> 4]];
+
+        if (LIKELY((b != NULL) && (b->cursor < b->ncells) && (b->taken[b->cursor] == 0))) {
+                return gc_block_take(ty, b, b->cursor, n, type);
         }
 
-        MemoryUsed += n;
-        NoteAlloc(n, type);
-        CheckUsed(ty);
+        return GCBlockAlloc(ty, n, type);
+}
 
-        struct alloc *a = ty_malloc(sizeof *a + n);
+[[gnu::always_inline]]
+inline static bool
+gc_blockable(usize n, char type)
+{
+        return (GCBlockSpan != 0)
+            && (n <= GC_BLOCK_CELL - sizeof (struct alloc))
+            && ((GC_BLOCKABLE >> type) & 1);
+}
+
+[[gnu::always_inline]]
+inline static void *
+gc_object_heap(Ty *ty, usize n, char type, bool zero)
+{
+        MemoryUsed += n;
+
+        struct alloc *a = zero ? ty_calloc(1, sizeof *a + n) : ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
         atomic_init(&a->mark, ty->gc_owner);
         atomic_init(&a->hard, 0);
-        atomic_init(&a->mark, ty->gc_owner);
         a->type = type;
         a->size = n;
 
@@ -237,84 +344,73 @@ gc_alloc_object(Ty *ty, usize n, char type)
         PROF_BIND(ty, a);
 
         return a->data;
+}
+
+[[gnu::always_inline]]
+inline static void *
+gc_object(Ty *ty, usize n, char type, bool zero, bool check)
+{
+        if (n == 0) {
+                return NULL;
+        }
+
+        NoteAlloc(n, type);
+
+        if (check) {
+                CheckUsed(ty);
+        }
+
+        void *p = gc_blockable(n, type) ? gc_block_object(ty, n, type) : NULL;
+
+        if (p == NULL) {
+                return gc_object_heap(ty, n, type, zero);
+        }
+
+        if (zero) {
+                memset(p, 0, n);
+        }
+
+        return p;
+}
+
+inline static void *
+gc_alloc_object(Ty *ty, usize n, char type)
+{
+        return gc_object(ty, n, type, false, true);
 }
 
 inline static void *
 gc_alloc_object_unchecked(Ty *ty, usize n, char type)
 {
-        if (n == 0) {
-                return NULL;
-        }
-
-        MemoryUsed += n;
-        NoteAlloc(n, type);
-
-        struct alloc *a = ty_malloc(sizeof *a + n);
-        if (UNLIKELY(a == NULL)) {
-                panic("Out of memory!");
-        }
-
-        atomic_init(&a->mark, ty->gc_owner);
-        atomic_init(&a->hard, 0);
-        atomic_init(&a->mark, ty->gc_owner);
-        a->type = type;
-        a->size = n;
-
-        AddAlloc(ty, a);
-        PROF_BIND(ty, a);
-
-        return a->data;
+        return gc_object(ty, n, type, false, false);
 }
 
 inline static void *
 gc_alloc_object0(Ty *ty, usize n, char type)
 {
-        if (n == 0) {
-                return NULL;
-        }
-
-        MemoryUsed += n;
-        NoteAlloc(n, type);
-        CheckUsed(ty);
-
-        struct alloc *a = ty_calloc(1, sizeof *a + n);
-        if (UNLIKELY(a == NULL)) {
-                panic("Out of memory!");
-        }
-
-        atomic_init(&a->mark, ty->gc_owner);
-        a->type = type;
-        a->size = n;
-
-        AddAlloc(ty, a);
-        PROF_BIND(ty, a);
-
-        return a->data;
+        return gc_object(ty, n, type, true, true);
 }
 
 inline static void *
 gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
 {
+        return gc_object(ty, n, type, true, false);
+}
+
+inline static void *
+gc_alloc_object_heap(Ty *ty, usize n, char type, bool zero, bool check)
+{
         if (n == 0) {
                 return NULL;
         }
 
-        MemoryUsed += n;
         NoteAlloc(n, type);
 
-        struct alloc *a = ty_calloc(1, sizeof *a + n);
-        if (UNLIKELY(a == NULL)) {
-                panic("Out of memory!");
+        if (check) {
+                CheckUsed(ty);
         }
 
-        atomic_init(&a->mark, ty->gc_owner);
-        a->type = type;
-        a->size = n;
-
-        AddAlloc(ty, a);
-        PROF_BIND(ty, a);
-
-        return a->data;
+        return gc_object_heap(ty, n, type, zero);
 }
 
 void
@@ -338,8 +434,11 @@ gc_notify(Ty *ty, usize n);
 inline static void
 gc_free(Ty *ty, void *p)
 {
-        if (p != NULL) {
+        if (p != NULL && !InGCBlocks(ALLOC_OF(p))) {
                 struct alloc *a = ALLOC_OF(p);
+                if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
+                        GCRepin(ty, a, NULL);
+                }
                 if (a->size >= MemoryUsed) {
                         MemoryUsed = 0;
                 } else {
@@ -352,6 +451,12 @@ gc_free(Ty *ty, void *p)
 inline static void *
 gc_resize(Ty *ty, void *p, usize n) {
         struct alloc *a;
+
+        if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
+                void *q = gc_resize(ty, NULL, n);
+                memcpy(q, p, min(ALLOC_OF(p)->size, n));
+                return q;
+        }
 
         if (p != NULL) {
                 a = ALLOC_OF(p);
@@ -369,12 +474,22 @@ gc_resize(Ty *ty, void *p, usize n) {
 
         CheckUsed(ty);
 
+        struct alloc *old = a;
+
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
         a->size = n;
+
+        if (old == NULL) {
+                a->type = GC_ANY;
+                atomic_init(&a->mark, ty->gc_owner);
+                atomic_init(&a->hard, 0);
+        } else if (UNLIKELY(a != old && atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
+                GCRepin(ty, old, a);
+        }
 
         return a->data;
 }
@@ -413,6 +528,34 @@ GCQueueFinalizers(Ty *ty, ValueVector *queue);
 
 void
 GCDropFinalizable(Ty *ty);
+
+void
+GCDropFFIAutos(AllocList *list);
+
+bool
+GCRegistered(Ty *ty, void const *p);
+
+void
+GCDropRefIndex(ThreadGroup *group);
+
+void
+GCBlockInit(void);
+
+void
+GCSweepBlocks(Ty *ty);
+
+void
+GCSweepDeadBlocks(Ty *ty);
+
+void
+GCAdoptBlocks(GCBlockCache *to, GCBlockCache *from, u8 owner);
+
+void
+GCFreeBlockCache(GCBlockCache *bc);
+
+void
+GCMarkPinned(Ty *ty, AllocList *pinned);
+
 
 GCRootSet *
 GCRoots(Ty *ty);

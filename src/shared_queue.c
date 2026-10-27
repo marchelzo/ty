@@ -226,7 +226,7 @@ shared_queue_mark(Ty *ty, SharedQueue *q)
                         MARK(b);
                         usize end = atomic_load_explicit(&b->used, memory_order_relaxed);
                         for (usize j = start; j < end; ++j) {
-                                xvP(ty->marking, &b->items[j]);
+                                GCMarkPush(ty, &b->items[j]);
                         }
                         start = 0;
                         b = atomic_load_explicit(&b->next, memory_order_relaxed);

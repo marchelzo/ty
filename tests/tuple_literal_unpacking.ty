@@ -1,0 +1,153 @@
+let calls = []
+
+fn noted(label: String, x: Int) -> Int {
+    calls.push(label)
+    x
+}
+
+fn classify(a: Int, b: Int) -> Int {
+    match (a % 3, b % 2) {
+        (0, 0) => 1,
+        (0, _) => 2,
+        (x, 1) => x + 10,
+        _      => 0,
+    }
+}
+
+fn reference(a: Int, b: Int) -> Int {
+    let t = (a % 3, b % 2)
+    match t {
+        (0, 0) => 1,
+        (0, _) => 2,
+        (x, 1) => x + 10,
+        _      => 0,
+    }
+}
+
+fn nested(x: Int | nil, xs: Array[Int]) -> Int {
+    match (x, xs) {
+        (nil, [])            => -1,
+        (nil, [y, *])        => y,
+        (n: Int, [])         => n * 100,
+        (n: Int, [y, z, *])  => n + y + z,
+        (n: Int, _)          => n,
+    }
+}
+
+fn partial(a: Int, b: Int) -> String {
+    match (a, b) {
+        (0, y) => "zero {y}",
+        (x, 0) => "x {x}",
+    }
+}
+
+fn partial-value(a: Int, b: Int) -> String {
+    let s = match (a, b) {
+        (0, y) => "zero {y}",
+        (x, 0) => "x {x}",
+    }
+    s
+}
+
+fn statement(a: Int, b: Int) -> Int {
+    let r = 0
+    match (a, b) {
+        (1, 1) => { r = 11 }
+        (1, z) => { r = z }
+        _      => { r = -1 }
+    }
+    r
+}
+
+fn whole(a: Int, b: Int) -> Int {
+    match (a, b) {
+        (0, _) => 0,
+        t      => #t + a,
+    }
+}
+
+fn ordered(r: Int) -> Int {
+    match (noted('a', r), noted('b', r + 1)) {
+        (x, y) => x + y,
+    }
+}
+
+fn fib(n: Int) -> Int {
+    let a = 0
+    let b = 1
+    for ..n {
+        (a, b) = (b, a + b)
+    }
+    a
+}
+
+fn rotate(n: Int) -> Int {
+    let (x, y, z) = (1, 2, 3)
+    for ..n {
+        (x, y, z) = (y, z, x)
+    }
+    x * 100 + y * 10 + z
+}
+
+fn twice(r: Int) -> Int {
+    let a = 0
+    (a, a) = (r, r + 1)
+    a
+}
+
+fn captured(r: Int) -> Int {
+    let (q, s) = (r / 3, r % 3)
+    let f = () -> q * 3 + s
+    f()
+}
+
+fn check(r: Int) {
+    assert(classify(r, r >> 1) == reference(r, r >> 1))
+    assert(nested(nil, []) == -1)
+    assert(nested(nil, [r]) == r)
+    assert(nested(r, []) == r * 100)
+    assert(nested(r, [1, 2, 3]) == r + 3)
+    assert(nested(r, [1]) == r)
+    assert(partial(0, r) == "zero {r}")
+    assert(partial(r + 1, 0) == "x {r + 1}")
+    assert(partial-value(0, r) == "zero {r}")
+    assert(statement(1, 1) == 11)
+    assert(statement(1, r) == ((r == 1) ? 11 : r))
+    assert(statement(r + 2, r) == -1)
+    assert(whole(r + 1, r) == r + 3)
+    assert(fib(r % 40) == reference-fib(r % 40))
+    assert(rotate(r) == [123, 231, 312][r % 3])
+    assert(twice(r) == r + 1)
+    assert(captured(r) == r)
+}
+
+fn reference-fib(n: Int) -> Int {
+    let xs = [0, 1]
+    while #xs <= n {
+        xs.push(xs[-1] + xs[-2])
+    }
+    xs[n]
+}
+
+pub fn test-tuple-literal-subjects-match-like-tuples() {
+    for r in ..6000 {
+        check(r)
+    }
+}
+
+pub fn test-unmatched-subjects-report-the-tuple() {
+    for f in [partial, partial-value] {
+        try {
+            f(3, 4)
+            assert(false)
+        } catch e: MatchError {
+            assert(str(e) == 'MatchError(3, 4)', str(e))
+        }
+    }
+}
+
+pub fn test-subject-elements-evaluate-once-in-order() {
+    calls.clear()
+    assert(ordered(5) == 11)
+    assert(calls == ['a', 'b'])
+}

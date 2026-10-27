@@ -211,7 +211,7 @@ dict_mark(Ty *ty, Dict *d)
         MARK(d);
 
         if (has_default(d)) {
-                xvP(ty->marking, &d->dflt);
+                GCMarkPush(ty, &d->dflt);
         }
 
 #if defined(TY_TRACE_GC)
@@ -221,8 +221,8 @@ dict_mark(Ty *ty, Dict *d)
 #endif
 
         htfor(it, d) {
-                xvP(ty->marking, &it->k);
-                xvP(ty->marking, &it->v);
+                GCMarkPush(ty, &it->k);
+                GCMarkPush(ty, &it->v);
         }
 }
 

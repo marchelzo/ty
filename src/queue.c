@@ -24,7 +24,7 @@ queue_mark(Ty *ty, Queue *q)
         usize n = _queue_count(q->head, q->tail, q->cap);
 
         for (usize i = 0; i < n; ++i) {
-                xvP(ty->marking, &q->items[(q->head + i) % q->cap]);
+                GCMarkPush(ty, &q->items[(q->head + i) % q->cap]);
         }
 }
 

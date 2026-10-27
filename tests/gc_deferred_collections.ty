@@ -1,0 +1,29 @@
+import support.process (run)
+
+let CHURN = "import procs
+fn churn(n: Int) -> Int \{
+    let t = 0
+    for i in ..n \{
+        let d = %\{'a': i, 'b': i + 1, 'c': i + 2\}
+        t += #d
+    \}
+    t
+\}
+print(churn(400000))
+print(procs.this().memory.resident >> 20)
+"
+
+fn resident(args: [String]) -> Int {
+    let r = run([*args, '-e', CHURN])
+    assert(r.status == 0, r.stderr)
+    let lines = r.stdout.lines()
+    assert(lines[0] == '1200000', r.stdout)
+    int(lines[1])
+}
+
+pub fn literals-built-with-gc-stopped-still-get-collected() {
+    for args in [[], ['-j']] {
+        let mb = resident(args)
+        assert(mb < 200, "dict literal churn kept {mb} MiB resident ({args})")
+    }
+}

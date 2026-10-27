@@ -285,7 +285,7 @@ set_mark(Ty *ty, Set *s)
 #endif
 
         htfor(it, s) {
-                xvP(ty->marking, &it->k);
+                GCMarkPush(ty, &it->k);
         }
 }
 

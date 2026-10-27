@@ -14,17 +14,17 @@
 void
 object_mark(Ty *ty, TyObject *o)
 {
-        if (MARKED(o)) return;
-
-        MARK(o);
+        if (!CLAIM(o)) {
+                return;
+        }
 
         for (int i = 0; i < o->nslot; ++i) {
-                xvP(ty->marking, &o->slots[i]);
+                GCMarkPush(ty, &o->slots[i]);
         }
 
         if (o->dynamic != NULL) {
                 for (int i = 0; i < vN(o->dynamic->values); ++i) {
-                        xvP(ty->marking, v_(o->dynamic->values, i));
+                        GCMarkPush(ty, v_(o->dynamic->values, i));
                 }
         }
 }

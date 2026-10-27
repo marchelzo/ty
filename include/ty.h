@@ -18,6 +18,7 @@
 #include "polyfill_stdatomic.h"
 #include "ty/thread.h"
 #include "vmem.h"
+#include "gcblock.h"
 #include "vec.h"
 #include "log.h"
 #include "xd.h"
@@ -39,6 +40,7 @@
 
 typedef vec(struct alloc *) AllocList;
 typedef vec(char *)         IPVector;
+
 typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
 typedef vec(Frame)          FrameStack;
@@ -608,6 +610,10 @@ typedef struct thread_group {
         TySpinLock  DLock;
         AllocList   DeadAllocs;
         AllocList   DeadFinalizable;
+        AllocList   DeadFFIAutos;
+        AllocList   DeadPinned;
+        AllocList   DeadCleanup;
+        GCBlockCache DeadBlocks;
         isize       DeadUsed;
         ValueVector Finalize;
 
@@ -621,6 +627,11 @@ typedef struct thread_group {
         TyCondVar   GCPhaseCond;
         int         GCPhase;
 
+        TySpinLock    RefLock;
+        atomic_bool   RefReady;
+        atomic_int    RefScans;
+        void const  **RefIndex;
+        usize         RefMask;
 } ThreadGroup;
 
 struct thread {
@@ -830,9 +841,15 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
+        AllocList special;
+        AllocList pinned;
+        AllocList cleanup;
+        GCBlockCache blocks;
         AllocList finalizable;
+        AllocList ffi_autos;
         ThreadGroup *group;
         u8           gc_owner;
+        bool         gc_deferred;
         Value       *result;
         TyThreadState *blocked;
         TySpinLock *lock;
@@ -1009,12 +1026,53 @@ extern bool InteractiveSession;
 
 #define GC_OWNER_MAX 127
 
+[[gnu::always_inline]]
 inline static void
 gc_mark_alloc(struct alloc *a, u8 owner)
 {
-        if (atomic_load_explicit(&a->mark, memory_order_relaxed) == owner) {
+        if (InGCBlocks(a)) {
+                GCBlock *b = GCBlockOf(a);
+                if (b->owner == owner) {
+                        b->marks[GCCellOf(b, a)] = 1;
+                }
+        } else if (atomic_load_explicit(&a->mark, memory_order_relaxed) == owner) {
                 atomic_store_explicit(&a->mark, owner | 1, memory_order_relaxed);
         }
+}
+
+[[gnu::always_inline]]
+inline static bool
+gc_claim(struct alloc *a, u8 owner)
+{
+        if (InGCBlocks(a)) {
+                GCBlock *b = GCBlockOf(a);
+                u8      *m = &b->marks[GCCellOf(b, a)];
+                if ((b->owner != owner) || (*m != 0)) {
+                        return false;
+                }
+                *m = 1;
+                return true;
+        }
+
+        if (atomic_load_explicit(&a->mark, memory_order_relaxed) != owner) {
+                return false;
+        }
+
+        atomic_store_explicit(&a->mark, owner | 1, memory_order_relaxed);
+
+        return true;
+}
+
+[[gnu::always_inline]]
+inline static bool
+gc_marked(struct alloc const *a, u8 owner)
+{
+        if (InGCBlocks(a)) {
+                GCBlock const *b = GCBlockOf(a);
+                return (b->owner != owner) || (b->marks[GCCellOf(b, a)] != 0);
+        }
+
+        return atomic_load_explicit(&a->mark, memory_order_relaxed) != owner;
 }
 
 #if !defined(TY_RELEASE)
@@ -1049,10 +1107,8 @@ extern _Thread_local u64 TotalReached;
 #define RESET_TOTAL_REACHED()
 #define LOG_REACHED(...)
 #endif
-#define MARKED(v) (                                                     \
-        atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed) \
-     != ty->gc_owner                                                    \
-)
+#define MARKED(v) gc_marked(ALLOC_OF(v), ty->gc_owner)
+#define CLAIM(v)  gc_claim(ALLOC_OF(v), ty->gc_owner)
 
 #if defined(TY_GC_STATS)
 extern usize TotalBytesAllocated;
@@ -1071,7 +1127,15 @@ extern usize TotalBytesAllocated;
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 
-#define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
+inline static void
+GCPin(Ty *ty, struct alloc *a)
+{
+        if (atomic_fetch_add_explicit(&a->hard, 1, memory_order_relaxed) == 0) {
+                xvP(ty->pinned, a);
+        }
+}
+
+#define NOGC(v)   GCPin(ty, ALLOC_OF(v))
 #define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 
 #define POISON(v)   atomic_store_explicit(&(ALLOC_OF(v))->hard, 0xDEAD, memory_order_seq_cst)
