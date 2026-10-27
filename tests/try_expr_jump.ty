@@ -1,0 +1,53 @@
+fn risky(x) {
+    match x {
+        2 => throw 'bad',
+        3 => throw 7,
+        _ => x
+    }
+}
+
+pub fn continue-in-catch-of-try-expr() {
+    let out = []
+    for i in ..5 {
+        let y = try { risky(i) } catch _ { continue }
+        out.push(y)
+    }
+    assert(out == [0, 1, 4])
+}
+
+pub fn break-in-catch-of-try-expr() {
+    let out = []
+    for i in ..5 {
+        out.push(try { risky(i) } catch _ { break })
+    }
+    assert(out == [0, 1])
+}
+
+pub fn jumps-from-every-catch-arm() {
+    let out = []
+    for i in ..6 {
+        let y = try { risky(i) } catch 'bad' { continue } catch _: Int { -1 } finally { out.push('f') }
+        out.push(y)
+    }
+    assert(out == ['f', 0, 'f', 1, 'f', 'f', -1, 'f', 4, 'f', 5])
+}
+
+pub fn continue-from-try-expr-operand() {
+    let out = []
+    let i = 0
+    while i < 5 {
+        i += 1
+        out.push((try { risky(i) } catch _ { continue }) * 10)
+    }
+    assert(out == [10, 40, 50])
+}
+
+pub fn continue-outer-from-try-expr() {
+    let out = []
+    for i in ..5 {
+        for j in ..3 {
+            out.push(try { risky(i + j) } catch _ { continue continue })
+        }
+    }
+    assert(out == [0, 1, 1, 4, 5, 6])
+}
