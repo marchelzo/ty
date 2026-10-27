@@ -60,7 +60,3 @@ fn path-processing(n: Int) {
         assert(plan.outputs[0].target < plan.outputs[-1].target)
     }
 }
-
-if __module__ == 'main' {
-    path-processing(1)
-}

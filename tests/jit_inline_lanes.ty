@@ -1,0 +1,332 @@
+import ty.test.assert (assert-throws)
+
+class Vec {
+    x: Float
+    y: Float
+
+    init(x: Float, y: Float) { self.x = x; self.y = y }
+
+    len2() -> Float { self.x * self.x + self.y * self.y }
+    dot(o: Vec) -> Float { x * o.x + y * o.y }
+    scaled-x(k: Float) -> Float { x * k }
+}
+
+class Unit {
+    hp: Int
+    alive: Bool
+    count: Int
+
+    init(hp: Int) { self.hp = hp; self.alive = true; self.count = 0 }
+
+    alive? -> Bool { hp > 0 }
+    flag? -> Bool { alive }
+    dead? -> Bool { !alive }
+    hit(d: Int) -> Int { hp -= d }
+    kill() { self.alive = false }
+    bump() -> Int { self.count = self.count + 1 }
+    half() -> Int { hp / 2 }
+    per(n: Int) -> Int { hp / n }
+    same?(v: Float) -> Bool { hp == v }
+    ratio(k: Float) -> Float { hp * k }
+}
+
+fn norms(vs: [Vec]) -> Float {
+    let t = 0.0
+    for v in vs {
+        t += v.len2()
+    }
+    t
+}
+
+fn dots(vs: [Vec]) -> Float {
+    let t = 0.0
+    for v in vs {
+        t += v.dot(v) + v.scaled-x(2.0)
+    }
+    t
+}
+
+pub fn float-field-methods() {
+    let vs = [Vec(float(i), 1.0) for i in ..100]
+    let want = vs.map(v -> v.x * v.x + 1.0).sum()
+    let also = vs.map(v -> v.x * v.x + 1.0 + 2.0 * v.x).sum()
+    for _ in ..200 {
+        assert(norms(vs) == want)
+        assert(dots(vs) == also)
+    }
+}
+
+fn living(us: [Unit]) -> Int {
+    let n = 0
+    for u in us {
+        if u.alive? && u.flag? && !u.dead? {
+            n += 1
+        }
+    }
+    n
+}
+
+pub fn int-and-bool-field-getters() {
+    let us = [Unit(i % 4) for i in ..100]
+    for _ in ..200 {
+        assert(living(us) == 75)
+    }
+    us[1].kill()
+    assert(living(us) == 74)
+    assert(!us[1].flag?)
+    assert(us[1].dead?)
+}
+
+fn drain(us: [Unit], d: Int) -> Int {
+    let t = 0
+    for u in us {
+        t += u.hit(d)
+    }
+    t
+}
+
+pub fn setters-store-typed-fields() {
+    let us = [Unit(1000) for _ in ..10]
+    for k in ..200 {
+        assert(drain(us, 1) == 10 * (999 - k))
+    }
+    assert(us.all?(u -> u.hp == 800))
+}
+
+fn bumps(us: [Unit]) -> Int {
+    let t = 0
+    for u in us {
+        t += u.bump()
+    }
+    t
+}
+
+pub fn read-modify-write-applies-once() {
+    let us = [Unit(1) for _ in ..10]
+    for k in 1..201 {
+        assert(bumps(us) == 10 * k)
+    }
+    us[3].count = 0.5
+    let t = bumps(us)
+    assert(us[3].count == 1.5)
+    assert(us[0].count == 201)
+    assert(t == 9 * 201 + 1.5)
+}
+
+fn halves(us: [Unit]) -> Int {
+    let t = 0
+    for u in us {
+        t += u.half() + u.per(3)
+    }
+    t
+}
+
+fn per-all(us: [Unit], n: Int) -> Int {
+    let t = 0
+    for u in us {
+        t += u.per(n)
+    }
+    t
+}
+
+pub fn integer-division-in-lanes() {
+    let us = [Unit(i) for i in ..30]
+    let want = us.map(u -> u.hp / 2 + u.hp / 3).sum()
+    for _ in ..200 {
+        assert(halves(us) == want)
+        assert(per-all(us, 7) == us.map(u -> u.hp / 7).sum())
+    }
+    assert-throws(per-all(us, 0), ZeroDivisionError)
+}
+
+fn sames(us: [Unit], v: Float) -> Int {
+    let n = 0
+    for u in us {
+        if u.same?(v) {
+            n += 1
+        }
+    }
+    n
+}
+
+fn ratios(us: [Unit], k: Float) -> Float {
+    let t = 0.0
+    for u in us {
+        t += u.ratio(k)
+    }
+    t
+}
+
+pub fn mixed-int-float-fields() {
+    let us = [Unit(1) for _ in ..20]
+    for _ in ..200 {
+        assert(sames(us, 1.0) == 0)
+        assert(ratios(us, 0.5) == 10.0)
+    }
+}
+
+fn poke(u, v) {
+    u.hp = v
+}
+
+pub fn fields-holding-the-wrong-type-fall-back() {
+    let us = [Unit(4) for _ in ..10]
+    for _ in ..200 {
+        assert(living(us) == 10)
+        assert(halves(us) == 30)
+    }
+    poke(us[2], 4.5)
+    assert(halves(us) == 27 + 2.25 + 1.5)
+    assert(living(us) == 10)
+}
+
+class Body {
+    n: Int
+    f: Float
+    tag: _
+
+    init(n: Int, f: Float) { self.n = n; self.f = f; self.tag = nil }
+
+    tick(k: Int) {
+        self.n += k
+        self.f *= 0.5
+        self.n <<= 1
+        self.n >>= 1
+        self.n ^= 1
+        self.n ^= 1
+    }
+}
+
+class Heavy < Body {
+}
+
+fn churn(bs: [Body], k: Int, x: Float) {
+    for b in bs {
+        b.n += k
+        b.n -= 1
+        b.n *= 1
+        b.f += x
+        b.f -= k
+    }
+}
+
+fn bits(bs: [Body]) {
+    for b in bs {
+        b.n &= 0xFFFF
+        b.n |= 0x10000
+        b.n ^= 0x10000
+        b.n <<= 2
+        b.n >>= 2
+    }
+}
+
+fn copy-fields(bs: [Body], from: Body, n: Int) {
+    for b in bs {
+        b.tag = from.tag
+        b.f = from.f
+        b.n = n
+    }
+}
+
+pub fn typed-field-mutation() {
+    let bs = [Body(i, 1.0) for i in ..10]
+    for _ in ..300 {
+        churn(bs, 2, 0.5)
+        bits(bs)
+    }
+    for i in ..10 {
+        assert(bs[i].n == i + 300)
+        assert(bs[i].f == 1.0 + 300 * 0.5 - 300 * 2)
+    }
+    let h = Heavy(0, 0.0)
+    churn([h], 3, 1.0)
+    assert(h.n == 2 && h.f == -2.0)
+    bs[4].n = 1.5
+    churn(bs, 2, 0.5)
+    assert(bs[4].n == 2.5)
+    assert(bs[5].n == 306)
+}
+
+pub fn typed-field-assignment() {
+    let src = Body(1, 2.5)
+    let bs = [Body(i, 0.0) for i in ..10]
+    for k in ..6000 {
+        src.tag = k
+        src.f = k * 0.5
+        copy-fields(bs, src, k)
+        assert(bs[k % 10].n == k && bs[k % 10].tag == k && bs[k % 10].f == k * 0.5)
+    }
+    src.f = 9
+    copy-fields(bs, src, 1)
+    assert(bs.all?(b -> b.f == 9 && b.n == 1))
+}
+
+pub fn self-field-mutation() {
+    let b = Body(1, 64.0)
+    for _ in ..300 {
+        b.tick(1)
+    }
+    assert(b.n == 301)
+    assert(b.f == 64.0 * 0.5 ** 300)
+}
+
+fn truths(xs: [_]) -> Int {
+    let n = 0
+    for x in xs {
+        let y = x
+        if y {
+            n += 1
+        }
+        if !y {
+            n += 100
+        }
+        while y {
+            n += 10000
+            y = false
+        }
+    }
+    n
+}
+
+pub fn boxed-truth-tests() {
+    let xs = [true, false, 0, 1, -3, nil, "", "a", [], [1], 0.0, 2.5, %{}]
+    let want = xs.map(x -> x ? 10001 : 100).sum()
+    for _ in ..6000 {
+        assert(truths(xs) == want)
+    }
+}
+
+class Link {
+    next: Link | nil
+    val: Int
+    init(v: Int, n: Link | nil) { self.val = v; self.next = n }
+}
+
+fn walk-links(head: Link | nil) -> Int {
+    let t = 0
+    let n = head
+    while let $node = n {
+        t += node.val
+        n = node.next
+    }
+    if let $n = n {
+        t += 1000000
+    }
+    let m = head
+    if let $m = m {
+        t += m.val * 1000
+    }
+    t
+}
+
+pub fn if-let-bindings() {
+    let h = nil
+    for i in 1..101 {
+        h = Link(i, h)
+        assert(walk-links(h) == i * (i + 1) / 2 + i * 1000)
+    }
+    for _ in ..6000 {
+        assert(walk-links(h) == 5050 + 100000)
+        assert(walk-links(nil) == 0)
+    }
+}

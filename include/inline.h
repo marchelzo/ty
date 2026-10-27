@@ -50,6 +50,7 @@ typedef struct {
         i16 local;
         i16 target;
         i32 member;
+        i32 pc;
         imax integer;
         double real;
 } TyInlineInsn;

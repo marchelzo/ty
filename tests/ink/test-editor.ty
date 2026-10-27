@@ -1,5 +1,7 @@
 import ink (..)
 import term (event, mod)
+import path (Path)
+import os
 
 fn key(k: String | Int, mods: Int = 0) -> event.Event {
     event.Key({key: k, _key: nil, base: nil, mods, event: 1, text: []})
@@ -218,4 +220,47 @@ pub fn picker-windows() {
     assert(p.window(5) == (15, 20))
     p.move(1)
     assert(p.window(5) == (0, 5))
+}
+
+pub fn bulky-pastes-fold-into-one-atom() {
+    let body = [str(i) for i in ..40].join('\n')
+    let ed = typed(Editor(multiline?=true, fold=true), 'see ')
+    ed.handle(event.Paste(body))
+    ed.handle(event.Paste('tiny'))
+    assert(#ed.chars == 9)
+    assert(ed.shown[4] == '[pasted text - 40 lines / 109B]')
+    assert(ed.expand() == "see {body}tiny")
+    press(ed, 'Left', 'Left', 'Left', 'Left', 'Backspace')
+    assert(ed.expand() == 'see tiny')
+}
+
+pub fn unfolded-editors-insert-pastes() {
+    let body = [str(i) for i in ..40].join('\n')
+    let ed = Editor(multiline?=true)
+    ed.handle(event.Paste(body))
+    assert(ed.text == body)
+}
+
+pub fn wide-paste-labels-clip-to-room() {
+    let ed = Editor(multiline?=true, fold=true)
+    ed.handle(event.Paste('x' * 2000))
+    ed.room = 10
+    assert(ed.shown == ['[pasted t…'])
+}
+
+pub fn backslash-enter-continues-line() {
+    let ed = typed(Editor(multiline?=true), 'a\\')
+    press(ed, 'Enter')
+    assert(ed.text == "a\n")
+    assert(ed.handle(key('Enter')) == Ignored)
+}
+
+pub fn history-file-keeps-multiline-entries() {
+    let f = "{Path.tmp()}/ink-history-{os.getpid()}"
+    let h = History(file=f)
+    h.push("one\ntwo")
+    h.push('"quoted')
+    h.push('plain')
+    assert(History(file=f).all == ["one\ntwo", '"quoted', 'plain'])
+    os.unlink(f)
 }

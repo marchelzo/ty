@@ -434,3 +434,17 @@ pub fn overlay-popup-flips-below-when-there-is-no-room-above() {
     let row2 = [i for i in ..high.line-count if high.line(i).contains?('apple')][0]
     assert(row2 >= 3)
 }
+
+pub fn submit-expands-folded-pastes() {
+    let app = TIApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+    ti.ed.fold = true
+    let body = 'p' * 3000
+    h.send-text('a ')
+    ti.on-event(event.Paste(body))
+    h.assert-contains('[pasted text - 1 line / 3kB]')
+    h.enter()
+    assert(app.submitted == "a {body}")
+}

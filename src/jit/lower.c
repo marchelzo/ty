@@ -42,6 +42,21 @@ typedef struct bc_lir_node {
         LirLabel    tierup;
 } BcLirNode;
 
+enum {
+        VS_MEM,
+        VS_INT,
+        VS_REAL,
+        VS_BOOL,
+        VS_CINT,
+        VS_CREAL,
+        VS_CBOOL,
+        VS_LOCAL,
+        VS_CNIL,
+        VS_CELL,
+        VS_CSENT,
+        VS_CSTR
+};
+
 typedef struct bc_slot {
         u8     kind;
         LirReg r;
@@ -64,6 +79,8 @@ typedef struct bc_loop {
         LirReg   owned_reg[8];
         i32      nowned;
         bool     stack;
+        bool     iter;
+        i32      iarr;
         LirReg   sreg[2];
         i32      arrays[4];
         i32      akind[4];
@@ -288,6 +305,9 @@ loop_reg(BcLir const *c, i32 slot);
 
 static bool
 loop_pinned(BcLir const *c, i32 pos);
+
+static LirReg const *
+iter_held(BcLir const *c, i32 head);
 
 #include "lower/build.h"
 
@@ -619,8 +639,7 @@ deopt_info(BcLir *c)
 static void
 safepoint(BcLir *c, LirLabel deopt)
 {
-        LirOpnd info = deopt_info(c);
-        emit_poll(c, slot_of(c, c->sp), info, deopt);
+        emit_poll(c, c->ops, deopt_info(c), deopt);
 }
 
 static void

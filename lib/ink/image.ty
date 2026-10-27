@@ -13,7 +13,7 @@ pub import ink.image.glyphs (PRESETS, glyphs)
 
 pub fn decode(data: Blob) -> Picture {
     match data {
-        _ and #data >= 8 && data[;8] == png.SIGNATURE         => png.decode(data),
+        _ and #data >= 8 && data[;8] == png.SIGNATURE        => png.decode(data),
         _ and #data >= 6 && data[;3].str!() == 'GIF'         => gif.decode(data),
         _ and #data >= 2 && data[;2].str!() == 'BM'          => bmp.decode(data),
         _ => throw ImageError('unrecognized image format (expected PNG, GIF, or BMP)')
@@ -295,15 +295,17 @@ pub ns kitty {
     pub DIACRITICS = [chr(cp) for (lo, hi) in RUNS for cp in lo...hi]
 
     pub supported? = match getenv('INK_KITTY') {
-        '0' or 'no' or 'false' => false,
-        '1' or 'yes' or 'true' => true,
+        /^(?:0|no|false)/i => false,
+        /^(?:1|yes|true)/i => true,
         _ => do {
             let tp = getenv('TERM_PROGRAM') ?? ''
             let tm = getenv('TERM') ?? ''
-            tp == 'ghostty'
-            || tm == 'xterm-ghostty'
-            || tm == 'xterm-kitty'
-            || (getenv('KITTY_WINDOW_ID') ?? '') != ''
+            (
+                (tp == 'ghostty')
+             || (tm == 'xterm-ghostty')
+             || (tm == 'xterm-kitty')
+             || !!getenv('KITTY_WINDOW_ID')
+            )
         }
     }
 
@@ -317,17 +319,18 @@ pub ns kitty {
 
     pub fn transmit(rgba: Blob, w: Int, h: Int, id: Int, cols: Int, rows: Int) -> String {
         let payload = base64.encode(zlib.compress(rgba))
+        let size = payload.size()
         let out = Blob()
         let i = 0
-        while i < #payload {
-            let end = min(i + 4096, #payload)
-            let more = (end < #payload) ? 1 : 0
+        while i < size {
+            let end = min(i + 4096, size)
+            let more = (end < size) ? 1 : 0
             if i == 0 {
                 out.push("\x1b_Ga=T,U=1,q=2,f=32,o=z,s={w},v={h},i={id},c={cols},r={rows},m={more};")
             } else {
                 out.push("\x1b_Gm={more};")
             }
-            out.push(payload[i;end])
+            out.push(payload.bslice(i, end - i))
             out.push("\x1b\\")
             i = end
         }
@@ -372,15 +375,15 @@ pub class Image < Component {
     samples:  (Int, Int) | nil
     variant:  String | nil
 
-    __source:  _                         = nil
-    __picture: Picture | nil             = nil
-    __error:   String | nil              = nil
-    __frame:   Int                       = 0
-    __id:      Int                       = 0
-    __shown:   String | nil              = nil
-    __cuts:    Dict[String, Cut]         = %{}
+    __source:  _                           = nil
+    __picture: Picture | nil               = nil
+    __error:   String | nil                = nil
+    __frame:   Int                         = 0
+    __id:      Int                         = 0
+    __shown:   String | nil                = nil
+    __cuts:    Dict[String, Cut]           = %{}
     __lines:   Dict[String, Array[String]] = %{}
-    __uploads: Dict[String, String]      = %{}
+    __uploads: Dict[String, String]        = %{}
 
     mount() {
         __schedule()

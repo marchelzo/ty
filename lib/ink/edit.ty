@@ -1,5 +1,6 @@
 import term (event, mod)
 import path (Path)
+import json
 
 pub tag Ignored;
 
@@ -9,6 +10,9 @@ const WORD   = /^[\p{L}\p{N}_]/
 const SPACE  = /^\s/
 const KILLS  = 32
 const UNDOS  = 256
+const ATOM   = 0xF0000
+const BULK_L = 4
+const BULK_B = 1024
 
 fn word?(c: String) -> Bool {
     c.match?(WORD)
@@ -39,6 +43,15 @@ pub fn key-name(ev: _) -> String {
             name           => name
         }
     }
+}
+
+pub fn bulky?(s: String) -> Bool {
+    s.count('\n') >= BULK_L || s.size() >= BULK_B
+}
+
+pub fn paste-label(s: String) -> String {
+    let n = #s.comb(/\n+$/).split('\n')
+    "[pasted text - {n} line{(n == 1) ? '' : 's'} / {s.size():H}B]"
 }
 
 fn boundary?(cs: Array[String], i: Int) -> Bool {
@@ -206,8 +219,26 @@ pub class History {
         return if __loaded?
         __loaded? = true
         if let $f = file and let p = Path(f) and p.file? {
-            __disk = p.read-text().lines().filter(\#_ > 0)
+            __disk = p.read-text().lines().filter(\#_ > 0).map(__decode)
         }
+    }
+
+    static __decode(line: String) -> String {
+        if !line.starts?('"') {
+            return line
+        }
+        try {
+            match json.parse(line) {
+                s: String => s,
+                _         => line
+            }
+        } catch _ {
+            line
+        }
+    }
+
+    static __encode(entry: String) -> String {
+        (entry.starts?('"') || entry.match?(/[\r\n]/)) ? json.encode(entry) : entry
     }
 
     all -> Array[String] {
@@ -231,7 +262,7 @@ pub class History {
         entries.push(entry)
         if let Path $~> p = file {
             p.parent.mkdir(parents=true, exist-ok=true)
-            p.append("{entry}\n")
+            p.append("{__encode(entry)}\n")
         }
     }
 
@@ -510,6 +541,8 @@ pub class Editor {
     max-length: Int | nil
     completion: Completion | nil
     wrap-width: Int | nil
+    room:       Int | nil
+    fold:       Function | Bool
 
     __chars:     Array[String]
     __cursor:    Int
@@ -526,6 +559,8 @@ pub class Editor {
     __muted:     Int | nil
     __quiet?:    Bool
     __busy?:     Bool
+    __pastes:    Dict[String, String]
+    __labels:    Dict[String, String]
 
     init(
         text: String = '',
@@ -535,7 +570,8 @@ pub class Editor {
         history: _ = nil,
         highlight: Function | nil = nil,
         on-change: Function | nil = nil,
-        max-length: Int | nil = nil
+        max-length: Int | nil = nil,
+        fold: Function | Bool = false
     ) {
         self.multiline? = multiline?
         self.keymap     = %{**EDITOR_KEYS, **(multiline? ? MULTILINE_KEYS : %{}), **keymap}
@@ -546,6 +582,8 @@ pub class Editor {
         self.max-length = max-length
         self.completion = nil
         self.wrap-width = nil
+        self.room       = nil
+        self.fold       = fold
         __chars     = __clean(text).chars()
         __cursor    = #__chars
         __goal      = nil
@@ -561,6 +599,8 @@ pub class Editor {
         __muted     = nil
         __quiet?    = false
         __busy?     = false
+        __pastes    = %{}
+        __labels    = %{}
     }
 
     text    -> String         { __chars.join() }
@@ -577,6 +617,39 @@ pub class Editor {
 
     lines -> Array[String] {
         text.split('\n')
+    }
+
+    atom?(c: String) -> Bool {
+        #__pastes > 0 && __pastes[c] != nil
+    }
+
+    shown -> Array[String] {
+        (#__pastes == 0) ? __chars : __chars.map(__label)
+    }
+
+    __label(c: String) -> String {
+        let $l = __labels[c] or return c
+        (room != nil && l.width() > room) ? "{l.fit(max(room - 1, 0))}…" : l
+    }
+
+    expand(s: String = text) -> String {
+        (#__pastes == 0) ? s : s.chars().map(c -> __pastes[c] ?? c).join()
+    }
+
+    paste(s: String) {
+        let body  = __clean(s)
+        let fold? = match fold {
+            f: Function => f(body),
+            b           => b && bulky?(body)
+        }
+        if !fold? {
+            insert(body, 'paste')
+            return
+        }
+        let c = chr(ATOM + #__pastes)
+        __pastes[c] = body
+        __labels[c] = paste-label(body)
+        insert(c, 'paste')
     }
 
     row -> Int {
@@ -704,7 +777,7 @@ pub class Editor {
 
     __handle(ev: _) -> Bool | Ignored {
         match ev {
-            event.Paste($s)                        => insert(s, 'paste'),
+            event.Paste($s)                        => paste(s),
             event.Text($s) and !s.match?(/^[\t\x00-\x08\x0b-\x1f\x7f]+$/) => insert(s),
             event.Key({event: 1 or 2, *})          => return command(key-name(ev)),
             _                                      => return Ignored
@@ -898,10 +971,11 @@ pub class Editor {
 
     visual-rows(width: Int | nil = wrap-width) -> Array[(Int, Int)] {
         let rows: Array[(Int, Int)] = []
+        let cs    = shown
         let start = 0
         for (;;) {
             let end = __eol(start)
-            rows += wrap-line(__chars, start, end, width)
+            rows += wrap-line(cs, start, end, width)
             break if end >= #__chars
             start = end + 1
         }
@@ -912,7 +986,7 @@ pub class Editor {
         for (s, e); r in rows {
             let last? = r + 1 == #rows || rows[r + 1].0 != e
             if __cursor >= s && (__cursor < e || (__cursor == e && last?)) {
-                return (r, __chars[s;__cursor].map(&width).sum(0))
+                return (r, shown[s;__cursor].map(&width).sum(0))
             }
         }
         (max(#rows - 1, 0), 0)
@@ -927,10 +1001,11 @@ pub class Editor {
             return false
         }
         let (s, e) = rows[target]
+        let cs = shown
         let i = s
         let w = 0
-        while i < e && w + __chars[i].width() <= goal {
-            w += __chars[i].width()
+        while i < e && w + cs[i].width() <= goal {
+            w += cs[i].width()
             i += 1
         }
         let last? = target + 1 == #rows || rows[target + 1].0 != e
@@ -1068,6 +1143,13 @@ pub class Editor {
             return Ignored
         }
         insert('\n', 'newline')
+    }
+
+    continue-line() -> _ {
+        if !multiline? || __cursor == 0 || __chars[__cursor - 1] != '\\' {
+            return Ignored
+        }
+        replace(__cursor - 1, __cursor, '\n', 'newline')
     }
 
     undo() {
@@ -1213,6 +1295,7 @@ pub EDITOR_KEYS: Dict[String, Function] = %{
 }
 
 pub MULTILINE_KEYS: Dict[String, Function] = %{
+    'Enter':   &continue-line,
     'S-Enter': &newline,
     'M-Enter': &newline,
     'C-j':     &newline

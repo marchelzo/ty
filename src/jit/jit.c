@@ -166,9 +166,11 @@ lir_lock(Ty *ty)
 }
 
 static i32
-lir_vm_poll(Ty *ty, Value *top, void const *info)
+lir_vm_poll(Ty *ty, Value *base, void const *info)
 {
-        return vm_jit_handle_interrupt(ty, top, info);
+        JitDeopt const *at = info;
+
+        return vm_jit_handle_interrupt(ty, (at != NULL) ? base + at->sp : base, at);
 }
 
 static LirRuntime const LirVM = {

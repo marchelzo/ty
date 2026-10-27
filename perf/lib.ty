@@ -151,6 +151,15 @@ fn benchmark-program(name: String, categories: String, f) {
             print(json.encode(%{'name': name, 'iters': iters, 'times': times}))
             os.exit(0)
         },
+        /^\d+$/ => {
+            let iters = int($0)
+            inherit-elevation()
+            let t0 = now()
+            f(iters)
+            let dt = now() - t0
+            print("{name}: {iters} iters in {fmt-time(dt)} ({fmt-time(dt / iters)}/iter)")
+            os.exit(0)
+        },
         _ => nil
     }
 }

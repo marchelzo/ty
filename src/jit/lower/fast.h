@@ -487,62 +487,310 @@ loop_slow(BcLir *c, BcLirNode const *check, i32 sp, LirLabel exit)
                 c,
                 jit_rt_loop_check,
                 LT_I32,
-                imm32(check->member),
+                imm32(check->member | (check->pairs ? LOOP_PAIRS : 0)),
                 preg(slot_of(c, sp + 1))
         );
 
         jnz(c, more, exit);
 }
 
-static bool
-fast_loop(BcLir *c, BcLirNode const *node)
+static void
+iter_slow(BcLir *c, BcLirNode const *check, i32 sp, LirReg pin, LirReg cell, LirLabel exit)
 {
-        if (c->dynamic || node->next >= c->size) {
-                return false;
+        i32 iz = vat(sp - 2) + VOFF(z);
+
+        if (pin != LIR_NONE) {
+                stq(c, c->ops, iz, lir_r(pin));
+        }
+
+        loop_slow(c, check, sp, exit);
+
+        if (pin != LIR_NONE) {
+                vset(c, LIR_LD_I64, pin, mref(c->ops, iz));
+        }
+
+        if (cell != LIR_NONE) {
+                mov(c, cell, lea(c, c->ops, LIR_NONE, vat(sp + 1)));
+        }
+}
+
+static BcLirNode const *
+loop_check_of(BcLir const *c, BcLirNode const *node)
+{
+        if (c->dynamic || node->op != INSTR_LOOP_ITER || node->next >= c->size) {
+                return NULL;
         }
 
         BcLirNode const *check = next_of(c, node);
 
         if (
                 (check->op != INSTR_LOOP_CHECK)
-             || check->pairs
              || (check->label != LIR_NONE)
              || (check->member < 1 || check->member > 2)
+             || (check->pairs && check->member != 2)
              || (c->nodes[check->target].label == LIR_NONE)
         ) {
-                return false;
+                return NULL;
         }
 
-        LirLabel exit = exit_edge(c, check->target);
-        LirLabel slow = newlabel(c);
+        T2Type type  = (c->hints != NULL) ? find_type_hint(c->hints, node - c->nodes) : T2_TYPE_INVALID;
+        Class *class = (type != T2_TYPE_INVALID) ? expected_class_of(c->ctx, type) : NULL;
+        i32    id    = (class != NULL) ? class->i : -1;
+        bool   other = check->pairs ? (id != CLASS_ARRAY && id != CLASS_DICT)
+                                    : (id != CLASS_ARRAY && id != CLASS_STRING);
+
+        return (id >= 0 && other) ? NULL : check;
+}
+
+static BcLirNode const *
+iter_check(BcLir const *c, BcLirNode const *node)
+{
+        BcLirNode const *check = loop_check_of(c, node);
+
+        return (check != NULL && !check->pairs) ? check : NULL;
+}
+
+inline static u64
+odd_inverse(u64 d)
+{
+        u64 x = d;
+
+        for (int i = 0; i < 5; ++i) {
+                x *= 2 - d * x;
+        }
+
+        return x;
+}
+
+static LirReg
+dict_off(BcLir *c, LirReg items, LirReg item)
+{
+        enum {
+                SHIFT = __builtin_ctz(sizeof (DictItem)),
+                ODD   = sizeof (DictItem) >> SHIFT
+        };
+
         LirLabel done = newlabel(c);
-        i32      sp   = c->sp;
+        LirReg   off  = lir_reg(c->L, LIR_I64);
+        LirReg   k    = binop(c, LIR_SHR, LIR_I64, lir_r(binr(c, LIR_SUB, LIR_I64, item, items)), lir_i(SHIFT));
 
-        c->offset = check->next;
+        vset(c, LIR_LI, off, lir_i(PTRDIFF_MAX));
+        jz(c, item, done);
+        vset(c, LIR_MUL, off, lir_r(k), lir_i((i64)odd_inverse(ODD)));
+        vset(c, LIR_ADD, off, lir_r(off), lir_i(1));
+        bind(c, done);
 
-        expect(c, c->ops, vat(sp - 1), VALUE_ARRAY, slow);
+        return off;
+}
+
+static void
+sentinel_at(BcLir *c, i32 sp)
+{
+        if (c->vs != NULL) {
+                c->vs[sp] = (BcSlot) { .kind = VS_CSENT };
+        } else {
+                stq(c, c->ops, vat(sp), lir_i(VALUE_SENTINEL));
+        }
+}
+
+static void
+pair_out(BcLir *c, i32 sp, LirReg first, LirReg second)
+{
+        copy(c, c->ops, vat(sp + 1), second, 0);
+        copy(c, c->ops, vat(sp + 2), first, 0);
+}
+
+static void
+fast_pairs(BcLir *c, BcLirNode const *check, i32 sp, LirLabel exit)
+{
+        i32      iz   = vat(sp - 2) + VOFF(z);
+        i32      io   = vat(sp - 2) + offsetof(Value, off);
+        LirLabel slow = coldlabel(c);
+        LirLabel dict = newlabel(c);
+        LirLabel done = newlabel(c);
+        LirReg   tag  = tag_of(c, sp - 1);
+
+        unless(c, tag, VALUE_ARRAY, dict);
 
         LirReg array = ldp(c, c->ops, vat(sp - 1) + VOFF(array));
-        LirReg i     = ldq(c, c->ops, vat(sp - 2) + VOFF(z));
-        LirReg count = ldq(c, array, offsetof(Array, count));
+        LirReg i     = ldq(c, c->ops, iz);
 
-        jcc(c, LIR_GE, lir_r(i), lir_r(count), exit);
-        stq(c, c->ops, vat(sp - 2) + VOFF(z), lir_r(plus(c, i, 1)));
-        put_scalar(c, sp, VALUE_SENTINEL, lir_i(0));
+        jcc(c, LIR_GE, lir_r(i), lir_r(ldq(c, array, offsetof(Array, count))), exit);
 
-        if (check->member == 2) {
-                put_scalar(c, sp + 1, VALUE_INTEGER, lir_r(i));
-        }
+        LirReg pair = elem(c, ldp(c, array, offsetof(Array, items)), i, 0);
 
-        LirReg item = elem(c, ldp(c, array, offsetof(Array, items)), i, 0);
+        expect(c, pair, 0, VALUE_TUPLE, slow);
+        unless(c, ldw(c, pair, VOFF(count)), 2, slow);
+        stq(c, c->ops, iz, lir_r(plus(c, i, 1)));
 
-        copy(c, c->ops, vat(sp + check->member), item, 0);
+        LirReg xs = ldp(c, pair, VOFF(items));
+
+        pair_out(c, sp, xs, lea(c, xs, LIR_NONE, sizeof (Value)));
+        jump(c, done);
+
+        bind(c, dict);
+        unless(c, tag, VALUE_DICT, slow);
+
+        LirReg   d     = ldp(c, c->ops, vat(sp - 1) + VOFF(dict));
+        LirReg   items = ldp(c, d, offsetof(Dict, items));
+        LirReg   off   = lir_reg(c->L, LIR_I64);
+        LirLabel ready = newlabel(c);
+
+        vset(c, LIR_LD_I64, off, mref(c->ops, io));
+        jnz(c, off, ready);
+        mov(c, off, dict_off(c, items, ldp(c, d, offsetof(Dict, first))));
+        bind(c, ready);
+
+        jcc(c, LIR_GT, lir_r(off), lir_r(ldq(c, d, offsetof(Dict, size))), exit);
+
+        LirReg item = lea(
+                c,
+                items,
+                binop(c, LIR_MUL, LIR_I64, lir_r(off), lir_i(sizeof (DictItem))),
+                -(i32)sizeof (DictItem)
+        );
+
+        stq(c, c->ops, io, lir_r(dict_off(c, items, ldp(c, item, offsetof(DictItem, next)))));
+        pair_out(c, sp, lea(c, item, LIR_NONE, offsetof(DictItem, k)), lea(c, item, LIR_NONE, offsetof(DictItem, v)));
         jump(c, done);
 
         bind(c, slow);
         loop_slow(c, check, sp, exit);
 
         bind(c, done);
+        sentinel_at(c, sp);
+}
+
+static void
+step_index(BcLir *c, i32 sp, LirReg i, LirReg pin)
+{
+        i32 iz = vat(sp - 2) + VOFF(z);
+
+        if (pin == LIR_NONE) {
+                stq(c, c->ops, iz, lir_r(plus(c, i, 1)));
+                return;
+        }
+
+        vset(c, LIR_ADD, pin, lir_r(pin), lir_i(1));
+
+        if (!lazy_pinned(c, sp - 2)) {
+                stq(c, c->ops, iz, lir_r(pin));
+        }
+}
+
+static void
+iter_text(BcLir *c, LirReg tag, i32 sp, LirReg pin, LirReg cell, LirLabel exit, LirLabel slow)
+{
+        i32 io = vat(sp - 2) + offsetof(Value, off);
+        i32 at = vat(sp - 1);
+        i32 to = vat(sp + 1);
+
+        unless(c, tag, VALUE_STRING, slow);
+
+        LirReg off = ldq(c, c->ops, io);
+
+        jcc(c, LIR_GE, lir_r(off), lir_r(ldx(c, LIR_LD_U32, LIR_I64, c->ops, at + VOFF(bytes))), exit);
+
+        LirReg p = lea(c, ldp(c, c->ops, at + VOFF(str)), off, 0);
+
+        jcc(c, LIR_UGE, lir_r(ldx(c, LIR_LD_U8, LIR_I64, p, 0)), lir_i(0x80), slow);
+        stq(c, c->ops, io, lir_r(plus(c, off, 1)));
+        step_index(c, sp, (pin != LIR_NONE) ? pin : ldq(c, c->ops, vat(sp - 2) + VOFF(z)), pin);
+
+        stq(c, c->ops, to, lir_i(VALUE_STRING));
+        stq(c, c->ops, to + VOFF(str), lir_r(p));
+        stw(c, c->ops, to + VOFF(bytes), lir_i(1));
+        stb(c, c->ops, to + VOFF(ro), lir_r(ldx(c, LIR_LD_U8, LIR_I64, c->ops, at + VOFF(ro))));
+        stq(c, c->ops, to + VOFF(str0), lir_r(ldq(c, c->ops, at + VOFF(str0))));
+
+        if (cell != LIR_NONE) {
+                mov(c, cell, slot_of(c, sp + 1));
+        }
+}
+
+static bool
+fast_loop(BcLir *c, BcLirNode const *node)
+{
+        BcLirNode const *check = loop_check_of(c, node);
+
+        if (check == NULL) {
+                return false;
+        }
+
+        if (check->pairs) {
+                c->offset = check->next;
+                fast_pairs(c, check, c->sp, exit_edge(c, check->target));
+                return true;
+        }
+
+        i32              sp   = c->sp;
+        BcLirNode const *next = next_of(c, check);
+        LirReg const    *held = iter_held(c, c->at);
+        LirReg           pin  = loop_pinned(c, sp - 2) ? c->spin[sp - 2] : LIR_NONE;
+        LirLabel         exit = exit_edge(c, check->target);
+        LirLabel         slow = (held == NULL) ? coldlabel(c) : LIR_NONE;
+        LirLabel         text = (held == NULL && check->member == 1) ? newlabel(c) : slow;
+        LirReg           cell = LIR_NONE;
+        LirReg           tag  = LIR_NONE;
+        LirReg           count;
+        LirReg           items;
+
+        if ((c->vs != NULL) && (check->member == 1) && (next->op == INSTR_ASSIGN_LOCAL)) {
+                cell = lir_reg(c->L, LIR_PTR);
+        }
+
+        c->offset = check->next;
+
+        if (held != NULL) {
+                count = held[1];
+                items = held[2];
+        } else {
+                tag = tag_of(c, sp - 1);
+                unless(c, tag, VALUE_ARRAY, text);
+                LirReg array = ldp(c, c->ops, vat(sp - 1) + VOFF(array));
+                count = ldq(c, array, offsetof(Array, count));
+                items = ldp(c, array, offsetof(Array, items));
+        }
+
+        LirReg i = (pin != LIR_NONE) ? pin : ldq(c, c->ops, vat(sp - 2) + VOFF(z));
+
+        jcc(c, LIR_GE, lir_r(i), lir_r(count), exit);
+
+        if (check->member == 2) {
+                put_scalar(c, sp + 1, VALUE_INTEGER, lir_r(i));
+        }
+
+        LirReg item = elem(c, items, i, 0);
+
+        if (cell != LIR_NONE) {
+                mov(c, cell, item);
+        } else {
+                copy(c, c->ops, vat(sp + check->member), item, 0);
+        }
+
+        step_index(c, sp, i, pin);
+
+        if (held == NULL) {
+                LirLabel done = newlabel(c);
+
+                jump(c, done);
+
+                if (text != slow) {
+                        bind(c, text);
+                        iter_text(c, tag, sp, pin, cell, exit, slow);
+                        jump(c, done);
+                }
+
+                bind(c, slow);
+                iter_slow(c, check, sp, pin, cell, exit);
+                bind(c, done);
+        }
+
+        sentinel_at(c, sp);
+
+        if (cell != LIR_NONE) {
+                c->vs[sp + 1] = (BcSlot) { .kind = VS_CELL, .r = cell };
+        }
 
         return true;
 }

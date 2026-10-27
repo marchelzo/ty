@@ -698,7 +698,7 @@ literal_string(i32 id)
 }
 
 static void
-string_literal(BcLir *c, i32 slot, i32 id)
+store_literal(BcLir *c, LirReg base, i32 at, i32 id)
 {
         Value v = literal_string(id);
         u64   w[sizeof (Value) / sizeof (u64)];
@@ -706,8 +706,14 @@ string_literal(BcLir *c, i32 slot, i32 id)
         memcpy(w, &v, sizeof w);
 
         for (u32 i = 0; i < countof(w); ++i) {
-                stq(c, c->ops, vat(slot) + 8 * i, lir_i((i64)w[i]));
+                stq(c, base, at + 8 * i, lir_i((i64)w[i]));
         }
+}
+
+static void
+string_literal(BcLir *c, i32 slot, i32 id)
+{
+        store_literal(c, c->ops, vat(slot), id);
 }
 
 static void

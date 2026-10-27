@@ -127,7 +127,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
 
                 while (pending > 0 && joins[pending - 1].target == offset) {
                         offsets[plan->count] = offset;
-                        if (!push_insn(plan, (TyInlineInsn) { .op = joins[--pending].op })) {
+                        if (!push_insn(plan, (TyInlineInsn) { .op = joins[--pending].op, .pc = offset })) {
                                 return false;
                         }
                 }
@@ -196,6 +196,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         }
                         top->op = TY_INLINE_FIELD;
                         top->member = member;
+                        top->pc = (int)(ip - code);
                         break;
                 }
 
@@ -434,6 +435,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
 
                 for (int i = before; i < plan->count; ++i) {
                         offsets[i] = offset;
+                        plan->insns[i].pc = (int)(ip - code);
                 }
                 if (return_offset >= 0) {
                         break;

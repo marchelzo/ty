@@ -1,0 +1,364 @@
+fn total(xs: [Int]) -> Int {
+    let s = 0
+    for x in xs {
+        s += x
+    }
+    s
+}
+
+pub fn typed-arrays-sum-every-element() {
+    let xs = [*..500]
+    for _ in ..60 {
+        assert(total(xs) == 124750)
+    }
+    assert(total([]) == 0)
+    assert(total([7]) == 7)
+}
+
+fn until-negative(xs: [Int]) -> Int {
+    let s = 0
+    for x in xs {
+        if x < 0 {
+            break
+        }
+        if x % 2 == 0 {
+            continue
+        }
+        s += x
+    }
+    s
+}
+
+fn first-big(xs: [Int]) -> Int {
+    for x in xs {
+        if x > 100 {
+            return x
+        }
+    }
+    -1
+}
+
+pub fn break-continue-and-return-leave-cleanly() {
+    let xs = [*..300, -1, *..50]
+    for _ in ..60 {
+        assert(until-negative(xs) == 22500)
+        assert(first-big(xs) == 101)
+        assert(first-big([1, 2, 3]) == -1)
+    }
+}
+
+fn loose(xs) {
+    let s = 0
+    for x in xs {
+        s += x
+    }
+    s
+}
+
+pub fn element-type-changes-deopt-correctly() {
+    let ints = [*..200]
+    for _ in ..60 {
+        assert(loose(ints) == 19900)
+    }
+    assert(loose([1, 2, 3.5, 4]) == 10.5)
+    assert(loose([*..100, 0.25]) == 4950.25)
+    assert(loose(ints) == 19900)
+}
+
+fn grow(xs: [Int]) -> Int {
+    let s = 0
+    for x in xs {
+        if #xs < 400 {
+            xs.push(x + 1)
+        }
+        s += x
+    }
+    s
+}
+
+pub fn pushes-during-iteration-are-seen() {
+    for _ in ..60 {
+        let xs = [1, 2, 3]
+        let s = grow(xs)
+        assert(#xs == 400)
+        assert(s == xs.sum())
+    }
+}
+
+fn rebind(xs: [Int]) -> Int {
+    let s = 0
+    for x in xs {
+        s += x
+        xs = [100, 200]
+    }
+    s + xs.sum()
+}
+
+pub fn rebinding-the-source-keeps-the-original() {
+    for _ in ..60 {
+        assert(rebind([*..100]) == 4950 + 300)
+    }
+}
+
+fn overwrite(xs: [Int]) -> Int {
+    let s = 0
+    let i = 0
+    for x in xs {
+        s += x
+        if i + 1 < #xs {
+            xs[i + 1] = 0
+        }
+        i += 1
+    }
+    s
+}
+
+pub fn in-place-writes-are-seen() {
+    for _ in ..60 {
+        assert(overwrite([*1..100]) == 1)
+    }
+}
+
+fn any-iterable(xs) -> Int {
+    let n = 0
+    for x in xs {
+        n += 1
+    }
+    n
+}
+
+fn up-to*(n) {
+    for i in ..n {
+        yield i
+    }
+}
+
+pub fn non-array-iterables-take-the-slow-path() {
+    let xs = [*..5]
+    let d  = %{i: i for i in ..3}
+    let s  = %{i for i in ..4}
+    for _ in ..6000 {
+        assert(any-iterable(xs) == 5)
+        assert(any-iterable(..6) == 6)
+        assert(any-iterable(d) == 3)
+        assert(any-iterable(s) == 4)
+        assert(any-iterable(up-to(2)) == 2)
+        assert(any-iterable("héllo") == 5)
+        assert(any-iterable((1, 2, 3)) == 3)
+    }
+}
+
+fn grid(rows: [[Int]]) -> Int {
+    let s = 0
+    for row in rows {
+        for x in row {
+            s += x
+        }
+    }
+    s
+}
+
+pub fn nested-loops-pin-their-own-indices() {
+    let rows = [[*..k] for k in 1..60]
+    let want = rows.map(&sum).sum()
+    for _ in ..60 {
+        assert(grid(rows) == want)
+    }
+}
+
+fn words(xs: [String]) -> String {
+    let out = Blob()
+    for w in xs {
+        out.push(w)
+    }
+    out.str()
+}
+
+fn closures(xs: [Int]) -> Int {
+    let fs = []
+    for x in xs {
+        fs.push(() -> x * 2)
+    }
+    fs.map(f -> f()).sum()
+}
+
+pub fn boxed-and-captured-bindings() {
+    let xs = ["a", "b", "c"] * 20
+    for _ in ..60 {
+        assert(words(xs) == "abc" * 20)
+        assert(closures([*..50]) == 2450)
+    }
+}
+
+fn product(ps: [(Int, Int)]) -> Int {
+    let s = 0
+    for p in ps {
+        s += p.0 * p.1
+    }
+    s
+}
+
+pub fn tuple-elements() {
+    let ps = [(i, i + 1) for i in ..100]
+    for _ in ..60 {
+        assert(product(ps) == ps.map(|(a, b)| -> a * b).sum())
+    }
+}
+
+fn dict-sum(d: Dict[String, Int]) -> Int {
+    let t = 0
+    for k, v in d {
+        t += v * #k
+    }
+    t
+}
+
+pub fn dict-pairs() {
+    let d = %{"k{i}": i for i in ..200}
+    let want = d.map(|(k, v)| -> v * #k).sum()
+    for _ in ..200 {
+        assert(dict-sum(d) == want)
+        assert(dict-sum(%{}) == 0)
+    }
+    for i in ..200 {
+        if i % 3 != 0 {
+            d.remove("k{i}")
+        }
+    }
+    assert(dict-sum(d) == d.map(|(k, v)| -> v * #k).sum())
+}
+
+fn order(d: Dict[Int, Int]) -> [Int] {
+    let out = []
+    for k, v in d {
+        out.push(k)
+        out.push(v)
+    }
+    out
+}
+
+pub fn dict-pairs-follow-insertion-order() {
+    let d = %{}
+    for i in ..50 {
+        d[(i * 37) % 101] = i
+    }
+    let want = []
+    for (k, v) in d.items() {
+        want.push(k)
+        want.push(v)
+    }
+    for _ in ..200 {
+        assert(order(d) == want)
+    }
+}
+
+fn tuple-pairs(ps) -> Int {
+    let t = 0
+    for a, b in ps {
+        t += a * 10 + b
+    }
+    t
+}
+
+pub fn array-pairs() {
+    let ps = [(i, i + 1) for i in ..100]
+    let want = ps.map(|(a, b)| -> a * 10 + b).sum()
+    for _ in ..200 {
+        assert(tuple-pairs(ps) == want)
+        assert(tuple-pairs([{a: 2, b: 3}]) == 23)
+        assert(tuple-pairs(%{2: 5}) == 25)
+    }
+    let threw = try { tuple-pairs([(1, 2), (1, 2, 3)]); false } catch _ { true }
+    assert(threw)
+}
+
+fn pushes(xs: [Int]) -> [Int] {
+    let out = []
+    for x in xs {
+        out.push(x)
+        out.push(float(x))
+        out.push("s")
+    }
+    out
+}
+
+pub fn array-push-in-loops() {
+    let xs = [*..300]
+    for _ in ..100 {
+        let out = pushes(xs)
+        assert(#out == 900)
+        assert(out[3 * 299] == 299)
+        assert(out[3 * 299 + 1] == 299.0)
+        assert(out[-1] == "s")
+    }
+}
+
+fn push-value(xs: [Int]) -> _ {
+    let r = 0
+    for i in ..10 {
+        r = xs.push(i)
+    }
+    r
+}
+
+pub fn push-returns-nil() {
+    for _ in ..2000 {
+        assert(push-value([]) == nil)
+    }
+}
+
+fn chars(s: String) -> [String] {
+    let out = []
+    for c in s {
+        out.push(c)
+    }
+    out
+}
+
+fn count-of(s: String, want: String) -> Int {
+    let n = 0
+    for c in s {
+        if c == want {
+            n += 1
+        }
+    }
+    n
+}
+
+pub fn string-iteration() {
+    let s = "héllo wörld, ascii and ünïcode ✓ mixed"
+    let want = [*s]
+    for _ in ..3000 {
+        assert(chars(s) == want)
+        assert(chars("") == [])
+        assert(count-of(s, "l") == 3)
+        assert(count-of(s, "ö") == 1)
+        assert(count-of(s[2;5], "l") == 2)
+    }
+    assert(chars(s).map(&bytes) == want.map(&bytes))
+    assert(#chars(s)[1].bytes() == 2)
+}
+
+fn literal-compares(xs: [String]) -> Int {
+    let n = 0
+    for x in xs {
+        if x == "a" { n += 1 }
+        if x != "bc" { n += 10 }
+        if x == "abcdefghijk" { n += 100 }
+        if "q" == x { n += 1000 }
+        if x == "" { n += 10000 }
+        if x == "a" || x == "q" { n += 100000 }
+        let same = (x == "bc")
+        if same { n += 1000000 }
+    }
+    n
+}
+
+pub fn string-literal-equality() {
+    let xs = ["a", "bc", "abcdefghijk", "q", "", "abcdefghijz", "ab", "é"]
+    for _ in ..3000 {
+        assert(literal-compares(xs) == 1 + 70 + 100 + 1000 + 10000 + 200000 + 1000000)
+        assert(literal-compares([]) == 0)
+    }
+    assert(literal-compares(["a", nil, 1, 2.5]) == 1 + 40 + 100000)
+}

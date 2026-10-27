@@ -327,7 +327,12 @@ fn refresh-looks() {
     }
 }
 
-pub fn part(w: String, p: String, states: Array[String], variant: String | nil = nil) -> Dict[String, _] {
+pub fn part(
+    w: String,
+    p: String,
+    states: Array[String],
+    variant: String | nil = nil
+) -> Dict[String, _] {
     _looks.part(w, p, states, variant)
 }
 
@@ -1404,8 +1409,7 @@ pub class EditView {
     }
 
     glyphs -> Array[String] {
-        let chars = editor.chars
-        mask ? [mask] * #chars : chars
+        mask ? [mask] * #editor.chars : editor.shown
     }
 
     rows(width: Int, wrap?: Bool) -> Int {
@@ -1423,11 +1427,13 @@ pub class EditView {
         placeholder: String | nil = nil,
         hint: String = '',
         highlight: Function | nil = nil,
-        mask: String | nil = nil
+        mask: String | nil = nil,
+        paste: String = ''
     ) -> Array[String] {
         let ed = editor
         let w  = max(width, 1)
         ed.wrap-width = wrap? ? w : nil
+        ed.room       = max(w - 1, 1)
         self.mask     = mask
 
         if ed.empty? && placeholder != nil {
@@ -1451,20 +1457,25 @@ pub class EditView {
             chars[s;s + sx].map(&width).sum(0)
         }
 
-        let styles = __styles(text, highlight)
+        let styles = __styles(text, highlight, paste)
         [
             (i < #rows) ? __row(rows[i], off, w, styles, (focused? && i == r) ? shape : nil, cursor) : ' ' * w
             for i in scroll-y..scroll-y + h
         ]
     }
 
-    __styles(base: String, highlight: Function | nil) -> Array[String] {
+    __styles(base: String, highlight: Function | nil, paste: String = '') -> Array[String] {
         let n = #editor.chars
         let styles = [base] * n
         let extra = (highlight != nil) ? highlight(editor.text) : []
         for (from, to, spec) in editor.spans() + extra {
             for max(from, 0)..min(to, n) {
                 styles[it] = "{styles[it]} {spec}"
+            }
+        }
+        if #paste > 0 {
+            for c; i in editor.chars if editor.atom?(c) {
+                styles[i] = "{styles[i]} {paste}"
             }
         }
         styles
@@ -1767,7 +1778,7 @@ pub class TextInput < Component {
 
     __submit() {
         let e = ed
-        let t = e.text
+        let t = e.expand()
         e.completion = nil
         e.history.?push(t)
         if let $f = on-submit {
@@ -1779,7 +1790,7 @@ pub class TextInput < Component {
         if not let (fd, tmp) = mktemp(Path.tmp() / 'ink-edit') {
             return
         }
-        let seed = ed.text
+        let seed = ed.expand()
         if #seed > 0 {
             write(fd, seed)
         }
@@ -1860,6 +1871,7 @@ pub class TextInput < Component {
         let ph-spec  = part('TextInput', 'placeholder', fs, variant)['spec'] ?? ''
         let cur      = part('TextInput', 'cursor', fs, variant)
         let prompt   = part('TextInput', 'prompt', fs, variant)
+        let pasted   = part('TextInput', 'paste', fs, variant)['spec'] ?? ''
         let bstyle   = (border-style != nil) ? resolve(border-style) : nil
         let bcolor   = border-color ? resolve(border-color) : nil
         let w        = int(width ?? layout-fw ?? 20)
@@ -1881,7 +1893,8 @@ pub class TextInput < Component {
             placeholder=placeholder ?? '',
             hint=ph-spec,
             highlight=highlight,
-            mask=mask
+            mask=mask,
+            paste=pasted
         )
 
         let lead    = str(chalk.render(markup-run(prompt['spec'] ?? '', p-text)))

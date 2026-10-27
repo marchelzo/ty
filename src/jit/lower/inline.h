@@ -246,10 +246,16 @@ guard_plan(BcLir *c, Plan const *p, LirLabel slow)
         }
 }
 
+inline static i32
+field_slot_of(Plan const *p, i32 i)
+{
+        return offsetof(TyObject, slots) + vat(p->fields[i].offset & OFF_MASK);
+}
+
 static LirReg
 field_object(BcLir *c, Plan const *p, TyInlineInsn const *insn, i32 i, i32 *slot)
 {
-        *slot = offsetof(TyObject, slots) + vat(p->fields[i].offset & OFF_MASK);
+        *slot = field_slot_of(p, i);
         return ldp(c, plan_source(c, p, insn->local), VOFF(object));
 }
 
@@ -384,6 +390,29 @@ emit_plan(BcLir *c, Plan const *p, i32 out, LirLabel slow)
         copy(c, c->ops, vat(out), c->ops, vat(scratch));
 }
 
+static i32
+same_field(TyInlinePlan const *plan, i32 i)
+{
+        TyInlineInsn const *insn = &plan->insns[i];
+
+        for (i32 j = 0; j < i; ++j) {
+                TyInlineInsn const *other = &plan->insns[j];
+
+                if (
+                        touches_field(other)
+                     && (other->local == insn->local)
+                     && (other->member == insn->member)
+                ) {
+                        return j;
+                }
+        }
+
+        return i;
+}
+
+static bool
+lane_method(BcLir *c, Plan const *p, i32 out, LirLabel failed);
+
 static bool
 try_plan(
         BcLir *c,
@@ -415,7 +444,10 @@ try_plan(
 
         LirLabel bail = newlabel(c);
 
-        emit_plan(c, &p, out, bail);
+        if (!lane_method(c, &p, out, bail)) {
+                emit_plan(c, &p, out, bail);
+        }
+
         jump(c, done);
 
         bind(c, bail);
