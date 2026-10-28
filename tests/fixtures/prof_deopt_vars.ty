@@ -1,0 +1,17 @@
+fn churn(xs: Array[Int]) -> Int {
+    let acc = 0
+    let dead = 0
+    for x in xs {
+        dead = x * 3
+        acc += dead
+        acc += x
+    }
+    acc
+}
+
+let ints = [i for i in ..200]
+for _ in ..2000 {
+    churn(ints)
+}
+let mixed: Array[Int] = cast([1, 2, 3, 2.5, 4])
+print(churn(mixed))

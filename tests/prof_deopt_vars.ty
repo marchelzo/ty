@@ -1,0 +1,19 @@
+import support.process (run, FIXTURES)
+import json
+import os
+
+pub fn deopt-snapshots-skip-dead-loop-registers() {
+    let out = "{os.tmpdir()}/ty-deopt-vars-{os.getpid()}.data"
+    let r = run(['--prof', '--prof-summary=off', "--prof-out={out}", str(FIXTURES / 'prof_deopt_vars.ty')])
+    let data = slurp(out)
+    for f in [out, "{out}.old"] {
+        os.unlink(f)
+    }
+    assert(r.status == 0, r.stderr)
+    let deopts: Array[_] = json.parse(data ?? '{}')['jit_deopts'] ?? []
+    let site = deopts.find(\_['guard'].starts?('assumed the operand is an Int')) or throw AssertionError("{deopts}")
+    let vars: Array[_] = site['shots'][0]['vars']
+    let locals = %{v[0]: v[2] for v in vars if v[3] == 'local'}
+    assert(locals['acc'] == '24', "{vars}")
+    assert('x' not in locals, "{vars}")
+}
