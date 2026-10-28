@@ -127,14 +127,14 @@ inline static void *
 mrealloc(void *p, usize n);
 
 void
-GCRepin(Ty *ty, struct alloc const *old, struct alloc *new);
+GCRepin(Ty *ty, Alloc const *old, Alloc *new);
 
 void
-GCBlockDrop(Ty *ty, struct alloc *a);
+GCBlockDrop(Ty *ty, Alloc *a);
 
 inline static void *
 gc_resize_unchecked(Ty *ty, void *p, usize n) {
-        struct alloc *a;
+        Alloc *a;
 
         if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
                 void *q = gc_resize_unchecked(ty, NULL, n);
@@ -153,7 +153,7 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         MemoryUsed += n;
         NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
 
-        struct alloc *old = a;
+        Alloc *old = a;
 
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -214,7 +214,7 @@ gc_alloc(Ty *ty, usize n)
         NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
-        struct alloc *a = ty_malloc(sizeof *a + n);
+        Alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -234,7 +234,7 @@ gc_alloc0(Ty *ty, usize n)
         NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
-        struct alloc *a = ty_calloc(1, sizeof *a + n);
+        Alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -252,7 +252,7 @@ gc_alloc_unchecked(Ty *ty, usize n)
         MemoryUsed += n;
         NoteAlloc(n, GC_ANY);
 
-        struct alloc *a = ty_malloc(sizeof *a + n);
+        Alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -271,7 +271,7 @@ gc_alloc0_unchecked(Ty *ty, usize n)
         MemoryUsed += n;
         NoteAlloc(n, GC_ANY);
 
-        struct alloc *a = ty_calloc(1, sizeof *a + n);
+        Alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -307,7 +307,7 @@ void *
 GCOwnedResize(Ty *ty, void *p, usize n, usize used, char type, bool check);
 
 void
-GCTrackCleanup(Ty *ty, struct alloc *a);
+GCTrackCleanup(Ty *ty, Alloc *a);
 
 [[gnu::always_inline]]
 inline static void
@@ -342,7 +342,7 @@ GCTrackDynamic(Ty *ty, void const *obj);
 inline static void *
 gc_block_take(Ty *ty, GCBlock *b, u32 i, usize n, char type)
 {
-        struct alloc *a = (struct alloc *)(b->cells + (usize)i * b->cell);
+        Alloc *a = (Alloc *)(b->cells + (usize)i * b->cell);
 
         b->taken[i] = 1;
         b->flags[i] = 0;
@@ -363,7 +363,7 @@ gc_block_take(Ty *ty, GCBlock *b, u32 i, usize n, char type)
 inline static void *
 gc_block_object(Ty *ty, usize n, char type)
 {
-        GCBlock *b = ty->blocks.cur[GCBlockClass[(n + sizeof (struct alloc) + 15) >> 4]];
+        GCBlock *b = ty->blocks.cur[GCBlockClass[(n + sizeof (Alloc) + 15) >> 4]];
 
         if (LIKELY((b != NULL) && (b->cursor < b->ncells) && (b->taken[b->cursor] == 0))) {
                 return gc_block_take(ty, b, b->cursor, n, type);
@@ -383,7 +383,7 @@ gc_blockable(usize n, char type)
 inline static void *
 gc_range_object(Ty *ty, usize n, char type)
 {
-        return (n <= GC_BLOCK_CELL - sizeof (struct alloc))
+        return (n <= GC_BLOCK_CELL - sizeof (Alloc))
              ? gc_block_object(ty, n, type)
              : GCLargeAlloc(ty, n, type);
 }
@@ -394,7 +394,7 @@ gc_object_heap(Ty *ty, usize n, char type, bool zero)
 {
         MemoryUsed += n;
 
-        struct alloc *a = zero ? ty_calloc(1, sizeof *a + n) : ty_malloc(sizeof *a + n);
+        Alloc *a = zero ? ty_calloc(1, sizeof *a + n) : ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -501,7 +501,7 @@ gc_free(Ty *ty, void *p)
         if (p != NULL && InGCBlocks(ALLOC_OF(p))) {
                 GCBlockDrop(ty, ALLOC_OF(p));
         } else if (p != NULL) {
-                struct alloc *a = ALLOC_OF(p);
+                Alloc *a = ALLOC_OF(p);
                 if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
                         GCRepin(ty, a, NULL);
                 }
@@ -516,7 +516,7 @@ gc_free(Ty *ty, void *p)
 
 inline static void *
 gc_resize(Ty *ty, void *p, usize n) {
-        struct alloc *a;
+        Alloc *a;
 
         if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
                 void *q = gc_resize(ty, NULL, n);
@@ -541,7 +541,7 @@ gc_resize(Ty *ty, void *p, usize n) {
 
         CheckUsed(ty);
 
-        struct alloc *old = a;
+        Alloc *old = a;
 
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -629,11 +629,11 @@ GCPinYoung(Ty *ty, AllocList const *pinned, AllocList *young);
 void
 GCUnpinYoung(AllocList *young);
 
-struct alloc *
-GCBufferOwner(Ty *ty, struct alloc const *buf);
+Alloc *
+GCBufferOwner(Ty *ty, Alloc const *buf);
 
 void
-GCRetrace(Ty *ty, struct alloc *a, char const *lo, char const *hi);
+GCRetrace(Ty *ty, Alloc *a, char const *lo, char const *hi);
 
 void
 GCDrain(Ty *ty);

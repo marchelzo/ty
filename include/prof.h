@@ -120,10 +120,10 @@ void
 prof_gc_done(u64 before, u64 after, u64 ns);
 
 void
-prof_alloc_bind(struct alloc *a);
+prof_alloc_bind(Alloc *a);
 
 void
-prof_free(struct alloc *a);
+prof_free(Alloc *a);
 
 void
 color_sequence(float p, char *out);

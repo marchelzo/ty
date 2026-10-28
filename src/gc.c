@@ -115,7 +115,7 @@ static TySpinLock ImmortalLock = TY_MUTEX_INIT;
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
 
 inline static void
-finalize(Ty *ty, struct alloc *a)
+finalize(Ty *ty, Alloc *a)
 {
         TyObject *obj = (TyObject *)a->data;
         Value     o;
@@ -148,7 +148,7 @@ finalize(Ty *ty, struct alloc *a)
 }
 
 inline static bool
-inert(struct alloc const *a)
+inert(Alloc const *a)
 {
         enum : u64 {
                 INERT = (1ULL << GC_STRING)
@@ -171,7 +171,7 @@ inert(struct alloc const *a)
 }
 
 inline static void
-collect(Ty *ty, struct alloc *a)
+collect(Ty *ty, Alloc *a)
 {
         void *p = a->data;
 
@@ -333,7 +333,7 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
                 ) {
                         *used -= min(v__(*allocs, i)->size, *used);
                         A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);
-                        SWAP(struct alloc *, v__(*allocs, i), v_L(*allocs));
+                        SWAP(Alloc *, v__(*allocs, i), v_L(*allocs));
                         vvX(*allocs);
                 }
         }
@@ -346,7 +346,7 @@ sweep_list(Ty *ty, AllocList *list, AllocList *old)
 
         GC_STOP();
         for (usize i = 0; i < vN(*list); ++i) {
-                struct alloc *a = v__(*list, i);
+                Alloc *a = v__(*list, i);
                 if (i + 8 < vN(*list)) {
                         __builtin_prefetch(v__(*list, i + 8));
                 }
@@ -432,7 +432,7 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
 void
 GCTrackFinalizable(Ty *ty, TyObject const *obj)
 {
-        struct alloc *a = ALLOC_OF(obj);
+        Alloc *a = ALLOC_OF(obj);
 
         xvP(ty->finalizable, a);
 
@@ -450,7 +450,7 @@ GCTrackFinalizable(Ty *ty, TyObject const *obj)
 }
 
 inline static bool
-doomed(Ty *ty, struct alloc *a)
+doomed(Ty *ty, Alloc *a)
 {
         return !gc_marked(a, ty->gc_owner) && (A_LOAD(&a->hard) == 0);
 }
@@ -461,7 +461,7 @@ QueueFinalizers(Ty *ty, AllocList *list, ValueVector *queue)
         usize n = 0;
 
         for (usize i = 0; i < vN(*list); ++i) {
-                struct alloc *a   = v__(*list, i);
+                Alloc *a   = v__(*list, i);
                 TyObject     *obj = (TyObject *)a->data;
 
                 if (doomed(ty, a) && obj->finalized) {
@@ -595,7 +595,7 @@ ref_scan(ThreadGroup const *group, void const *p)
 }
 
 static bool
-block_registered(Ty *ty, struct alloc const *a);
+block_registered(Ty *ty, Alloc const *a);
 
 bool
 GCRegistered(Ty *ty, void const *p)
@@ -694,7 +694,7 @@ GCCollect(Ty *ty)
 }
 
 void
-GCRepin(Ty *ty, struct alloc const *old, struct alloc *new)
+GCRepin(Ty *ty, Alloc const *old, Alloc *new)
 {
         for (usize i = vN(ty->pinned); i > 0; --i) {
                 if (v__(ty->pinned, i - 1) == old) {
@@ -821,7 +821,7 @@ dirty_scan(Ty *ty, bool rescan)
 
         for (usize i = 0; i < vN(Dirty.old); ++i) {
                 struct page_region const *r = v_(Dirty.old, i);
-                GCRetrace(ty, (struct alloc *)r->categories, (char *)r->start, (char *)r->end);
+                GCRetrace(ty, (Alloc *)r->categories, (char *)r->start, (char *)r->end);
         }
 
         v0(Dirty.old);
@@ -1085,7 +1085,7 @@ block_new(Ty *ty, u32 cls)
 void *
 GCBlockAlloc(Ty *ty, usize n, char type)
 {
-        u32           cls = GCBlockClass[(n + sizeof (struct alloc) + 15) >> 4];
+        u32           cls = GCBlockClass[(n + sizeof (Alloc) + 15) >> 4];
         GCBlockCache *bc  = &ty->blocks;
         GCBlock      *b   = bc->cur[cls];
 
@@ -1115,13 +1115,13 @@ GCBlockAlloc(Ty *ty, usize n, char type)
 inline static usize
 large_charge(GCBlock const *b)
 {
-        return ((struct alloc const *)b->cells)->size + sizeof (struct alloc);
+        return ((Alloc const *)b->cells)->size + sizeof (Alloc);
 }
 
 void *
 GCLargeAlloc(Ty *ty, usize n, char type)
 {
-        usize bytes = n + sizeof (struct alloc);
+        usize bytes = n + sizeof (Alloc);
         usize units = (bytes + GC_BLOCK_SIZE - 1) >> GC_BLOCK_SHIFT;
 
         if (bytes > UINT32_MAX) {
@@ -1198,7 +1198,7 @@ sweep_cleanup(Ty *ty, AllocList *cleanup)
 
         GC_STOP();
         for (usize i = 0; i < vN(*cleanup); ++i) {
-                struct alloc *a = v__(*cleanup, i);
+                Alloc *a = v__(*cleanup, i);
                 if (gc_marked(a, ty->gc_owner)) {
                         *v_(*cleanup, n++) = a;
                 } else {
@@ -1213,7 +1213,7 @@ sweep_cleanup(Ty *ty, AllocList *cleanup)
 }
 
 void
-GCTrackCleanup(Ty *ty, struct alloc *a)
+GCTrackCleanup(Ty *ty, Alloc *a)
 {
         GCBlock *b = GCBlockOf(a);
         u8      *f = &b->flags[GCCellOf(b, a)];
@@ -1364,10 +1364,10 @@ GCFreeBlockCache(GCBlockCache *bc)
 }
 
 static bool
-block_cell_valid(GCBlock const *b, struct alloc const *a);
+block_cell_valid(GCBlock const *b, Alloc const *a);
 
 void
-GCBlockDrop(Ty *ty, struct alloc *a)
+GCBlockDrop(Ty *ty, Alloc *a)
 {
         GCBlock *b = GCBlockOf(a);
 
@@ -1404,7 +1404,7 @@ GCBlockDrop(Ty *ty, struct alloc *a)
 }
 
 static bool
-block_cell_valid(GCBlock const *b, struct alloc const *a)
+block_cell_valid(GCBlock const *b, Alloc const *a)
 {
         if (b->ncells == 0 || (char const *)a < b->cells) {
                 return false;
@@ -1418,7 +1418,7 @@ block_cell_valid(GCBlock const *b, struct alloc const *a)
 }
 
 static void const *
-owned_buffer(struct alloc const *a)
+owned_buffer(Alloc const *a)
 {
         void const *p = a->data;
 
@@ -1433,14 +1433,22 @@ owned_buffer(struct alloc const *a)
         }
 }
 
-static struct alloc *
-pin_buffer(struct alloc const *a)
+static Alloc *
+buffer_alloc_of(Alloc const *a)
 {
         void const *buf = owned_buffer(a);
 
-        return (buf != NULL && InGCBlocks(ALLOC_OF(buf)) && block_cell_valid(GCBlockOf(ALLOC_OF(buf)), ALLOC_OF(buf)))
-             ? ALLOC_OF(buf)
-             : NULL;
+        if (buf == NULL) {
+                return NULL;
+        }
+
+        Alloc *buf_a = ALLOC_OF(buf);
+
+        if (!InGCBlocks(buf_a) || !block_cell_valid(GCBlockOf(buf_a), buf_a)) {
+                return NULL;
+        }
+
+        return buf_a;
 }
 
 void
@@ -1449,13 +1457,17 @@ GCMarkPinned(Ty *ty, AllocList *pinned)
         usize n = 0;
 
         for (usize i = 0; i < vN(*pinned); ++i) {
-                struct alloc *a = v__(*pinned, i);
+                Alloc *a = v__(*pinned, i);
                 if (atomic_load_explicit(&a->hard, memory_order_relaxed) != 0) {
                         if (!GCGen) {
                                 gc_mark_alloc(a, ty->gc_owner);
-                        }
-                        if (!GCGen && InGCBlocks(a) && pin_buffer(a) != NULL) {
-                                gc_mark_alloc(pin_buffer(a), ty->gc_owner);
+                                if (InGCBlocks(a)) {
+                                        Alloc *owned = buffer_alloc_of(a);
+                                        if (owned != NULL) {
+                                                gc_mark_alloc(owned, ty->gc_owner);
+                                        }
+                                }
+
                         }
                         *v_(*pinned, n++) = a;
                 }
@@ -1465,14 +1477,14 @@ GCMarkPinned(Ty *ty, AllocList *pinned)
 }
 
 inline static u8 *
-cell_mark(struct alloc const *a)
+cell_mark(Alloc const *a)
 {
         GCBlock *b = GCBlockOf(a);
         return &b->marks[GCCellOf(b, a)];
 }
 
 static void
-pin_young(AllocList *young, struct alloc *a)
+pin_young(AllocList *young, Alloc *a)
 {
         if (a != NULL && InGCBlocks(a) && *cell_mark(a) == 0) {
                 *cell_mark(a) = 1;
@@ -1484,13 +1496,13 @@ void
 GCPinYoung(Ty *ty, AllocList const *pinned, AllocList *young)
 {
         for (usize i = 0; i < vN(*pinned); ++i) {
-                struct alloc *a = v__(*pinned, i);
+                Alloc *a = v__(*pinned, i);
                 if (
                         (atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)
                      && InGCBlocks(a)
                      && (GCBlockOf(a)->owner == ty->gc_owner)
                 ) {
-                        pin_young(young, pin_buffer(a));
+                        pin_young(young, buffer_alloc_of(a));
                         pin_young(young, a);
                 }
         }
@@ -1506,11 +1518,11 @@ GCUnpinYoung(AllocList *young)
         v0(*young);
 }
 
-struct alloc *
-GCBufferOwner(Ty *ty, struct alloc const *buf)
+Alloc *
+GCBufferOwner(Ty *ty, Alloc const *buf)
 {
         GCBlock const *b = GCBlockOf(buf);
-        struct alloc  *o = (struct alloc *)(GCBlockBase + ((uptr)b->refs[GCCellOf(b, buf)] << 4));
+        Alloc  *o = (Alloc *)(GCBlockBase + ((uptr)b->refs[GCCellOf(b, buf)] << 4));
 
         return block_registered(ty, o)
             && (*cell_mark(o) != 0)
@@ -1574,7 +1586,7 @@ static void
 retrace_list(Ty *ty, AllocList const *list)
 {
         for (usize i = 0; i < vN(*list); ++i) {
-                struct alloc *a = v__(*list, i);
+                Alloc *a = v__(*list, i);
                 if (A_LOAD(&a->mark) & 1) {
                         GCRetrace(ty, a, NULL, (char *)-1);
                 }
@@ -1585,7 +1597,7 @@ static void
 retrace_cells(Ty *ty, AllocList const *list)
 {
         for (usize i = 0; i < vN(*list); ++i) {
-                struct alloc *a = v__(*list, i);
+                Alloc *a = v__(*list, i);
                 if (*cell_mark(a) != 0) {
                         GCRetrace(ty, a, NULL, (char *)-1);
                 }
@@ -1650,7 +1662,7 @@ GCPrepare(Ty *ty, bool minor)
 }
 
 noreturn static void
-verify_failed(struct alloc const *a, struct alloc const *owner)
+verify_failed(Alloc const *a, Alloc const *owner)
 {
         fprintf(
                 stderr,
@@ -1684,8 +1696,8 @@ snap_cache(byte_vector *snap, GCBlockCache const *bc, bool check)
                                 char was = v__(*snap, snap->count++);
                                 if (b->marks[c] && b->taken[c] && !was) {
                                         verify_failed(
-                                                (struct alloc *)(b->cells + (usize)c * b->cell),
-                                                (struct alloc *)(GCBlockBase + ((uptr)b->refs[c] << 4))
+                                                (Alloc *)(b->cells + (usize)c * b->cell),
+                                                (Alloc *)(GCBlockBase + ((uptr)b->refs[c] << 4))
                                         );
                                 }
                                 b->marks[c] = was;
@@ -1698,7 +1710,7 @@ static void
 snap_list(byte_vector *snap, AllocList const *list, bool check)
 {
         for (usize i = 0; i < vN(*list); ++i) {
-                struct alloc *a = v__(*list, i);
+                Alloc *a = v__(*list, i);
                 u8            m = A_LOAD(&a->mark);
                 if (!check) {
                         xvP(*snap, m);
@@ -1778,7 +1790,11 @@ GCShare(Ty *ty)
 
         TyMutexLock(&Pool.lock);
         xvPn(Pool.work, vv(ty->marking), k);
-        memmove(vv(ty->marking), vv(ty->marking) + k, (vN(ty->marking) - k) * sizeof (GCWork));
+        memmove(
+                vv(ty->marking),
+                vv(ty->marking) + k,
+                (vN(ty->marking) - k) * sizeof (GCWork)
+        );
         vN(ty->marking) -= k;
         work_signal();
         TyMutexUnlock(&Pool.lock);
@@ -1866,6 +1882,9 @@ GCParallelBegin(Ty *ty, bool minor)
                 xvR(h->generic, GC_TAKE);
                 xvR(h->ty.cleanup, GC_TAKE);
                 if (TyThreadCreate(&h->thread, mark_helper, h) != 0) {
+                        xvF(h->ty.marking);
+                        xvF(h->generic);
+                        xvF(h->ty.cleanup);
                         xmF(h);
                         Pool.want = Pool.n;
                         break;
@@ -1873,12 +1892,17 @@ GCParallelBegin(Ty *ty, bool minor)
                 Pool.helpers[Pool.n++] = h;
         }
 
+        if (Pool.n == 0) {
+                TyMutexUnlock(&Pool.lock);
+                atomic_store(&Pool.busy, false);
+                return false;
+        }
+
         for (int i = 0; i < Pool.n; ++i) {
                 Pool.helpers[i]->ty.gc_owner = ty->gc_owner;
         }
 
         xvR(Pool.work, 32 * GC_MARK_DEEP);
-
 
         Pool.owner = ty->gc_owner;
 
@@ -1929,7 +1953,7 @@ GCParallelEnd(Ty *ty)
 void
 GCTrackDynamic(Ty *ty, void const *obj)
 {
-        struct alloc *a = ALLOC_OF(obj);
+        Alloc *a = ALLOC_OF(obj);
 
         if (InGCBlocks(a)) {
                 GCTrackCleanup(ty, a);
@@ -1937,7 +1961,7 @@ GCTrackDynamic(Ty *ty, void const *obj)
 }
 
 static bool
-block_registered(Ty *ty, struct alloc const *a)
+block_registered(Ty *ty, Alloc const *a)
 {
         GCBlock const *b = GCBlockOf(a);
 

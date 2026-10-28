@@ -38,7 +38,7 @@
  #define CO_STACK_SIZE (1UL << 24)
 #endif
 
-typedef vec(struct alloc *) AllocList;
+typedef vec(Alloc *) AllocList;
 typedef vec(char *)         IPVector;
 
 typedef vec(void *)         ContextVector;
@@ -1038,7 +1038,7 @@ extern bool InteractiveSession;
 
 [[gnu::always_inline]]
 inline static void
-gc_mark_alloc(struct alloc *a, u8 owner)
+gc_mark_alloc(Alloc *a, u8 owner)
 {
         if (InGCBlocks(a)) {
                 GCBlock *b = GCBlockOf(a);
@@ -1052,7 +1052,7 @@ gc_mark_alloc(struct alloc *a, u8 owner)
 
 [[gnu::always_inline]]
 inline static bool
-gc_claim(struct alloc *a, u8 owner)
+gc_claim(Alloc *a, u8 owner)
 {
         if (InGCBlocks(a)) {
                 GCBlock *b = GCBlockOf(a);
@@ -1075,7 +1075,7 @@ gc_claim(struct alloc *a, u8 owner)
 
 [[gnu::always_inline]]
 inline static bool
-gc_marked(struct alloc const *a, u8 owner)
+gc_marked(Alloc const *a, u8 owner)
 {
         if (InGCBlocks(a)) {
                 GCBlock const *b = GCBlockOf(a);
@@ -1134,11 +1134,11 @@ extern usize TotalBytesAllocated;
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
 #endif
 
-#define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
+#define ALLOC_OF(p) ((Alloc *)(((char *)(p)) - offsetof(Alloc, data)))
 
 
 inline static void
-GCPin(Ty *ty, struct alloc *a)
+GCPin(Ty *ty, Alloc *a)
 {
         if (atomic_fetch_add_explicit(&a->hard, 1, memory_order_relaxed) == 0) {
                 xvP(ty->pinned, a);

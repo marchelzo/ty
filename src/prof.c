@@ -438,7 +438,7 @@ static u64 InfoN;
 static pthread_mutex_t InfoLock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
-        struct alloc *a;
+        Alloc *a;
         u64 seq;
         u64 epoch;
 } LiveObj;
@@ -453,7 +453,7 @@ static vec(u32) SeqStack;
 static vec(u64) HeapTimeT;
 static vec(u64) HeapTimeB;
 
-#define LIVE_TOMB ((struct alloc *)1)
+#define LIVE_TOMB ((Alloc *)1)
 static int ModTop = -1;
 
 static struct {
@@ -2693,7 +2693,7 @@ UserFrame(u32 const *lstack, u16 n)
 }
 
 static u64
-ObjSize(struct alloc const *a);
+ObjSize(Alloc const *a);
 
 static void
 AttachCalls(void);
@@ -5372,7 +5372,7 @@ LiveGrow(void)
 }
 
 void
-prof_alloc_bind(struct alloc *a)
+prof_alloc_bind(Alloc *a)
 {
         u64 seq = ProfPending;
 
@@ -5403,7 +5403,7 @@ prof_alloc_bind(struct alloc *a)
 }
 
 void
-prof_free(struct alloc *a)
+prof_free(Alloc *a)
 {
         pthread_mutex_lock(&LiveLock);
 
@@ -5423,7 +5423,7 @@ prof_free(struct alloc *a)
 }
 
 static u64
-ObjSize(struct alloc const *a)
+ObjSize(Alloc const *a)
 {
         u64 n = a->size;
 

@@ -2639,9 +2639,9 @@ trace_set_items(Ty *ty, Set *s, char const *lo, char const *hi)
 }
 
 static void
-retrace_buffer(Ty *ty, struct alloc *a, char const *lo, char const *hi)
+retrace_buffer(Ty *ty, Alloc *a, char const *lo, char const *hi)
 {
-        struct alloc *o = GCBufferOwner(ty, a);
+        Alloc *o = GCBufferOwner(ty, a);
 
         if (o == NULL) {
                 return;
@@ -2665,7 +2665,7 @@ old_buffer(Ty *ty, void const *buf)
 }
 
 static void
-retrace_owner(Ty *ty, struct alloc *a)
+retrace_owner(Ty *ty, Alloc *a)
 {
         void       *p   = a->data;
         Dict       *d   = p;
@@ -2702,7 +2702,7 @@ retrace_owner(Ty *ty, struct alloc *a)
 }
 
 void
-GCRetrace(Ty *ty, struct alloc *a, char const *lo, char const *hi)
+GCRetrace(Ty *ty, Alloc *a, char const *lo, char const *hi)
 {
         void  *p = a->data;
         Value *v = p;

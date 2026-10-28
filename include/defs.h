@@ -117,6 +117,7 @@ typedef struct bytes {
 typedef struct ty0              TY;
 typedef struct ty               Ty;
 typedef struct ty_save          TySavePoint;
+typedef struct alloc            Alloc;
 typedef struct value            Value;
 typedef struct expression       Expr;
 typedef struct statement        Stmt;

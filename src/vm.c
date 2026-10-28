@@ -510,7 +510,7 @@ BequeathAllocs(ThreadGroup *group)
         TySpinLockLock(&heir->DLock);
 
         for (usize i = 0; i < vN(group->DeadAllocs); ++i) {
-                struct alloc *a = v__(group->DeadAllocs, i);
+                Alloc *a = v__(group->DeadAllocs, i);
                 u8            m = atomic_load_explicit(&a->mark, memory_order_relaxed);
                 atomic_store_explicit(&a->mark, bits | (GCGen & m), memory_order_relaxed);
         }
@@ -601,7 +601,7 @@ static void
 MarkPendingFFIAutoValues(Ty *marker, AllocList const *allocs)
 {
         for (usize i = 0; i < vN(*allocs); ++i) {
-                struct alloc *a = v__(*allocs, i);
+                Alloc *a = v__(*allocs, i);
                 if (a->type == GC_FFI_AUTO && !(a->mark & 1) && a->hard == 0) {
                         Value *values = (Value *)a->data;
                         value_mark(marker, &values[0]);
