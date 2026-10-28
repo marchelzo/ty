@@ -216,6 +216,7 @@ typedef vec(Module *)           ModuleVector;
 
 #define BYTES(p, n) ((Bytes) {(p), (n)})
 #define b_(b, i) ((void *)&(b).data[(i)])
+#define bb(b) ((b).data)
 #define bN(b) ((b).length)
 
 #define vA()       value_array_new(ty)

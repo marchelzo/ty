@@ -10,6 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+
 #include <pcre2.h>
 #include <ffi.h>
 #include "libco.h"
@@ -1441,47 +1445,122 @@ enum {
 };
 #undef X
 
-#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,          .z              = (k),                                  .tags = 0 })
-#define REAL(f)                  ((Value){ .type = VALUE_REAL,             .real           = (f),                                  .tags = 0 })
-#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,          .boolean        = (b),                                  .tags = 0 })
-#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,            .array          = (a),                                  .tags = 0 })
-#define TUPLE(vs, ns, n)         ((Value){ .type = VALUE_TUPLE,            .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
-#define QUEUE(q)                 ((Value){ .type = VALUE_QUEUE,            .queue          = (q),                                  .tags = 0 })
-#define SHARED_QUEUE(q)          ((Value){ .type = VALUE_SHARED_QUEUE,     .shared_queue   = (q),                                  .tags = 0 })
-#define DICT(d)                  ((Value){ .type = VALUE_DICT,             .dict           = (d),                                  .tags = 0 })
-#define SET(s)                   ((Value){ .type = VALUE_SET,              .set            = (s),                                  .tags = 0 })
-#define HEAP(h)                  ((Value){ .type = VALUE_HEAP,             .heap           = (h),                                  .tags = 0 })
-#define HEAP_VIEW(h)             ((Value){ .type = VALUE_ARRAY,            .array          = &(h)->xs,                             .tags = 0 })
-#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,            .regex          = (r),                                  .tags = 0 })
+_Static_assert(sizeof (Value) == 32, "Value is four words");
+_Static_assert(offsetof(Value, z)      ==  8, "Value word 1");
+_Static_assert(offsetof(Value, tag)    ==  8, "Value word 1");
+_Static_assert(offsetof(Value, class)  ==  8, "Value word 1");
+_Static_assert(offsetof(Value, count)  ==  8, "Value word 1");
+_Static_assert(offsetof(Value, this)   ==  8, "Value word 1");
+_Static_assert(offsetof(Value, uop)    ==  8, "Value word 1");
+_Static_assert(offsetof(Value, bop)    == 12, "Value word 1");
+_Static_assert(offsetof(Value, object) == 16, "Value word 2");
+_Static_assert(offsetof(Value, gcptr)  == 16, "Value word 2");
+_Static_assert(offsetof(Value, items)  == 16, "Value word 2");
+_Static_assert(offsetof(Value, method) == 16, "Value word 2");
+_Static_assert(offsetof(Value, bytes)  == 16, "Value word 2");
+_Static_assert(offsetof(Value, ro)     == 20, "Value word 2");
+_Static_assert(offsetof(Value, extra)  == 24, "Value word 3");
+_Static_assert(offsetof(Value, ids)    == 24, "Value word 3");
+_Static_assert(offsetof(Value, name)   == 24, "Value word 3");
+_Static_assert(offsetof(Value, str0)   == 24, "Value word 3");
+
+[[gnu::always_inline]]
+inline static u64
+RealBits(double f)
+{
+        u64 b;
+        memcpy(&b, &f, sizeof b);
+        return b;
+}
+
+[[gnu::always_inline]]
+inline static Value
+PackValue(u8 type, u64 w1, u64 w2, u64 w3)
+{
+        Value v;
+#if defined(__SSE2__)
+        _mm_storeu_si128((__m128i *)&v + 0, _mm_set_epi64x(w1, type));
+        _mm_storeu_si128((__m128i *)&v + 1, _mm_set_epi64x(w3, w2));
+#else
+        memcpy(&v, (u64[]) { type, w1, w2, w3 }, sizeof v);
+#endif
+        return v;
+}
+
+typedef i64 ValueHalf __attribute__((vector_size(16)));
+
+[[gnu::always_inline]]
+inline static void
+MoveValue(Value *dst, Value const *src)
+{
+#if defined(__x86_64__) && defined(__GNUC__)
+        ValueHalf   lo;
+        ValueHalf   hi;
+        char const *s = (char const *)src;
+
+        __asm__ (
+                "movq\t%2, %0\n\t"
+                "movhps\t%3, %0\n\t"
+                "movq\t%4, %1\n\t"
+                "movhps\t%5, %1"
+                : "=&x" (lo), "=x" (hi)
+                : "m" (*(u64 const *)(s +  0)),
+                  "m" (*(u64 const *)(s +  8)),
+                  "m" (*(u64 const *)(s + 16)),
+                  "m" (*(u64 const *)(s + 24))
+        );
+
+        memcpy((char *)dst +  0, &lo, sizeof lo);
+        memcpy((char *)dst + 16, &hi, sizeof hi);
+#else
+        *dst = *src;
+#endif
+}
+
+#define ValueWords(...) (((Value[]) { PackValue(__VA_ARGS__) })[0])
+#define VWP(T, p)       ((u64)(uptr)(1 ? (p) : (T *)0))
+#define VWI(x)          ((u64)(u32)(i32)(x))
+
+#define INTEGER(k)               ValueWords(VALUE_INTEGER,        (imax)(k),                          0,                     0)
+#define REAL(f)                  ValueWords(VALUE_REAL,           RealBits(f),                        0,                     0)
+#define BOOLEAN(b)               ValueWords(VALUE_BOOLEAN,        (bool)(b),                          0,                     0)
+#define ARRAY(a)                 ValueWords(VALUE_ARRAY,          VWP(Array, a),                      0,                     0)
+#define TUPLE(vs, ns, n)         ValueWords(VALUE_TUPLE,          VWI(n),                             VWP(Value, vs),        VWP(i32, ns))
+#define BLOB(b)                  ValueWords(VALUE_BLOB,           VWP(Blob, b),                       0,                     0)
+#define QUEUE(q)                 ValueWords(VALUE_QUEUE,          VWP(Queue, q),                      0,                     0)
+#define SHARED_QUEUE(q)          ValueWords(VALUE_SHARED_QUEUE,   VWP(SharedQueue, q),                0,                     0)
+#define DICT(d)                  ValueWords(VALUE_DICT,           VWP(Dict, d),                       0,                     0)
+#define SET(s)                   ValueWords(VALUE_SET,            VWP(Set, s),                        0,                     0)
+#define HEAP(h)                  ValueWords(VALUE_HEAP,           VWP(Heap, h),                       0,                     0)
+#define HEAP_VIEW(h)             ValueWords(VALUE_ARRAY,          VWP(Array, &(h)->xs),               0,                     0)
+#define REGEX(r)                 ValueWords(VALUE_REGEX,          VWP(Regex const, r),                0,                     0)
 #define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                 .tags = 0 })
-#define PTR(p)                   ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = NULL,                  .tags = 0 })
-#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = NULL,  .extra = (t),   .tags = 0 })
-#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp),                 .tags = 0 })
-#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (t),   .tags = 0 })
-#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (ep),  .tags = 0 })
-#define TRACE(t)                 ((Value){ .type = VALUE_TRACE,            .ptr            = (t),                                  .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
-#define REF(p)                   ((Value){ .type = VALUE_REF,              .ptr            = (p),                                  .tags = 0 })
-#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,    .ptr            = (p),                                  .tags = 0 })
-#define TAG(t)                   ((Value){ .type = VALUE_TAG,              .tag            = (t),                                  .tags = 0 })
-#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,            .class          = (c),  .object = NULL,                 .tags = 0 })
-#define TYPE(t)                  ((Value){ .type = VALUE_TYPE,             .z              = (t),                                  .tags = 0 })
-#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,           .object         = (o),  .class  = (c),                  .tags = 0 })
-#define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,         .uop            = (u),  .bop    = (b),                  .tags = 0 })
-#define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,        .namespace      = (ns),                                 .tags = 0 })
-#define MODULE(m)                ((Value){ .type = VALUE_MODULE,           .mod            = (m),                                  .tags = 0 })
-#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,           .method         = (m),  .this   = (t),  .name = (n),    .tags = 0 })
-#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,        .gen            = (g),                                  .tags = 0 })
-#define THREAD(t)                ((Value){ .type = VALUE_THREAD,           .thread         = (t),                                  .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD,   .builtin_method = (m),  .this   = (t),  .name = (n),    .tags = 0 })
+#define PTR(p)                   ValueWords(VALUE_PTR,            VWP(void const, p),                 0,                     0)
+#define TPTR(t, p)               ValueWords(VALUE_PTR,            VWP(void const, p),                 0,                     VWP(void const, t))
+#define GCPTR(p, gcp)            ValueWords(VALUE_PTR,            VWP(void const, p),                 VWP(void const, gcp),  0)
+#define TGCPTR(p, t, gcp)        ValueWords(VALUE_PTR,            VWP(void const, p),                 VWP(void const, gcp),  VWP(void const, t))
+#define EPTR(p, gcp, ep)         ValueWords(VALUE_PTR,            VWP(void const, p),                 VWP(void const, gcp),  VWP(void const, ep))
+#define TRACE(t)                 ValueWords(VALUE_TRACE,          VWP(void const, t),                 0,                     0)
+#define REF(p)                   ValueWords(VALUE_REF,            VWP(void const, p),                 0,                     0)
+#define UNINITIALIZED(p)         ValueWords(VALUE_UNINITIALIZED,  VWP(void const, p),                 0,                     0)
+#define TAG(t)                   ValueWords(VALUE_TAG,            (u16)(t),                           0,                     0)
+#define CLASS(c)                 ValueWords(VALUE_CLASS,          VWI(c),                             0,                     0)
+#define TYPE(t)                  ValueWords(VALUE_TYPE,           (imax)(t),                          0,                     0)
+#define OBJECT(o, c)             ValueWords(VALUE_OBJECT,         VWI(c),                             VWP(TyObject, o),      0)
+#define OPERATOR(u, b)           ValueWords(VALUE_OPERATOR,       VWI(u) | VWI(b) << 32,              0,                     0)
+#define NAMESPACE(ns)            ValueWords(VALUE_NAMESPACE,      VWP(Expr, ns),                      0,                     0)
+#define MODULE(m)                ValueWords(VALUE_MODULE,         VWP(Module, m),                     0,                     0)
+#define METHOD(n, m, t)          ValueWords(VALUE_METHOD,         VWP(Value, t),                      VWP(Value, m),         VWI(n))
+#define GENERATOR(g)             ValueWords(VALUE_GENERATOR,      VWP(Generator, g),                  0,                     0)
+#define THREAD(t)                ValueWords(VALUE_THREAD,         VWP(Thread, t),                     0,                     0)
+#define BUILTIN_METHOD(n, m, t)  ValueWords(VALUE_BUILTIN_METHOD, VWP(Value, t),                      VWP(BuiltinMethod, m), VWI(n))
 #define FOREIGN_FUN(p, i, x)     ((Value){ .type = VALUE_FOREIGN_FUNCTION, .ffi            = (i),  .ff     = (p),  .xinfo = (x),   .tags = 0 })
 #define JIT_FUN(c, e, x)         ((Value){ .type = VALUE_JIT_FUNCTION, .jit_code = (c), .jit_entry = (e), .xinfo = (x), .tags = 0 })
-#define NIL                      ((Value){ .type = VALUE_NIL,                                                                      .tags = 0 })
+#define NIL                      ValueWords(VALUE_NIL,            0,                                  0,                     0)
 #define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,            .i              = (ix), .off   = (o), .nt = (n),        .tags = 0 })
-#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,         .i              = 0,    .off   = 0,                     .tags = 0 })
-#define NONE                     ((Value){ .type = VALUE_NONE,             .i              = 0,    .off   = 0,                     .tags = 0 })
-#define BREAK                    ((Value){ .type = VALUE_BREAK,            .i              = 0,    .off   = 0,                     .tags = 0 })
+#define SENTINEL                 ValueWords(VALUE_SENTINEL,       0,                                  0,                     0)
+#define NONE                     ValueWords(VALUE_NONE,           0,                                  0,                     0)
+#define BREAK                    ValueWords(VALUE_BREAK,          0,                                  0,                     0)
 #define ZERO                     ((Value){ 0 })
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)

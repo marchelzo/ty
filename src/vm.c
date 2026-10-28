@@ -2048,7 +2048,7 @@ co_yield_value(Ty *ty)
         vN(STACK) = vXx(FRAMES).fp;
         IP = vXx(CALLS);
 
-        MoveJitResult(top(), v);
+        MoveValue(top(), v);
 
         cothread_t co     = gen->co;
         bool       forced = (gen->st->exec_depth > 1) || (vN(gen->st->try_stack) > 0);
@@ -2262,7 +2262,7 @@ JitReturn:
                 IP = vXx(CALLS);
                 ret = vvL(STACK);
                 vN(STACK) = vXx(FRAMES).fp + 1;
-                MoveJitResult(vvL(STACK), ret);
+                MoveValue(vvL(STACK), ret);
                 CO_LOG("jit_return", TERM(92;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 break;
 
@@ -2834,7 +2834,7 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
                         IP = vXx(CALLS);
                         Value const *ret = vvL(STACK);
                         vN(STACK) = vXx(FRAMES).fp + 1;
-                        MoveJitResult(vvL(STACK), ret);
+                        MoveValue(vvL(STACK), ret);
                         --EXEC_DEPTH;
                         return;
                 }
@@ -2905,7 +2905,7 @@ plain_call(Ty *ty, Value const *f, int argc)
                 vN(STACK)   = fp + 1;
                 EXEC_DEPTH -= 2;
                 IP          = ip;
-                MoveJitResult(v_(STACK, fp), ret);
+                MoveValue(v_(STACK, fp), ret);
                 return true;
         }
 
@@ -5724,13 +5724,25 @@ void
 vm_concat_strings(Ty *ty, int n)
 {
         usize base = vN(STACK) - n;
-        usize k = 0;
+        usize last = base;
+        usize k    = 0;
 
         for (usize i = base; i < base + n; ++i) {
-                Value v = v__(STACK, i);
-                vm_to_string(ty, &v);
-                *v_(STACK, i) = v;
-                k += sN(v);
+                if (v_(STACK, i)->type != VALUE_STRING) {
+                        Value v = v__(STACK, i);
+                        vm_to_string(ty, &v);
+                        *v_(STACK, i) = v;
+                }
+                if (sN(*v_(STACK, i)) > 0) {
+                        last = i;
+                        k   += sN(*v_(STACK, i));
+                }
+        }
+
+        if (sN(*v_(STACK, last)) == k) {
+                *v_(STACK, base) = v__(STACK, last);
+                vN(STACK) = base + 1;
+                return;
         }
 
         char *str = value_string_alloc(ty, k);
@@ -11907,8 +11919,14 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 Value
 vm_2op(Ty *ty, int op, Value const *a, Value const *b)
 {
-        push(*a);
-        push(*b);
+        Value x;
+        Value y;
+
+        MoveValue(&x, a);
+        MoveValue(&y, b);
+
+        push(x);
+        push(y);
 
         DoBinaryOp(ty, op, true);
 

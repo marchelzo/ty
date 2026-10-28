@@ -3580,9 +3580,9 @@ fit_spaces(Ty *ty, byte_vector *out, isize n)
 }
 
 static void
-fit_pad(Ty *ty, byte_vector *out, Value const *fill, isize fw, isize n)
+fit_pad(Ty *ty, byte_vector *out, Bytes fill, isize fw, isize n)
 {
-        if (fw == 1 && sN(*fill) == 1 && ss(*fill)[0] == ' ') {
+        if (fw == 1 && bN(fill) == 1 && *bb(fill) == ' ') {
                 fit_spaces(ty, out, n);
                 return;
         }
@@ -3590,7 +3590,7 @@ fit_pad(Ty *ty, byte_vector *out, Value const *fill, isize fw, isize n)
         isize full = (fw > 0) ? n / fw : 0;
 
         for (isize i = 0; i < full; ++i) {
-                svPn(*out, (char const *)ss(*fill), sN(*fill));
+                svPn(*out, bb(fill), bN(fill));
         }
 
         fit_spaces(ty, out, n - full * fw);
@@ -3647,28 +3647,23 @@ fit_scan(u8 const *s, isize n, isize goal, FitScan *f)
                         cw = 1;
                         m  = 1;
                         zwj = false;
-                } else {
+                } else if (s[i] == 0x1b) {
                         isize k = term_esc_len(s, n, i);
-
-                        if (k > 0) {
-                                if (s[i + 1] == '[' && s[i + k - 1] == 'm') {
-                                        sgr = !sgr_is_reset(s + i, k);
-                                } else if (s[i + 1] == ']') {
-                                        link = osc8_open(s + i, k, link);
-                                }
-                                i += k;
-                                zwj = false;
-                                continue;
+                        if (s[i + 1] == '[' && s[i + k - 1] == 'm') {
+                                sgr = !sgr_is_reset(s + i, k);
+                        } else if (s[i + 1] == ']') {
+                                link = osc8_open(s + i, k, link);
                         }
-
+                        i += k;
+                        zwj = false;
+                        continue;
+                } else {
                         int cluster_w;
                         m = term_cluster(s, n, i, &cluster_w);
-
                         if (m <= 0) {
                                 i += 1;
                                 continue;
                         }
-
                         cw  = cluster_w;
                         zwj = false;
                 }
@@ -3678,11 +3673,13 @@ fit_scan(u8 const *s, isize n, isize goal, FitScan *f)
                         break;
                 }
 
-                w       += cw;
-                i       += m;
-                keep     = i;
-                f->sgr   = sgr;
-                f->link  = link;
+                w += cw;
+                i += m;
+
+                keep = i;
+
+                f->sgr  = sgr;
+                f->link = link;
         }
 
         f->w    = w;
@@ -3710,11 +3707,8 @@ string_fit(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         Value align = ARGxD(1, "align", INTEGER, STRING, _NIL, _NONE);
-        Value fill  = ARGxD(2, "fill", STRING, _NIL, _NONE);
-
-        if (fill.type != VALUE_STRING) {
-                fill = STRING_NOGC(" ", 1);
-        }
+        Value _fill = ARGxD(2, "fill", STRING, _NIL, _NONE);
+        Bytes  fill = !IsMissing(_fill) ? s_bytes(_fill) : BYTES(" ", 1);
 
         int just = fit_justify(ty, _name__, align);
 
@@ -3733,16 +3727,16 @@ string_fit(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
                 fit_spaces(ty, &out, pad);
         } else {
-                isize fw   = max(term_width(ss(fill), sN(fill)), 0);
+                isize fw   = max(term_width(bb(fill), bN(fill)), 0);
                 isize left = 0;
                 if (just > 0) {
                         left = pad;
                 } else if (just == 0) {
                         left = pad / 2;
                 }
-                fit_pad(ty, &out, &fill, fw, left);
+                fit_pad(ty, &out, fill, fw, left);
                 svPn(out, (char const *)s, n);
-                fit_pad(ty, &out, &fill, fw, pad - left);
+                fit_pad(ty, &out, fill, fw, pad - left);
         }
 
         Value result = vSs(vv(out), vN(out));

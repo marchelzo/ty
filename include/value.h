@@ -525,9 +525,13 @@ checked_arg_1(
         int t0
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
+
         int const _t = arg.type;
 
         if (
@@ -557,9 +561,13 @@ checked_arg_2(
         int t1
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
+
         int const _t = arg.type;
 
         if (
@@ -593,9 +601,13 @@ checked_arg_3(
         int t2
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
+
         int const _t = arg.type;
 
         if (
@@ -633,9 +645,12 @@ checked_arg_4(
         int t3
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
 
         int const _t = arg.type;
 
@@ -669,9 +684,12 @@ checked_arg_5(
         int t4
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
 
         int const _t = arg.type;
 
@@ -707,9 +725,12 @@ checked_arg_6(
         int t5
 )
 {
-        Value arg = (named != NULL) ? *named
-                  : (argp  != NULL) ? *argp
-                  : NONE;
+        Value const *src = (named != NULL) ? named
+                         : (argp  != NULL) ? argp
+                         :                   &NONE;
+        Value arg;
+
+        MoveValue(&arg, src);
 
         int const _t = arg.type;
 
@@ -1060,6 +1081,13 @@ value_array_reserve(Ty *ty, Array *a, int count)
         a->items = GCOwnedResize(ty, a->items, a->capacity * sizeof (Value), a->count * sizeof (Value), GC_BUF_VALUES, true);
 }
 
+[[gnu::always_inline]]
+inline static Value
+StringWords(void const *s, u32 n, bool ro, void const *s0)
+{
+        return PackValue(VALUE_STRING, (uptr)s, n | (u64)ro << 32, (uptr)s0);
+}
+
 static inline Value
 STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
 {
@@ -1075,13 +1103,7 @@ STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
         memcpy(str, vv(buf), vN(buf) + 1);
         SCRATCH_RESTORE();
 
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = str,
-                .bytes = vN(buf),
-                .str0 = str,
-        };
+        return StringWords(str, vN(buf), false, str);
 }
 
 static inline Value
@@ -1102,13 +1124,7 @@ STRING_CLONE(Ty *ty, void const *s, u32 n)
 {
         u8 *clone = value_string_clone(ty, s, n);
 
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        };
+        return StringWords(clone, n, false, clone);
 }
 
 static inline Value
@@ -1121,13 +1137,7 @@ STRING_CLONE_C(Ty *ty, void const *s)
         u32 n = strlen(s);
         u8 *clone = value_string_clone(ty, s, n);
 
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        };
+        return StringWords(clone, n, false, clone);
 }
 
 static inline Value
@@ -1140,13 +1150,7 @@ STRING_C_CLONE_C(Ty *ty, void const *s)
         u32 n = strlen(s);
         u8 *clone = value_string_clone_nul(ty, s, n);
 
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        };
+        return StringWords(clone, n, false, clone);
 }
 
 static inline Value
@@ -1154,64 +1158,31 @@ STRING_C_CLONE(Ty *ty, void const *s, u32 n)
 {
         u8 *clone = value_string_clone_nul(ty, s, n);
 
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        };
+        return StringWords(clone, n, false, clone);
 }
 
 static inline Value
 STRING(void *s, u32 n)
 {
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = n,
-                .str0 = s,
-        };
+        return StringWords(s, n, false, s);
 }
 
 static inline Value
 STRING_VIEW(Value s, isize offset, u32 n)
 {
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s.str + offset,
-                .bytes = n,
-                .str0 = s.str0,
-                .ro = s.ro
-        };
+        return StringWords(s.str + offset, n, s.ro, s.str0);
 }
 
 static inline Value
 STRING_NOGC(void const *s, u32 n)
 {
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = n,
-                .str0 = (u8 *)s,
-                .ro = true
-        };
+        return StringWords(s, n, true, s);
 }
 
 static inline Value
 STRING_NOGC_C(void const *s)
 {
-        return (Value) {
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = strlen(s),
-                .str0 = (u8 *)s,
-                .ro = true
-        };
+        return StringWords(s, strlen(s), true, s);
 }
 
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))

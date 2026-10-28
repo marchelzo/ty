@@ -48,36 +48,6 @@ PushFrame(FrameStack *frames, usize fp, Value const *f, char const *ip)
         return frame;
 }
 
-typedef i64 ValueHalf __attribute__((vector_size(16)));
-
-[[gnu::always_inline]]
-inline static void
-MoveJitResult(Value *dst, Value const *src)
-{
-#if defined(__x86_64__) && defined(__GNUC__)
-        ValueHalf   lo;
-        ValueHalf   hi;
-        char const *s = (char const *)src;
-
-        __asm__ (
-                "movq\t%2, %0\n\t"
-                "movhps\t%3, %0\n\t"
-                "movq\t%4, %1\n\t"
-                "movhps\t%5, %1"
-                : "=&x" (lo), "=x" (hi)
-                : "m" (*(u64 const *)(s +  0)),
-                  "m" (*(u64 const *)(s +  8)),
-                  "m" (*(u64 const *)(s + 16)),
-                  "m" (*(u64 const *)(s + 24))
-        );
-
-        memcpy((char *)dst +  0, &lo, sizeof lo);
-        memcpy((char *)dst + 16, &hi, sizeof hi);
-#else
-        *dst = *src;
-#endif
-}
-
 bool
 vm_init(Ty *ty, int ac, char **av);
 

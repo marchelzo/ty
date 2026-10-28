@@ -186,19 +186,20 @@ op_builtin_mul(Ty *ty)
                         COMPLETE(STRING_EMPTY);
                 }
 
-                usize n = sN(*left) * right->z;
+                usize m = sN(*left);
+                usize n = m * right->z;
+                u8   *s = (u8 *)value_string_alloc(ty, n);
 
-                v = STRING(value_string_alloc(ty, n), n);
-
-                for (imax i = 0; i < right->z; ++i) {
-                        memcpy(
-                                (void *)(ss(v) + i * sN(*left)),
-                                ss(*left),
-                                sN(*left)
-                        );
+                if (m == 1) {
+                        memset(s, ss(*left)[0], n);
+                } else if (m > 0) {
+                        memcpy(s, ss(*left), m);
+                        for (usize k = m; k < n; k *= 2) {
+                                memcpy(s + k, s, min(k, n - k));
+                        }
                 }
 
-                COMPLETE(v);
+                COMPLETE(STRING(s, n));
         }
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):

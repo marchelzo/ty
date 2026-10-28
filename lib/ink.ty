@@ -3236,9 +3236,10 @@ fn layout-text(
         resolve-pcts(node, max-w, max-h)
     }
     if plain-text?(node) {
-        let lines = fit-text(styled-lines(rendered), max-w, node.props['wrap'])
-        let width = lines.map(&width).max() ?? 0
-        let out   = Output(lines.map(\_.fit(width)), width)
+        let lines  = fit-text(styled-lines(rendered), max-w, node.props['wrap'])
+        let widths = lines.map(&width)
+        let width  = widths.max() ?? 0
+        let out    = Output(fit-all(lines, widths, width), width)
         return (out, Element(ox, oy, width, out.height, node.props))
     }
     let props  = node.props
@@ -3258,14 +3259,15 @@ fn layout-text(
             lines[-1] = ellipsize(lines[-1], room, t, true)
         }
     }
-    let width  = max(lines.map(&width).max() ?? 0, (node.minw ?? 0) - sx)
+    let widths = lines.map(&width)
+    let width  = max(widths.max() ?? 0, (node.minw ?? 0) - sx)
     if let $w = node.width {
         width = max(w - sx, 0)
     }
     let ta     = props['textAlign'] ?? 'start'
     let plain? = ta == 'start' && node.pl == 0 && node.pr == 0 && node.pt == 0 && node.pb == 0 && props['lineFill'] == nil && pen-of(spec) == ''
     let fill   = plain? ? plain-fill : filler(spec)
-    let padded = plain? ? fit-all(lines, width) : pad-lines(lines, width, ta, node, fill)
+    let padded = plain? ? fit-all(lines, widths, width) : pad-lines(lines, width, ta, node, fill)
     let iw    = width + node.pl + node.pr
     let inner = if node.pt == 0 && node.pb == 0 {
         padded
@@ -3351,8 +3353,8 @@ fn plain-text?(n: Node) -> Bool {
         && pen-of(n.style) == '' && (_inh-spec == nil || pen-of(_inh-spec) == '')
 }
 
-fn fit-all(lines: Array[String], width: Int) -> Array[String] {
-    lines.map(\_.fit(width))
+fn fit-all(lines: Array[String], widths: Array[Int], width: Int) -> Array[String] {
+    [(widths[i] == width) ? ln : ln.fit(width) for ln; i in lines]
 }
 
 fn start-ellipsis(lines: Array[String], room: Int) -> Array[String] {

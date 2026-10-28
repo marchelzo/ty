@@ -219,7 +219,7 @@ call_leave(Ty *ty, Value *out)
 
         if (base == out) {
                 ty->stack.count = frame->fp + 1;
-                MoveJitResult(base, v);
+                MoveValue(base, v);
         } else {
                 ty->stack.count = frame->fp;
         }
