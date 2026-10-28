@@ -523,9 +523,12 @@ deopt_why(BcLir *c, i32 why, u64 slots)
         if (JIT_DETAIL) {
                 stw(c, c->ty, offsetof(Ty, jit_why), lir_i(why));
                 stq(c, c->ty, offsetof(Ty, jit_why_slots), lir_i(slots));
+                stq(c, c->ty, offsetof(Ty, jit_stale), lir_i(c->stale));
                 stw(c, c->ty, offsetof(Ty, jit_guard), lir_i(c->guard));
                 c->guard = 0;
         }
+
+        c->stale = 0;
 }
 
 inline static void

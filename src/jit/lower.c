@@ -162,6 +162,7 @@ typedef struct bc_lir {
         u32                   nosr;
         u32                   last_call;
         i32                  *tier;
+        u64                   stale;
         u32                  *cold;
         u32                   ncold;
         JitProfile           *profile;
@@ -2654,6 +2655,7 @@ tierup_stub(BcLir *c, i32 off)
         if (node->tierup != LIR_NONE) {
                 bind(c, node->tierup);
                 flush_around(c, off);
+                c->stale = 0;
                 leave(c, JIT_PACK(JIT_OSR, node->target + 1));
         }
 }
@@ -3761,14 +3763,25 @@ admit(BcLir *c, Value const *f, char *why, usize n)
         return true;
 }
 
+/* ========================================================================= */
+#define ASIDE(...) do {                                                 \
+        u64 aside_t0_ = TyMonotonicTime();                              \
+        PROF_ENTER(PS_PROF);                                            \
+        __VA_ARGS__;                                                    \
+        PROF_LEAVE();                                                   \
+        prof_overhead(TyMonotonicTime() - aside_t0_);                   \
+} while (0)
+/* ------------------------------------------------------------------------- */
 static void
-log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
+log_compile(Value const *f, BcLir const *c, LirCode *code, u64 elapsed, JitNotes notes)
 {
-        Expr const *expr    = !from_eval(f) ? expr_of(f) : NULL;
-        char const *cls     = (expr != NULL && expr->fn->class != NULL)
-                            ? expr->fn->class->name
-                            : "";
-        u64         elapsed = TyMonotonicTime() - begin;
+        Expr const  *expr = !from_eval(f) ? expr_of(f) : NULL;
+        char const  *cls  = (expr != NULL && expr->fn->class != NULL)
+                          ? expr->fn->class->name
+                          : "";
+        JitImageRec *img;
+
+        ASIDE(img = jit_image_record(code, code_of(f), name_of(f), notes));
 
         jit_log_compile((JitCompileRecord) {
                 .name            = name_of(f),
@@ -3778,15 +3791,15 @@ log_compile(Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes n
                 .compile_time_ns = elapsed,
                 .bc_code_size    = c->size,
                 .compact         = c->compact,
-                .image           = jit_image_record(code, code_of(f), name_of(f), notes)
+                .image           = img
         });
 }
 
 static LirCode *
-publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNotes notes)
+publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 elapsed, JitNotes notes)
 {
         if (ProfMode) {
-                log_compile(f, c, code, begin, notes);
+                log_compile(f, c, code, elapsed, notes);
         }
 
 #ifdef TY_HAVE_USDT
@@ -3798,7 +3811,7 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNot
                         (e != NULL && e->mod != NULL) ? e->mod->path : "",
                         (e != NULL) ? (int)LocLine(e->start) + 1 : 0,
                         (unsigned long)code->size,
-                        (unsigned long)(TyMonotonicTime() - begin),
+                        (unsigned long)elapsed,
                         c->compact ? 1 : 2
                 );
         }
@@ -3809,7 +3822,7 @@ publish(Ty *ty, Value const *f, BcLir const *c, LirCode *code, u64 begin, JitNot
         jit_perf_map(code->body, code->size, name_of(f), source);
 
         if (JitStatsOn) {
-                jit_site_code(code->body, code->size, c->tier != NULL, code_of(f), c->cold, c->ncold);
+                ASIDE(jit_site_code(code->body, code->size, c->tier != NULL, code_of(f), c->cold, c->ncold));
         }
 
         if (from_eval(f)) {
@@ -3870,9 +3883,10 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
         u32      nosr;
         u32     *osr    = osr_table(&c, &nosr);
         LirCode *code   = c.ok ? lir_finish_owned(ty, c.L, &err) : NULL;
+        u64      done   = (begin != 0) ? TyMonotonicTime() - begin : 0;
 
         if (code != NULL && notes != NULL) {
-                *notes = describe(&c, code);
+                ASIDE(*notes = describe(&c, code));
         }
 
         if (code == NULL) {
@@ -3898,7 +3912,7 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
                 c.size,
                 c.dynamic,
                 c.has_try,
-                (unsigned long long)((TyMonotonicTime() - begin) / 1000)
+                (unsigned long long)(done / 1000)
         );
 
         code->osr  = osr;
@@ -3910,8 +3924,11 @@ build(Ty *ty, Value const *f, bool compact, bool install, u64 begin, JitNotes *n
                 return code;
         }
 
-        return publish(ty, f, &c, code, begin, (notes != NULL) ? *notes : (JitNotes) {0});
+        return publish(ty, f, &c, code, done, (notes != NULL) ? *notes : (JitNotes) {0});
 }
+/* ------------------------------------------------------------------------- */
+#undef ASIDE
+/* ========================================================================= */
 
 static JitFn *
 compile(Ty *ty, Value const *f, u64 begin)

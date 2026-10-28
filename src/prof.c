@@ -1163,10 +1163,16 @@ Sample(ProfThread *pt, uptr rip, u64 weight)
                 return;
         }
 
+        int state = StateOf(pt);
+
+        if (state == PS_PROF) {
+                return;
+        }
+
         pt->busy = 1;
         atomic_signal_fence(memory_order_seq_cst);
 
-        Record(pt, &pt->ring[0], Mode, StateOf(pt), weight, rip, 0, t0);
+        Record(pt, &pt->ring[0], Mode, state, weight, rip, 0, t0);
         TY_PROBE_IF(sample, Mode, rip);
 
         atomic_signal_fence(memory_order_seq_cst);
@@ -1261,6 +1267,12 @@ static Expr const *
 FunExpr(Value const *f)
 {
         return from_eval(f) ? NULL : expr_of(f);
+}
+
+void
+prof_overhead(u64 ns)
+{
+        atomic_fetch_add_explicit(&HandlerNs, ns, memory_order_relaxed);
 }
 
 void
@@ -1476,7 +1488,7 @@ ShotValue(Ty *ty, FILE *f, char const *name, char const *where, Value const *v)
 }
 
 static char *
-ShotVars(Ty *ty, Frame const *frame)
+ShotVars(Ty *ty, Frame const *frame, u64 stale)
 {
         Expr const *fe = FunExpr(&frame->f);
         i32 bound = frame->f.info[FUN_INFO_BOUND];
@@ -1494,6 +1506,10 @@ ShotVars(Ty *ty, Frame const *frame)
         fputc('[', f);
 
         for (i32 slot = 0; slot < bound && slot < 32 && frame->fp + slot < top; ++slot) {
+                if ((stale >> slot) & 1) {
+                        continue;
+                }
+
                 char const *id = SlotName(fe, slot);
                 if (id == NULL) {
                         ty_snprintf(name, sizeof name, "$%d", slot);
@@ -1528,10 +1544,12 @@ prof_jit_deopt(Ty *ty, Frame const *frame, i32 off)
 {
         i32 why   = ty->jit_why;
         u64 slots = ty->jit_why_slots;
+        u64 stale = ty->jit_stale;
         u32 guard = ty->jit_guard;
 
         ty->jit_why       = JIT_WHY_UNKNOWN;
         ty->jit_why_slots = 0;
+        ty->jit_stale     = 0;
         ty->jit_guard     = 0;
 
         if (!Started) {
@@ -1611,7 +1629,7 @@ prof_jit_deopt(Ty *ty, Frame const *frame, i32 off)
                 return;
         }
 
-        char *vars = ShotVars(ty, frame);
+        char *vars = ShotVars(ty, frame, stale);
 
         TySpinLockLock(&JitLock);
 
@@ -1986,7 +2004,7 @@ WallLoop(void *_)
                                 continue;
                         }
 
-                        if (!pt->ty->locked && atomic_load(&pt->live)) {
+                        if (!pt->ty->locked && atomic_load(&pt->live) && *pt->state != PS_PROF) {
                                 int s = *pt->state;
                                 u64 t0 = NowNs();
                                 Record(pt, &pt->ring[1], PK_WALL, (s == PS_RUN) ? PS_BLOCKED : s, Period, 0, 0, t0);
@@ -2888,6 +2906,10 @@ BuildModel(Ty *ty)
                                 M.sym_self[s->sym] += s->weight;
                         }
 
+                        if (cat == CAT_JIT_COMPILE) {
+                                continue;
+                        }
+
                         for (u16 k = 0; k < s->n; ++k) {
                                 Func *f = v_(M.funcs, fstack[k]);
                                 Line *l = v_(M.lines, lstack[k]);
@@ -3563,7 +3585,7 @@ SummaryHeader(void)
         }
 
         if (Mode != PK_OPS && overhead >= 5.0) {
-                fprintf(Out, "%sSampling overhead %.1f%% of CPU time.%s\n", C(33), overhead, C(0));
+                fprintf(Out, "%sProfiler overhead %.1f%% of CPU time.%s\n", C(33), overhead, C(0));
         }
 }
 
@@ -6127,6 +6149,7 @@ prof_set_target(char const *path)
 void prof_first_call(int *info) {}
 void prof_throw(Ty *ty, char const *ip) {}
 void prof_jit_decline(Value const *f, char const *why, i32 off) {}
+void prof_overhead(u64 ns) {}
 void prof_jit_deopt(Ty *ty, Frame const *frame, i32 off) {}
 void prof_jit_despecialize(Value const *f, u32 deopts) {}
 char const *prof_symbolize(uptr addr) { return NULL; }

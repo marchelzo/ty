@@ -60,6 +60,7 @@ enum {
         PS_COMPILE,
         PS_JIT_COMPILE,
         PS_BLOCKED,
+        PS_PROF,
         PS_COUNT
 };
 
@@ -147,6 +148,9 @@ prof_usdt_usage(FILE *out);
 
 void
 prof_jit_decline(Value const *f, char const *why, i32 off);
+
+void
+prof_overhead(u64 ns);
 
 void
 prof_jit_deopt(Ty *ty, Frame const *frame, i32 off);

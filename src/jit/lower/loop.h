@@ -1437,16 +1437,23 @@ flush_pair(BcLir *c, BcLoop const *loop)
         }
 }
 
-static void
+static u64
 flush_loop(BcLir *c, BcLoop const *loop, u8 mask)
 {
-        for (i32 k = 0; k < loop->nowned; ++k) {
-                i32 slot = loop->owned[k];
+        u64 stale = 0;
 
-                if (loop->written & loop->deferred & mask & loop->owned_bit[k]) {
+        for (i32 k = 0; k < loop->nowned; ++k) {
+                i32  slot  = loop->owned[k];
+                bool dirty = loop->written & loop->deferred & loop->owned_bit[k];
+
+                if (dirty && (mask & loop->owned_bit[k])) {
                         put(c, lspot(c, slot), loop->owned_reg[k], lreal(c, slot));
+                } else if (dirty && slot < 64) {
+                        stale |= 1ULL << slot;
                 }
         }
+
+        return stale;
 }
 
 static void
@@ -1456,7 +1463,7 @@ flush_active(BcLir *c)
                 BcLoop const *loop = &c->loops[c->active[i]];
 
                 if (lazy_loop(loop)) {
-                        flush_loop(c, loop, ProfMode ? 0xFF : loop->escaping | live_at(loop, c->at));
+                        c->stale |= flush_loop(c, loop, loop->escaping | live_at(loop, c->at));
                         flush_pair(c, loop);
                 }
         }
@@ -1469,7 +1476,7 @@ flush_around(BcLir *c, i32 off)
                 BcLoop const *loop = &c->loops[i];
 
                 if (lazy_loop(loop) && inside(loop, off)) {
-                        flush_loop(c, loop, loop->escaping | live_at(loop, off));
+                        c->stale |= flush_loop(c, loop, loop->escaping | live_at(loop, off));
                         flush_pair(c, loop);
                 }
         }

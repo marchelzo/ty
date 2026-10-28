@@ -914,6 +914,7 @@ typedef struct ty {
 
         i32 jit_why;
         u64 jit_why_slots;
+        u64 jit_stale;
         u32 jit_guard;
 } Ty;
 

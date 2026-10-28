@@ -511,6 +511,7 @@ class Functions < Screen {
             sorted-col('calls', 8, sort == 'calls', desc?),
             sorted-col('alloc', 9, sort == 'alloc_total', desc?),
             dim('JIT'.fit(8)),
+            sorted-col('compile', 8, sort == 'compile_ns', desc?),
             dim('function'.fit(name-w)),
             dim('location')
         ].join(' ')
@@ -525,6 +526,7 @@ class Functions < Screen {
             (f['calls'] > 0) ? hot(f['calls'] / float(most-calls), calls.fit(8, 1)) : ' ' * 8,
             prof.alloc-share(f['alloc_total']),
             jit-label(f['jit']),
+            (f['compile_ns'] > 0) ? fmt-ns(f['compile_ns']).fit(8, 1) : ' ' * 8,
             bold(f['name'].fit(name-w)),
             place(f['file'], f['line'])
         ].join(' ')
@@ -547,7 +549,7 @@ class Functions < Screen {
 
     key(app: App, k: String) -> Bool {
         match k {
-            's' => sort = cycle(['self', 'total', 'calls', 'alloc_total'], sort),
+            's' => sort = cycle(['self', 'total', 'calls', 'alloc_total', 'compile_ns'], sort),
             'S' => desc? = !desc?,
             'd' => {
                 if #rows > 0 and let $r = prof.compiled-for(rows[sel]) {
