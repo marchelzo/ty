@@ -76,3 +76,46 @@ pub fn object-comparison-jit-stack-sync() {
         assert(!(low >= high))
     }
 }
+
+tag Red, Green, Blue;
+
+fn same?(a, b) -> Bool {
+    a == b
+}
+
+fn differ?(a, b) -> Bool {
+    a != b
+}
+
+fn branch-same(a, b) -> Int {
+    if a == b {
+        return 1
+    }
+    0
+}
+
+pub fn tag-equality-matches-the-interpreter() {
+    let values = [Red, Green, Blue, Red(1), Red(2), Green(1), Red(Blue), 1, nil, true, 'Red']
+    let want   = [
+        [true,  false, false, false, false, false, false, false, false, false, false],
+        [false, true,  false, false, false, false, false, false, false, false, false],
+        [false, false, true,  false, false, false, false, false, false, false, false],
+        [false, false, false, true,  false, false, false, false, false, false, false],
+        [false, false, false, false, true,  false, false, false, false, false, false],
+        [false, false, false, false, false, true,  false, false, false, false, false],
+        [false, false, false, false, false, false, true,  false, false, false, false],
+        [false, false, false, false, false, false, false, true,  false, false, false],
+        [false, false, false, false, false, false, false, false, true,  false, false],
+        [false, false, false, false, false, false, false, false, false, true,  false],
+        [false, false, false, false, false, false, false, false, false, false, true ]
+    ]
+    for round in ..20 {
+        for a; i in values {
+            for b; j in values {
+                assert(same?(a, b) == want[i][j], "{a} == {b}")
+                assert(differ?(a, b) == !want[i][j], "{a} != {b}")
+                assert(branch-same(a, b) == (want[i][j] ? 1 : 0), "if {a} == {b}")
+            }
+        }
+    }
+}

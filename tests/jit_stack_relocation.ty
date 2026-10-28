@@ -1,0 +1,31 @@
+fn deep(n: Int) -> Int {
+    if n == 0 {
+        return 0
+    }
+    let a = [n, n + 1]
+    let b = "{n}"
+    let (c, d, e, f, g, h) = (n, n, n, n, n, n)
+    deep(n - 1) + a[0] + #b - #b + c + d + e - f - g - h
+}
+
+fn across(k: Int) -> Int {
+    let xs = [1, 2, 3]
+    let s = 'abc'
+    let total = 0
+    for i in ..k {
+        let before = xs[i % 3]
+        total += deep(i * 4) + before + #s
+        total += xs[(i + 1) % 3]
+    }
+    total
+}
+
+fn expected(k: Int) -> Int {
+    [(i * 4) * (i * 4 + 1) / 2 + [1, 2, 3][i % 3] + 3 + [1, 2, 3][(i + 1) % 3] for i in ..k].sum() ?? 0
+}
+
+pub fn locals-survive-stack-growth-across-calls() {
+    for _ in ..5 {
+        assert(across(200) == expected(200))
+    }
+}

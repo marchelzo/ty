@@ -406,16 +406,26 @@ same_scalar(BcLir *c, LirCC cc, LirReg dst, LirReg at, LirReg bt, LirLabel slow)
         i32      lhs  = c->sp - 2;
         i32      rhs  = c->sp - 1;
         LirLabel text = newlabel(c);
+        LirLabel tag  = newlabel(c);
         LirLabel same = newlabel(c);
         LirLabel diff = newlabel(c);
         LirLabel done = newlabel(c);
 
         jcc(c, LIR_NE, lir_r(at), lir_r(bt), slow);
         jcc(c, LIR_EQ, lir_r(at), lir_i(VALUE_STRING), text);
+        jcc(c, LIR_EQ, lir_r(at), lir_i(VALUE_TAG), tag);
         unless(c, at, VALUE_BOOLEAN, slow);
 
         LirReg a = ldx(c, LIR_LD_U8, LIR_I64, c->ops, vat(lhs) + VOFF(boolean));
         LirReg b = ldx(c, LIR_LD_U8, LIR_I64, c->ops, vat(rhs) + VOFF(boolean));
+
+        vset(c, LIR_SETCC, dst, lir_cc(cc), lir_r(a), lir_r(b));
+        jump(c, done);
+
+        bind(c, tag);
+
+        a = ldx(c, LIR_LD_U16, LIR_I64, c->ops, vat(lhs) + VOFF(tag));
+        b = ldx(c, LIR_LD_U16, LIR_I64, c->ops, vat(rhs) + VOFF(tag));
 
         vset(c, LIR_SETCC, dst, lir_cc(cc), lir_r(a), lir_r(b));
         jump(c, done);
@@ -2485,6 +2495,7 @@ reference(BcLir *c, i32 local, bool all)
         vset(c, LIR_LD_I64, p, mref(p, VOFF(ref)));
 
         if (all) {
+                lir_bounded(c->L, again);
                 jump(c, again);
         }
 
@@ -3012,7 +3023,7 @@ prologue(BcLir *c)
 
         if (c->compact && jit_tier() != 1) {
                 c->tier   = alloc0(sizeof *c->tier);
-                *c->tier  = (jit_tier() == 3) ? 3 : JIT_TIER_BUDGET;
+                *c->tier  = (jit_tier() == 3) ? 3 : JIT_TIER_BUDGET + c->size * JIT_TIER_PER_BYTE;
                 c->tierup = coldlabel(c);
                 tier_check(c, c->tierup);
         }

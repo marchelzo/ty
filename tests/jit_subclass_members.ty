@@ -1,3 +1,5 @@
+import ty
+
 class Shape {
     name: String
     sides: Int
@@ -170,5 +172,83 @@ pub fn test-union-receivers-dispatch-per-class() {
     for round in ..3000 {
         let i = round % 3
         assert(nilable-scaled(maybes[i], 2) == [12, -1, 8][i])
+    }
+}
+
+class Widget {
+    hits: Int = 0
+    dirty?: Bool = false
+    label: String = ''
+
+    touch!() {
+        dirty? = true
+        hits += 1
+        hits
+    }
+
+    relabel(s: String) {
+        label = s
+    }
+}
+
+class Button < Widget {
+    pressed: Int = 0
+    caption: String = 'ok'
+}
+
+class Slider < Widget {
+    at: Float = 0.5
+}
+
+fn bump-hits(w: Widget, k: Int) -> Int {
+    w.hits += k
+    w.hits
+}
+
+fn guard-notes(f: _) -> Array[String] {
+    ty.jit-image(f)['notes'].map(\_[4]).filter(\_ != nil)
+}
+
+pub fn test-inherited-field-writes-on-subclass-receivers() {
+    let ws: Array[Widget] = [Widget(), Button(), Slider()]
+    for round in ..3000 {
+        let w = ws[round % 3]
+        w.dirty? = false
+        assert(w.touch!() == round / 3 + 1, "round {round}")
+        assert(w.dirty?)
+        w.relabel("r{round}")
+        assert(w.label == "r{round}")
+        assert(bump-hits(w, 2) == w.hits)
+        w.hits -= 2
+    }
+    assert(ws[1].caption == 'ok' && ws[1].pressed == 0)
+    assert(ws[2].at == 0.5)
+}
+
+class Panel {
+    shown: Int = 0
+
+    show!() -> Int {
+        shown += 1
+        shown
+    }
+}
+
+class Tab < Panel {
+    title: String = 'tab'
+}
+
+fn show-twice(p: Panel) -> Int {
+    p.shown += 1
+    p.show!()
+}
+
+pub fn test-extended-classes-are-not-speculated-exactly() {
+    for round in ..400 {
+        assert(show-twice((round % 2 == 0) ? Panel() : Tab()) == 2)
+    }
+    for f in [Panel.show!, show-twice] {
+        let exact = guard-notes(f).filter(\_.match?(/deopt · assumed `\w+` is a Panel/))
+        assert(#exact == 0, "{exact}")
     }
 }

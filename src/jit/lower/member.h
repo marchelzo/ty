@@ -158,27 +158,32 @@ any_field_slot(
         LirLabel slow
 )
 {
-        LirReg known = known_field_slot(c, value, class, member, writing, slow);
+        bool     sub   = extended(class) && (offset_of(class, member, writing, OFF_FIELD) != OFF_NOT_FOUND);
+        LirLabel miss  = sub ? newlabel(c) : slow;
+        LirReg   known = known_field_slot(c, value, class, member, writing, miss);
 
-        if (known != LIR_NONE) {
+        if (known != LIR_NONE && !sub) {
                 return known;
         }
 
-        if (class != NULL && class->i >= CLASS_PRIMITIVE) {
+        if (known == LIR_NONE && class != NULL && class->i >= CLASS_PRIMITIVE) {
                 return field_slot(c, value, member, writing, slow);
         }
 
-        LirReg   slot  = lir_reg(c->L, LIR_PTR);
-        LirLabel other = newlabel(c);
-        LirLabel have  = newlabel(c);
+        LirReg   slot = lir_reg(c->L, LIR_PTR);
+        LirLabel have = newlabel(c);
 
-        record_path(c, value, member, slot, other, have, slow);
+        if (known != LIR_NONE) {
+                mov(c, slot, known);
+                jump(c, have);
+                bind(c, miss);
+        } else {
+                LirLabel other = newlabel(c);
+                record_path(c, value, member, slot, other, have, slow);
+                bind(c, other);
+        }
 
-        bind(c, other);
-
-        LirReg field = field_slot(c, value, member, writing, slow);
-
-        mov(c, slot, field);
+        mov(c, slot, field_slot(c, value, member, writing, slow));
 
         bind(c, have);
 

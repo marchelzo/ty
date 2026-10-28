@@ -171,6 +171,22 @@ rebase_check(dasm_State **Dst, u32 base, u32 stub)
 }
 
 static void
+rebase_call(dasm_State **Dst, u32 base, u32 stub)
+{
+        ld(Dst, TMP1, FRAME, base);
+        | cmp r10, r11
+        | je >1
+        | call =>stub
+        |1:
+}
+
+static void
+rebase_ret(dasm_State **Dst)
+{
+        | ret
+}
+
+static void
 rebase_delta(dasm_State **Dst, u32 ty_slot, u32 base)
 {
         ld(Dst, TMP0, FRAME, ty_slot);

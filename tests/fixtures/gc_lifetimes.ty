@@ -1,0 +1,20 @@
+class Slot {
+    id: Int
+    name: String
+    init(id: Int) { self.id = id; self.name = "slot-{id}-padding-padding" }
+}
+
+let table = [("entry-{i}-padding-padding", i) for i in ..300000]
+
+fn churn(n: Int) -> Int {
+    let window = [nil] * 100000
+    let t = 0
+    for i in ..n {
+        window[i % #window] = Slot(i)
+        t += (i, i + 1)[1]
+    }
+    t
+}
+
+print(churn(1500000))
+print(#table)

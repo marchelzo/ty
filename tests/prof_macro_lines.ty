@@ -1,0 +1,16 @@
+import support.process (run, FIXTURES)
+import os
+
+pub fn macro-decorated-functions-keep-their-lines() {
+    let out = "{os.tmpdir()}/ty-macro-lines-{os.getpid()}.data"
+    let r = run(['--prof', '--prof-alloc=64K', '--prof-summary=-', "--prof-out={out}", str(FIXTURES / 'prof_macro_lines.ty')])
+    for f in [out, "{out}.old"] {
+        os.unlink(f)
+    }
+    assert(r.status == 0, r.stderr)
+    let allocs = r.stdout.split('\nAllocation')[1] or throw AssertionError(r.stdout)
+    let rows = allocs.split('\n\n')[0]
+    assert(rows.contains?('prof_macro_lines.ty:20') && rows.contains?('[P(i) for i in ..1000]'), rows)
+    assert(rows.contains?('prof_macro_lines.ty:30'), rows)
+    assert(!rows.contains?('prof_macro_lines.ty:17') && !rows.contains?('prof_macro_lines.ty:27'), rows)
+}

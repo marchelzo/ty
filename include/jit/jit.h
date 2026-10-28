@@ -69,6 +69,7 @@ enum {
         JIT_CALL_COST = 1,
         JIT_PENDING   = JIT_UNSEEN + 0x100000,
         JIT_TIER_BUDGET = 5000,
+        JIT_TIER_PER_BYTE = 4,
         JIT_PINNED_BUDGET = 32
 };
 

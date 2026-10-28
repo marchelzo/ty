@@ -82,6 +82,7 @@ call_enter(Ty *ty, Value *out, Value *fn, i32 argc, JitCallProfile *site)
 
         if (value.type == VALUE_BUILTIN_FUNCTION) {
                 push_result(ty, count - argc, value.builtin_function(ty, argc, &NIL));
+                vm_check_flags(ty);
                 return NULL;
         }
 
@@ -937,6 +938,7 @@ call_builtin(Ty *ty, Value *out, BuiltinFunction *fn, i32 argc)
 
         ty->stack.count = count;
         push_result(ty, count - argc, fn(ty, argc, &NIL));
+        vm_check_flags(ty);
 }
 
 static void *

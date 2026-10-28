@@ -1,0 +1,36 @@
+import ty
+
+macro wrapped(def) {
+    ty.Multi([def])
+}
+
+macro same(def) {
+    def
+}
+
+class P {
+    x: Float
+    init(i: Int) { x = i.float }
+}
+
+@wrapped
+fn multi(n: Int) -> Float {
+    let t = 0.0
+    for ..n {
+        let ps = [P(i) for i in ..1000]
+        t += ps[0].x
+    }
+    t
+}
+
+@same
+fn direct(n: Int) -> Float {
+    let t = 0.0
+    for ..n {
+        let qs = [P(i) for i in ..1000]
+        t += qs[0].x
+    }
+    t
+}
+
+print(multi(1000) + direct(1000))

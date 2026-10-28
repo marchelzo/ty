@@ -1,0 +1,61 @@
+import ty
+
+fn poll-sites(f: _) -> Int {
+    let notes: Array[_] = ty.jit-image(f)['notes']
+    [i for n; i in notes if n[3] == 'poll' && (i == 0 || notes[i - 1][3] != 'poll')].len()
+}
+
+fn branchy(a: Any, b: Any, c: Any, d: Any) -> Int {
+    let n = 0
+    if a { n += 1 }
+    if b { n += 2 }
+    if c { n += 4 }
+    if d { n += 8 }
+    if a && c { n += 16 }
+    if b || d { n += 32 }
+    n
+}
+
+fn looping(xs: Array[Any]) -> Int {
+    let n = 0
+    for x in xs {
+        if x { n += 1 }
+    }
+    let i = 0
+    while i < #xs {
+        if xs[i] { n += 1 }
+        i += 1
+    }
+    n
+}
+
+fn counter() -> (() -> Int, () -> Int) {
+    let n = 0
+    let bump = fn () { n += 1; n }
+    let read = () -> n
+    (bump, read)
+}
+
+fn drive(bump: () -> Int, read: () -> Int, k: Int) -> Int {
+    let seen = 0
+    for _ in ..k {
+        seen += bump() - read()
+    }
+    seen + read()
+}
+
+pub fn slow-paths-rejoin-without-polling() {
+    for _ in ..300 {
+        assert(branchy(1, nil, 'x', []) == 1 + 4 + 16)
+        assert(looping([1, nil, 'x', [], 0]) == 4)
+    }
+    assert(poll-sites(branchy) == 1)
+    assert(poll-sites(looping) == 3)
+}
+
+pub fn captured-cells-read-through-ref-chains() {
+    let (bump, read) = counter()
+    for round in ..200 {
+        assert(drive(bump, read, 10) == 10 * (round + 1))
+    }
+}

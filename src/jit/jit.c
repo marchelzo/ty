@@ -2223,6 +2223,19 @@ jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
         CO_LOG("jit_rt_call", TERM(32;1), "");
 }
 
+inline static void
+halves(Value *dst, Value const *src)
+{
+#if defined(__SSE2__)
+        __m128i lo = _mm_loadu_si128((__m128i const *)src);
+        __m128i hi = _mm_loadu_si128((__m128i const *)src + 1);
+        _mm_storeu_si128((__m128i *)dst,     lo);
+        _mm_storeu_si128((__m128i *)dst + 1, hi);
+#else
+        *dst = *src;
+#endif
+}
+
 void
 jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                            BuiltinMethod *func, int64_t vtype_and_member, int argc)
@@ -2234,7 +2247,9 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 self = vm_get_self(ty);
         }
 
-        Value _self = *self;
+        Value _self;
+
+        halves(&_self, self);
 
         CO_LOG("jit_rt_call_builtin_method", TERM(32;1), "type %d member %d", value_type, member_id);
 
@@ -2245,7 +2260,7 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 gP(&_self);
                 Value val = (*func)(ty, &_self, argc, NULL);
                 vN(STACK) = idx + 1;
-                v_L(STACK) = val;
+                halves(vvL(STACK), &val);
                 vm_check_flags(ty);
                 gX();
         } else {

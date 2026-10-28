@@ -364,6 +364,7 @@ typedef struct lir_label_info {
         u32  pos;
         bool entry;
         bool cold;
+        bool bounded;
 } LirLabelInfo;
 
 typedef enum lir_error_kind {
@@ -748,6 +749,9 @@ lir_entry(Lir *L, LirLabel label);
 
 void
 lir_cold(Lir *L, LirLabel label);
+
+void
+lir_bounded(Lir *L, LirLabel label);
 
 LirReg
 lir_vslot(Lir *L);

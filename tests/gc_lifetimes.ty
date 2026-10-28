@@ -1,0 +1,58 @@
+import support.process (run, FIXTURES)
+import json
+import os
+
+fn section(summary: String, title: String) -> String {
+    let rest = summary.split(title)[1] or throw AssertionError("no '{title}' in:\n{summary}")
+    rest.split(/\n\S/)[0]
+}
+
+fn profile(env: Dict[String, String]) -> (String, _, String) {
+    let out = "{os.tmpdir()}/ty-lifetimes-{os.getpid()}.data"
+    let r = run(
+        ['--prof', '--prof-alloc=64K', '--prof-summary=-', "--prof-out={out}", str(FIXTURES / 'gc_lifetimes.ty')],
+        env=env
+    )
+    let report = run(['--prof-report', out, '--stdio'])
+    let data = json.parse(slurp(out))
+    for f in [out, "{out}.old"] {
+        os.unlink(f)
+    }
+    assert(r.status == 0, r.stderr)
+    assert(report.status == 0, report.stderr)
+    (section(r.stdout, 'Object lifetimes'), data, report.stdout)
+}
+
+fn young-share(lifetimes: String) -> Float {
+    let [_, pct] = lifetimes.match(/([\d.]+)% died before their first GC/) or throw AssertionError(lifetimes)
+    float(pct)
+}
+
+fn check(env: Dict[String, String]) {
+    let (lifetimes, data, report) = profile(env)
+    let survived = section(lifetimes, 'Survived a GC, then died')
+    let traced   = section(lifetimes, 'Traced again by full GCs')
+
+    assert(young-share(lifetimes) > 30.0, lifetimes)
+    assert(survived.contains?('Slot(i)'), lifetimes)
+    assert(!survived.contains?('(i, i + 1)'), lifetimes)
+    assert(traced.contains?('let table'), lifetimes)
+
+    assert(data['gcs'] >= 2, data['gcs'])
+    let table = data['lines'].find(\_['text'].contains?('let table')) ?? throw AssertionError('no table line')
+    assert(table['life']['traced'] > 0, table)
+
+    let tab = report.split('\nLifetimes\n')[1] or throw AssertionError("no Lifetimes tab in:\n{report}")
+    let rows = tab.split('\n\n')[0]
+    assert(rows.starts?('died late'), rows)
+    assert(rows.contains?('Slot(i)') && rows.contains?('let table'), rows)
+    assert(report.contains?('Object lifetimes'), report)
+}
+
+pub fn every-gc-full() {
+    check(%{'TY_GC_GEN': '0'})
+}
+
+pub fn generational() {
+    check(%{})
+}

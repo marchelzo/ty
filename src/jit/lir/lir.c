@@ -392,6 +392,14 @@ lir_cold(Lir *L, LirLabel label)
         }
 }
 
+void
+lir_bounded(Lir *L, LirLabel label)
+{
+        if (!broken(L) && label < vN(L->labels)) {
+                v_(L->labels, label)->bounded = true;
+        }
+}
+
 LirReg
 lir_vslot(Lir *L)
 {

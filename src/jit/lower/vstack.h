@@ -2202,7 +2202,7 @@ vs_member(BcLir *c, BcLirNode const *node, char const *ip)
         i32    i      = self ? -1 : c->sp - 1;
         Class *class  = self ? self_class(c) : hint_class(c, c->at);
 
-        if (!c->speculate || class == NULL || class->i < CLASS_PRIMITIVE) {
+        if (!c->speculate || class == NULL || class->i < CLASS_PRIMITIVE || extended(class)) {
                 return false;
         }
 
@@ -3411,6 +3411,7 @@ vs_member_mutate(BcLir *c, BcLirNode const *node, char const *ip)
              || (next == NULL)
              || (class == NULL)
              || (class->i < CLASS_PRIMITIVE)
+             || extended(class)
              || (self ? !local_ok(c, c->self_index) : !boxed(c->vs[i].kind))
              || !fusable_mutation(c, node, true)
              || (next->sp != node->sp - !self)

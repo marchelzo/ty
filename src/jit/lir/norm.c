@@ -242,14 +242,19 @@ unfold_rmw(Lir *L, LirInst *in)
 }
 #endif
 
-inline static bool
-behind(Lir const *L, LirLabel label, u32 pc)
-{
-        return v__(L->labels, label).pos <= pc;
-}
+enum {
+        POLL_BEFORE = 1 << 0,
+        POLL_AFTER  = 1 << 1
+};
+
+enum {
+        UNSEEN,
+        ACTIVE,
+        FINISHED
+};
 
 static bool
-backedge(Lir const *L, LirInst const *in, u32 pc)
+branches(LirInst const *in)
 {
         switch (LirOps[in->op].form) {
         case LF_BR:
@@ -257,28 +262,136 @@ backedge(Lir const *L, LirInst const *in, u32 pc)
         case LF_BRZ:
         case LF_JMP:
         case LF_SWITCH:
-                break;
+                return true;
 
         default:
                 return false;
         }
+}
 
-        for (u32 i = 0; i < in->nargs; ++i) {
-                if (
-                        (in->args[i].kind == LO_LABEL)
-                     && behind(L, in->args[i].label, pc)
-                ) {
-                        return true;
+static bool
+falls(LirInst const *in)
+{
+        return (in->op != LIR_JMP)
+            && (in->op != LIR_SWITCH)
+            && (in->op != LIR_RET)
+            && (in->op != LIR_TAILCALL)
+            && !(in->flags & LIR_NORETURN);
+}
+
+static u32
+successor(Lir const *L, u8 const *open, u32 pc, u32 *k, bool *fall, bool *bounded)
+{
+        LirInst const *in = v_(L->insts, pc);
+        u32            n  = vN(L->insts);
+        u32            m  = branches(in) ? (u32)in->nargs + in->ntargets : 0;
+
+        *fall    = false;
+        *bounded = false;
+
+        while (*k < m) {
+                u32      j     = (*k)++;
+                LirLabel label = (j >= in->nargs)               ? in->targets[j - in->nargs]
+                               : (in->args[j].kind == LO_LABEL) ? in->args[j].label
+                               :                                  LIR_NONE;
+
+                if (label == LIR_NONE) {
+                        continue;
+                }
+
+                LirLabelInfo const *l = v_(L->labels, label);
+
+                if (l->pos < n) {
+                        *bounded = !open[l->pos];
+                        return l->pos;
                 }
         }
 
-        for (u32 i = 0; i < in->ntargets; ++i) {
-                if (behind(L, in->targets[i], pc)) {
-                        return true;
+        if (*k == m) {
+                *k += 1;
+                if (falls(in) && pc + 1 < n) {
+                        *fall = true;
+                        return pc + 1;
                 }
         }
 
-        return false;
+        return LIR_NONE;
+}
+
+static void
+dfs(Lir const *L, u8 const *open, u32 root, u8 *seen, u32 *stack, u32 *cursor, u8 *back)
+{
+        u32 top = 0;
+
+        seen[root]   = ACTIVE;
+        cursor[root] = 0;
+        stack[top++] = root;
+
+        while (top > 0) {
+                u32  pc = stack[top - 1];
+                bool fall;
+                bool bounded;
+                u32  to = successor(L, open, pc, &cursor[pc], &fall, &bounded);
+
+                if (to == LIR_NONE) {
+                        seen[pc]  = FINISHED;
+                        top      -= 1;
+                        continue;
+                }
+
+                switch (seen[to]) {
+                case UNSEEN:
+                        seen[to]     = ACTIVE;
+                        cursor[to]   = 0;
+                        stack[top++] = to;
+                        break;
+
+                case ACTIVE:
+                        if (!bounded) {
+                                back[pc] |= fall ? POLL_AFTER : POLL_BEFORE;
+                        }
+                        break;
+                }
+        }
+}
+
+static u8 *
+retreating(Ty *ty, Lir const *L)
+{
+        u32  n      = vN(L->insts);
+        u8  *back   = smA0(n + 1);
+        u8  *seen   = smA0(n + 1);
+        u8  *open   = smA0(n + 1);
+        u32 *stack  = stA(u32, n + 1);
+        u32 *cursor = stA(u32, n + 1);
+
+        if (n == 0) {
+                return back;
+        }
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo const *l = v_(L->labels, i);
+                if (l->pos < n && !l->bounded) {
+                        open[l->pos] = 1;
+                }
+        }
+
+        dfs(L, open, 0, seen, stack, cursor, back);
+
+        for (u32 i = 0; i < vN(L->labels); ++i) {
+                LirLabelInfo const *l = v_(L->labels, i);
+                if (l->entry && l->pos < n && seen[l->pos] == UNSEEN) {
+                        dfs(L, open, l->pos, seen, stack, cursor, back);
+                }
+        }
+
+        for (u32 pc = 0; pc < n; ++pc) {
+                if (seen[pc] == UNSEEN) {
+                        dfs(L, open, pc, seen, stack, cursor, back);
+                }
+        }
+
+        return back;
 }
 
 static bool
@@ -656,23 +769,24 @@ quiet(LirInst const *in)
 }
 
 static bool
-rewrite(Lir *L, LirInst *src, u32 pc, bool polls, LirError *err)
+poll(Lir *L, LirSpan span)
+{
+        LirLabel next = lir_label(L);
+
+        return one(L, LIR_POLL, LIR_NONE, lir_l(next), span)
+            && lir_bind(L, next);
+}
+
+static bool
+rewrite(Lir *L, LirInst *src, bool before, LirError *err)
 {
         LirInst  in  = *src;
         LirClass d   = (in.dst == LIR_NONE) ? LIR_I64 : v__(L->regs, in.dst).cls;
         u8       use = 0;
         LirClass cls[LIR_MAX_OPERANDS];
 
-        if (
-                (L->resolved_mode == LIR_MODE_ATTACHED)
-             && backedge(L, &in, pc)
-             && !polls
-        ) {
-                LirLabel next = lir_label(L);
-                bool     ok   = one(L, LIR_POLL, LIR_NONE, lir_l(next), in.span);
-                if (!ok || !lir_bind(L, next)) {
-                        return false;
-                }
+        if (before && !poll(L, in.span)) {
+                return false;
         }
 
         for (u32 i = 0; i < LIR_MAX_OPERANDS; ++i) {
@@ -737,6 +851,8 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
         u32  *at     = smA((n + 1) * sizeof *at);
         bool *leader = smA0(n + 1);
         bool  armed  = false;
+        bool  polls  = (L->resolved_mode == LIR_MODE_ATTACHED);
+        u8   *back   = polls ? retreating(ty, L) : smA0(n + 1);
 
         for (u32 i = 0; i < nlabels; ++i) {
                 u32 pos = v__(L->labels, i).pos;
@@ -748,13 +864,18 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
         lir_swap(L);
 
         for (u32 pc = 0; ok && pc < n; ++pc) {
-                bool poll = (old[pc].op == LIR_POLL);
-                bool calm = quiet(&old[pc]);
+                bool polled = (old[pc].op == LIR_POLL);
+                bool calm   = quiet(&old[pc]);
 
                 armed  = armed && !leader[pc];
                 at[pc] = vN(L->insts);
-                ok     = rewrite(L, &old[pc], pc, armed, err);
-                armed  = poll || (armed && calm);
+                ok     = rewrite(L, &old[pc], (back[pc] & POLL_BEFORE) && !armed, err);
+                armed  = polled || (armed && calm);
+
+                if (ok && (back[pc] & POLL_AFTER) && !armed) {
+                        ok    = poll(L, old[pc].span);
+                        armed = true;
+                }
         }
 
         if (ok) {

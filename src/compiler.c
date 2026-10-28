@@ -381,6 +381,8 @@ static CompileState STATE;
 static ModuleVector modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
+typedef struct { uptr lo; uptr hi; } LocationSpan;
+static vec(LocationSpan) location_spans;
 typedef struct {
         Expr const *e;
         void       *arena;
@@ -2487,7 +2489,12 @@ add_location_info(Ty *ty)
                 locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
         }
 
-        usize n = vN(STATE.expression_locations) * sizeof *locs;
+        usize n  = vN(STATE.expression_locations) * sizeof *locs;
+        uptr  hi = 0;
+
+        for (int i = 0; i < vN(STATE.expression_locations); ++i) {
+                hi = max(hi, locs[i].p_end);
+        }
 
         STATE.expression_locations.items    = memcpy(xmA(n), locs, n);
         STATE.expression_locations.capacity = vN(STATE.expression_locations);
@@ -2496,6 +2503,7 @@ add_location_info(Ty *ty)
 
         DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);
+        xvP(location_spans, ((LocationSpan) { .lo = locs[0].p_start, .hi = hi }));
         DebugUnlockLocations();
 
         DebugCodeLoaded(ty);
@@ -15783,76 +15791,64 @@ compiler_symbol_count(Ty *ty)
         return scope_get_symbol(ty);
 }
 
+inline static bool
+is_func_location(ExprLocation const *loc)
+{
+        return (loc->e->type == EXPRESSION_FUNCTION)
+            || (loc->e->type == EXPRESSION_MULTI_FUNCTION)
+            || (loc->e->type == EXPRESSION_GENERATOR);
+}
+
 ExprLocation *
 compiler_find_expr_x(Ty *ty, char const *code, bool func)
 {
+        uptr             c    = (uptr)code;
         location_vector *locs = NULL;
 
-        uptr c = (uptr)code;
-
-        /*
-         * First do a linear search for the group of locations which
-         * contains this one.
-         */
-        for (int i = 0; i < vN(location_lists); ++i) {
-                if (v__(location_lists, i).count == 0)
-                        continue;
-
-                if (c < v__(v__(location_lists, i), 0).p_start)
-                        continue;
-
-                uptr end = 0;
-                for (int j = 0; j < v__(location_lists, i).count; ++j)
-                        if (v__(v__(location_lists, i), j).p_end > end)
-                                end = v__(v__(location_lists, i), j).p_end;
-
-                if (c >= end)
-                        continue;
-
-                locs = &v__(location_lists, i);
-
-                break;
+        for (int i = 0; i < vN(location_spans); ++i) {
+                if (c >= v__(location_spans, i).lo && c < v__(location_spans, i).hi) {
+                        locs = v_(location_lists, i);
+                        break;
+                }
         }
 
         if (locs == NULL) {
                 return NULL;
         }
 
-        int match_index = 0;
-        ptrdiff_t match_width = PTRDIFF_MAX;
+        isize lo = 0;
+        isize hi = vN(*locs);
 
-        for (int i = 0; i < locs->count; ++i) {
-                if ((c < locs->items[i].p_start) || (c >= locs->items[i].p_end)) {
-                        continue;
+        while (lo < hi) {
+                isize mid = lo + (hi - lo) / 2;
+                if (v__(*locs, mid).p_start <= c) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid;
+                }
+        }
+
+        ExprLocation *match = NULL;
+        uptr          width = UINTPTR_MAX;
+
+        for (isize i = lo - 1; i >= 0; --i) {
+                ExprLocation *loc = v_(*locs, i);
+
+                if (c - loc->p_start >= width) {
+                        break;
                 }
 
                 if (
-                        func != (
-                                (locs->items[i].e->type == EXPRESSION_FUNCTION)
-                             || (locs->items[i].e->type == EXPRESSION_MULTI_FUNCTION)
-                             || (locs->items[i].e->type == EXPRESSION_GENERATOR)
-                        )
+                        (c < loc->p_end)
+                     && (func == is_func_location(loc))
+                     && (loc->p_end - loc->p_start <= width)
                 ) {
-                        continue;
-                }
-
-                ptrdiff_t width = (locs->items[i].p_end - locs->items[i].p_start);
-
-                if (width < match_width) {
-                        match_index = i;
-                        match_width = width;
+                        match = loc;
+                        width = loc->p_end - loc->p_start;
                 }
         }
 
-        if (
-                (match_width == PTRDIFF_MAX)
-             || (c < locs->items[match_index].p_start)
-             || (c >= locs->items[match_index].p_end)
-        ) {
-                return NULL;
-        }
-
-        return &locs->items[match_index];
+        return match;
 }
 
 Expr const *
@@ -23806,6 +23802,7 @@ CompilerReset(Ty *ty)
         v0(modules);
         v0(annotations);
         v0(location_lists);
+        v0(location_spans);
         v0(source_map);
         source_map_hole = 0;
         v0(PreludeAssertionOffsets);

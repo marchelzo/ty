@@ -238,7 +238,7 @@ version(Lir const *L)
         u32 v = 1;
 
         for (u32 i = 0; i < vN(L->labels); ++i) {
-                if (v__(L->labels, i).cold) {
+                if (v__(L->labels, i).cold || v__(L->labels, i).bounded) {
                         return 4;
                 }
         }
@@ -333,7 +333,7 @@ lir_serialize(Ty *ty, Lir *L, LirBytes *bytes, LirError *err)
         put_uint(&w, vN(L->labels));
         vfor(L->labels, {
                 put_uint(&w, it->pos);
-                put_uint(&w, it->entry | (it->cold << 1));
+                put_uint(&w, it->entry | (it->cold << 1) | (it->bounded << 2));
         });
 
         put_uint(&w, vN(L->roots));
@@ -687,10 +687,11 @@ get_labels(Reader *r, Lir *L)
                 LirLabelInfo *l = v_(L->labels, i);
                 u32 pos   = get_u32(r);
                 u32 bits  = get_u32(r);
-                r->ok    &= (bits <= 3);
-                l->pos    = pos;
-                l->entry  = bits & 1;
-                l->cold   = bits >> 1;
+                r->ok      &= (bits <= 7);
+                l->pos      = pos;
+                l->entry    = bits & 1;
+                l->cold     = (bits >> 1) & 1;
+                l->bounded  = (bits >> 2) & 1;
         }
 }
 

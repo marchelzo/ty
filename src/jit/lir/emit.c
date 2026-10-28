@@ -112,6 +112,10 @@ typedef struct {
         u32 nsites;
         u32 nentries;
 
+        u32 *shared;
+        u64 *digests;
+        u32  nshared;
+
         bool    context;
         bool    islands;
         LirReg  ty_vreg;
@@ -813,11 +817,11 @@ bounds(Emit *e, u32 pc)
         st(Dst, TMP0, FRAME, e->stack_end);
 }
 
-static void
-slide(Emit *e, u32 pc)
+static i64
+slid(Emit const *e, u32 pc, u32 *k)
 {
-        for (u32 k = 0; k < e->npointers; ++k) {
-                u32 r = e->pointers[k];
+        while (*k < e->npointers) {
+                u32 r = e->pointers[(*k)++];
 
                 if (!ival(e, r)->stackish || !liveptr(e, r, pc)) {
                         continue;
@@ -826,13 +830,88 @@ slide(Emit *e, u32 pc)
                 LirLoc l = loc(e, r, LIR_OUT(pc));
 
                 if (l.slot != LIR_NONE) {
-                        ld(Dst, TMP1, FRAME, slot(e, l.slot));
-                        alu(Dst, LIR_ADD, TMP1, TMP1, TMP0, false);
-                        st(Dst, TMP1, FRAME, slot(e, l.slot));
-                } else if (l.phys != LIR_PHYS_NONE) {
-                        alu(Dst, LIR_ADD, l.phys, l.phys, TMP0, false);
+                        return ((i64)slot(e, l.slot) << 8) | 1;
+                }
+
+                if (l.phys != LIR_PHYS_NONE) {
+                        return ((i64)l.phys << 8) | 2;
                 }
         }
+
+        return -1;
+}
+
+static void
+slide(Emit *e, u32 pc)
+{
+        u32 k = 0;
+
+        for (i64 x; (x = slid(e, pc, &k)) >= 0;) {
+                if (x & 1) {
+                        ld(Dst, TMP1, FRAME, (u32)(x >> 8));
+                        alu(Dst, LIR_ADD, TMP1, TMP1, TMP0, false);
+                        st(Dst, TMP1, FRAME, (u32)(x >> 8));
+                } else {
+                        alu(Dst, LIR_ADD, (u8)(x >> 8), (u8)(x >> 8), TMP0, false);
+                }
+        }
+}
+
+static u64
+digest(Emit const *e, u32 pc)
+{
+        u64 h = 0xcbf29ce484222325ull;
+        u32 k = 0;
+
+        for (i64 x; (x = slid(e, pc, &k)) >= 0;) {
+                h = (h ^ (u64)x) * 0x100000001b3ull;
+        }
+
+        return h;
+}
+
+static bool
+same_slide(Emit const *e, u32 a, u32 b)
+{
+        u32 i = 0;
+        u32 j = 0;
+        i64 x;
+        i64 y;
+
+        do {
+                x = slid(e, a, &i);
+                y = slid(e, b, &j);
+        } while (x == y && x >= 0);
+
+        return x == y;
+}
+
+static u32
+shared_stub(Emit *e, u32 pc)
+{
+        u64 h = digest(e, pc);
+        u32 m = e->nshared - 1;
+        u32 i = (u32)h & m;
+
+        for (; e->shared[i] != 0; i = (i + 1) & m) {
+                u32 q = e->shared[i] - 1;
+                if (e->digests[i] == h && same_slide(e, q, pc)) {
+                        return e->stubs + q;
+                }
+        }
+
+        e->shared[i]  = pc + 1;
+        e->digests[i] = h;
+
+        cold(Dst);
+        label(Dst, e->stubs + pc);
+        st(Dst, TMP0, FRAME, e->stack_base);
+        alu(Dst, LIR_SUB, TMP0, TMP0, TMP1, false);
+        slide(e, pc);
+        rebase_ret(Dst);
+        hot(Dst);
+
+        return e->stubs + pc;
 }
 
 static void
@@ -877,23 +956,21 @@ rebase(Emit *e, u32 pc)
         }
 
         items(e, TMP0, LIR_OUT(pc));
+
+        if (!unsure(e, pc)) {
+                rebase_call(Dst, e->stack_base, shared_stub(e, pc));
+                return;
+        }
+
         rebase_check(Dst, e->stack_base, e->stubs + pc);
         label(Dst, e->rebased + pc);
         cold(Dst);
         label(Dst, e->stubs + pc);
-
-        if (unsure(e, pc)) {
-                chase(e, pc);
-                rebase_delta(Dst, e->ty_slot, e->stack_base);
-                slide(e, pc);
-                items(e, TMP0, LIR_OUT(pc));
-                st(Dst, TMP0, FRAME, e->stack_base);
-        } else {
-                st(Dst, TMP0, FRAME, e->stack_base);
-                alu(Dst, LIR_SUB, TMP0, TMP0, TMP1, false);
-                slide(e, pc);
-        }
-
+        chase(e, pc);
+        rebase_delta(Dst, e->ty_slot, e->stack_base);
+        slide(e, pc);
+        items(e, TMP0, LIR_OUT(pc));
+        st(Dst, TMP0, FRAME, e->stack_base);
         jump(Dst, e->rebased + pc);
         hot(Dst);
 }
@@ -1646,6 +1723,16 @@ prepare(Emit *e)
         e->constraints = chain(e->ty, n + 1, alloc->nconstraints + 1);
         e->arguments   = tmp(ArgLoc, L->sig.nparams + 1);
         e->pointers    = tmp(u32, vN(L->regs) + 1);
+        e->nshared     = 16;
+
+        while (e->nshared < 2 * (n + 1)) {
+                e->nshared *= 2;
+        }
+
+        e->shared  = tmp(u32, e->nshared);
+        e->digests = tmp(u64, e->nshared);
+
+        memset(e->shared, 0, e->nshared * sizeof *e->shared);
 
         for (u32 i = alloc->nmoves; i-- > 0;) {
                 LirMove const *m = &alloc->moves[i];
