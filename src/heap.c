@@ -88,6 +88,14 @@ heap_mark(Ty *ty, Heap *h)
 
         MARK(h);
 
+        heap_trace(ty, h);
+}
+
+void
+heap_trace(Ty *ty, Heap *h)
+{
+        GCMarkOwned(ty, h, h->xs.items);
+
         for (usize i = 0; i < vN(h->xs); ++i) {
                 GCMarkPush(ty, v_(h->xs, i));
         }

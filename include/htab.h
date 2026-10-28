@@ -40,7 +40,7 @@ inline static void
 ht_init(Ty *ty, HT *t)
 {
         NOGC(t);
-        t->items = mA0(sizeof (HT_ITEM) * HT_INITIAL_SIZE);
+        t->items = GCOwnedResize(ty, NULL, sizeof (HT_ITEM) * HT_INITIAL_SIZE, 0, HT_BUF, true);
         t->size  = HT_INITIAL_SIZE;
         OKGC(t);
 }
@@ -246,7 +246,7 @@ ht_fill(Ty *ty, usize size, HT_ITEM *items, HT_ITEM const *it, HT_ITEM **first)
 inline static void
 ht_rehash(Ty *ty, HT *t, usize size)
 {
-        HT_ITEM *items = mA0(size * sizeof (HT_ITEM));
+        HT_ITEM *items = GCOwnedResize(ty, NULL, size * sizeof (HT_ITEM), 0, HT_BUF, true);
 
         t->last = ht_fill(ty, size, items, t->first, &t->first);
 
@@ -264,7 +264,7 @@ ht_copy(Ty *ty, HT *dst, HT const *src)
                 return;
         }
 
-        dst->items = mA0(src->size * sizeof (HT_ITEM));
+        dst->items = GCOwnedResize(ty, NULL, src->size * sizeof (HT_ITEM), 0, HT_BUF, true);
         dst->size  = src->size;
         dst->count = src->count;
         dst->last  = ht_fill(ty, src->size, dst->items, src->first, &dst->first);

@@ -465,6 +465,7 @@ TakeGroupId(void)
                 if (!GroupIdUsed[i]) {
                         GroupIdUsed[i] = true;
                         id = i;
+                        atomic_fetch_add(&GCIsolatedGroups, 1);
                         break;
                 }
         }
@@ -478,6 +479,7 @@ ReleaseGroupId(u8 id)
 {
         TySpinLockLock(&GroupIdLock);
         GroupIdUsed[id] = false;
+        atomic_fetch_sub(&GCIsolatedGroups, 1);
         TySpinLockUnlock(&GroupIdLock);
 }
 
@@ -508,7 +510,9 @@ BequeathAllocs(ThreadGroup *group)
         TySpinLockLock(&heir->DLock);
 
         for (usize i = 0; i < vN(group->DeadAllocs); ++i) {
-                atomic_store_explicit(&v__(group->DeadAllocs, i)->mark, bits, memory_order_relaxed);
+                struct alloc *a = v__(group->DeadAllocs, i);
+                u8            m = atomic_load_explicit(&a->mark, memory_order_relaxed);
+                atomic_store_explicit(&a->mark, bits | (GCGen & m), memory_order_relaxed);
         }
 
         xvPv(heir->DeadAllocs, group->DeadAllocs);
@@ -562,11 +566,11 @@ AwaitReady(ThreadGroup *group, int n)
 }
 
 inline static void
-StartGC(Ty *ty)
+StartGC(Ty *ty, int phase)
 {
         TyMutexLock(&ty->group->GCPhaseLock);
         ty->group->GCReadyCount = 0;
-        ty->group->GCPhase = GC_PHASE_MARK;
+        ty->group->GCPhase = phase;
         TyMutexUnlock(&ty->group->GCPhaseLock);
         TyCondVarBroadcast(&ty->group->GCPhaseCond);
 }
@@ -658,7 +662,11 @@ WaitGC(Ty *ty)
         PROF_ENTER(PS_GC_WAIT);
 
         ReleaseLock(ty, false);
-        int phase = WaitForGCPhase(ty, GC_PHASE_MARK | GC_PHASE_DONE);
+        int phase = WaitForGCPhase(ty, GC_PHASE_PREP | GC_PHASE_MARK | GC_PHASE_DONE);
+        if (phase == GC_PHASE_PREP) {
+                ty->group->GCReadyCount += 1;
+                phase = WaitForGCPhase(ty, GC_PHASE_MARK | GC_PHASE_DONE);
+        }
         TakeLockRaw(ty);
 
         if (phase == GC_PHASE_DONE) {
@@ -684,8 +692,71 @@ WaitGC(Ty *ty)
         dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
 }
 
+static void
+MarkGroupRoots(Ty *ty)
+{
+        TySpinLockLock(&ty->group->DLock);
+        GCMarkPinned(ty, &ty->group->DeadPinned);
+        MarkPendingFFIAutoValues(ty, &ty->group->DeadFFIAutos);
+        for (int i = 0; i < vN(ty->group->Finalize); ++i) {
+                value_mark(ty, v_(ty->group->Finalize, i));
+        }
+        TySpinLockUnlock(&ty->group->DLock);
+
+        if (ty->group == &MainGroup) {
+                GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
+                RESET_TOTAL_REACHED();
+                for (int i = 0; i < vN(Globals); ++i) {
+                        value_mark(ty, v_(Globals, i));
+                }
+                LOG_REACHED(" => globals reached %llu", TotalReached);
+
+                class_mark_refs(ty);
+
+                RESET_TOTAL_REACHED();
+                GCRootSet *immortal = GCImmortalSet(ty);
+                for (int i = 0; i < vN(*immortal); ++i) {
+                        value_mark(ty, v_(*immortal, i));
+                }
+                LOG_REACHED(" => immortal reached %llu", TotalReached);
+
+                for (int i = 0; i < vN(SignalGCRoots); ++i) {
+                        value_mark(ty, v_(SignalGCRoots, i));
+                }
+
+                DebugMarkRoots(ty);
+        }
+}
+
+void
+GCVerifyMinor(Ty *ty)
+{
+        byte_vector snap = {0};
+
+        GCSnapshot(ty, &snap, false);
+        GCClearMarks(ty);
+
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *t = v__(ty->group->TyList, i);
+                MarkStorage(t);
+                MarkPendingFFIAutoValues(ty, &t->ffi_autos);
+        }
+
+        MarkGroupRoots(ty);
+
+        GCSnapshot(ty, &snap, true);
+
+        xvF(snap);
+}
+
 void
 DoGC(Ty *ty)
+{
+        DoGCKind(ty, false);
+}
+
+void
+DoGCKind(Ty *ty, bool minor)
 {
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
@@ -757,7 +828,17 @@ DoGC(Ty *ty)
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        StartGC(ty);
+        StartGC(ty, GCGen ? GC_PHASE_PREP : GC_PHASE_MARK);
+
+        bool parallel = GCParallelBegin(ty, minor && GCGen);
+
+        if (GCGen) {
+                AwaitReady(ty->group, nRunning);
+                ty->group->GCMinor = GCPrepare(ty, minor);
+                NextGCPhase(ty, GC_PHASE_MARK, nRunning);
+        } else {
+                ty->group->GCMinor = false;
+        }
 
 #if defined(TY_GC_STATS)
         if (heap > GCMaxHeap) {
@@ -779,41 +860,26 @@ DoGC(Ty *ty)
         }
         MarkPendingFFIAutoValues(ty, &ty->ffi_autos);
 
-        TySpinLockLock(&ty->group->DLock);
-        GCMarkPinned(ty, &ty->group->DeadPinned);
-        MarkPendingFFIAutoValues(ty, &ty->group->DeadFFIAutos);
-        for (int i = 0; i < vN(ty->group->Finalize); ++i) {
-                value_mark(ty, v_(ty->group->Finalize, i));
-        }
-        TySpinLockUnlock(&ty->group->DLock);
-
-        if (ty->group == &MainGroup) {
-                GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
-                RESET_TOTAL_REACHED();
-                for (int i = 0; i < vN(Globals); ++i) {
-                        value_mark(ty, v_(Globals, i));
-                }
-                LOG_REACHED(" => globals reached %llu", TotalReached);
-
-                class_mark_refs(ty);
-
-                RESET_TOTAL_REACHED();
-                GCRootSet *immortal = GCImmortalSet(ty);
-                for (int i = 0; i < vN(*immortal); ++i) {
-                        value_mark(ty, v_(*immortal, i));
-                }
-                LOG_REACHED(" => immortal reached %llu", TotalReached);
-
-                for (int i = 0; i < vN(SignalGCRoots); ++i) {
-                        value_mark(ty, v_(SignalGCRoots, i));
-                }
-
-                DebugMarkRoots(ty);
-        }
+        MarkGroupRoots(ty);
 
         AwaitReady(ty->group, nRunning);
 
+        if (parallel) {
+                GCParallelEnd(ty);
+        }
+
+        if (GCVerify && ty->group->GCMinor) {
+                GCVerifyMinor(ty);
+        }
+
         GCQueueFinalizers(ty, &ty->group->Finalize);
+
+        if (GCGen) {
+                for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                        GCPinYoung(ty, &v__(ty->group->TyList, i)->pinned, &ty->group->PinYoung);
+                }
+                GCPinYoung(ty, &ty->group->DeadPinned, &ty->group->PinYoung);
+        }
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
@@ -841,6 +907,13 @@ DoGC(Ty *ty)
         GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
         GCSweepDeadBlocks(ty);
         TySpinLockUnlock(&ty->group->DLock);
+
+        AwaitReady(ty->group, nRunning);
+        GCUnpinYoung(&ty->group->PinYoung);
+
+        if (GCGen) {
+                GCProtect(ty);
+        }
 
         NextGCPhase(ty, GC_PHASE_DONE, nRunning);
         EndGC(ty);
@@ -3175,6 +3248,7 @@ CleanupThread(void *ctx)
                 TySpinLockLock(&ty->group->DLock);
         }
         xvPv(ty->group->DeadAllocs, ty->allocs);
+        xvPv(ty->group->DeadAllocs, ty->old);
         xvPv(ty->group->DeadAllocs, ty->special);
         xvPv(ty->group->DeadPinned, ty->pinned);
         xvPv(ty->group->DeadCleanup, ty->cleanup);
@@ -3183,6 +3257,7 @@ CleanupThread(void *ctx)
         xvPv(ty->group->DeadFFIAutos, ty->ffi_autos);
         ty->group->DeadUsed += MemoryUsed;
         v0(ty->allocs);
+        v0(ty->old);
         v0(ty->special);
         v0(ty->pinned);
         v0(ty->cleanup);
@@ -3212,14 +3287,21 @@ CleanupThread(void *ctx)
 
         if (group_remaining == 0 && ty->group != &MainGroup) {
                 LockTy();
+                if (GCGen) {
+                        GCClearMarks(ty);
+                }
                 if (ty->result != NULL) {
                         value_mark(ty, ty->result);
                 }
                 GCMarkPinned(ty, &ty->group->DeadPinned);
+                if (GCGen) {
+                        GCPinYoung(ty, &ty->group->DeadPinned, &ty->group->PinYoung);
+                }
                 GCDropFinalizable(ty);
                 GCDropFFIAutos(&ty->group->DeadFFIAutos);
                 GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
                 GCSweepDeadBlocks(ty);
+                GCUnpinYoung(&ty->group->PinYoung);
                 UnlockTy();
         }
 
@@ -3265,6 +3347,7 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
+        xvF(ty->old);
         xvF(ty->special);
         xvF(ty->pinned);
         xvF(ty->cleanup);
@@ -3303,6 +3386,7 @@ CleanupThread(void *ctx)
                 xvF(ty->group->DeadFFIAutos);
                 xvF(ty->group->DeadPinned);
                 xvF(ty->group->DeadCleanup);
+                xvF(ty->group->PinYoung);
                 GCFreeBlockCache(&ty->group->DeadBlocks);
                 xmF(ty->group->RefIndex);
                 TySpinLockDestroy(&ty->group->RefLock);
@@ -7251,7 +7335,7 @@ DoTupleLiteral(Ty *ty)
         if (k > 0) {
                 __builtin_memcpy(v.items, vv(values), k * sizeof (Value));
                 if (have_names) {
-                        v.ids = uAo(k * sizeof (i32), GC_TUPLE);
+                        v.ids = uAo(k * sizeof (i32), GC_IDS);
                         __builtin_memcpy(v.ids, vv(ids), k * sizeof (i32));
                 }
         }
@@ -8790,7 +8874,7 @@ TargetMember:
                                 }
 
                                 value = vT(ids.count);
-                                value.ids = uAo(value.count * sizeof (i32), GC_TUPLE);
+                                value.ids = uAo(value.count * sizeof (i32), GC_IDS);
 
                                 memcpy(value.ids, vv(ids), value.count * sizeof (i32));
 
@@ -11183,6 +11267,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.b                = M_ID("b");
         NAMES.call             = M_ID("__call__");
         NAMES._class_          = M_ID("__class__");
+        NAMES.contains         = M_ID("contains?");
         NAMES.count            = M_ID("__count__");
         NAMES._def_            = M_ID("__def__");
         NAMES._drop_           = M_ID("__drop__");
@@ -12603,7 +12688,7 @@ TyReloadModule(Ty *ty, char const *module)
                 }
         }
 
-        StartGC(ty);
+        StartGC(ty, GC_PHASE_MARK);
 
         AwaitReady(ty->group, nRunning);
         // ======================================================================================
@@ -12785,7 +12870,7 @@ vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids)
         }
 
         Value value = vT(ids.count);
-        value.ids = uAo(value.count * sizeof (i32), GC_TUPLE);
+        value.ids = uAo(value.count * sizeof (i32), GC_IDS);
 
         memcpy(value.ids, vv(ids), value.count * sizeof (i32));
 

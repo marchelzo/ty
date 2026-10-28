@@ -45,7 +45,8 @@ typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
 typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
-typedef vec(Value *)        GCWorkStack;
+typedef struct { uptr p; usize lo; } GCWork;
+typedef vec(GCWork)         GCWorkStack;
 typedef vec(Scope *)        ScopeVector;
 typedef vec(usize)          SPStack;
 typedef vec(struct sigfn)   SigfnStack;
@@ -591,7 +592,8 @@ enum {
         GC_PHASE_WAIT  = (1 << 1),
         GC_PHASE_MARK  = (1 << 2),
         GC_PHASE_SWEEP = (1 << 3),
-        GC_PHASE_DONE  = (1 << 4)
+        GC_PHASE_DONE  = (1 << 4),
+        GC_PHASE_PREP  = (1 << 5)
 };
 
 typedef struct thread_group {
@@ -626,6 +628,11 @@ typedef struct thread_group {
         TyMutex     GCPhaseLock;
         TyCondVar   GCPhaseCond;
         int         GCPhase;
+        bool        GCMinor;
+        isize       GCLive;
+        isize       GCPromoted;
+        isize       GCFullAt;
+        AllocList   PinYoung;
 
         TySpinLock    RefLock;
         atomic_bool   RefReady;
@@ -835,12 +842,14 @@ typedef struct ty {
 
         int GC_OFF_COUNT;
 
-        GCWorkStack marking;
+        GCWorkStack  marking;
+        GCWorkStack *gc_helper;
 
         isize memory_used;
         isize memory_limit;
 
         AllocList allocs;
+        AllocList old;
         AllocList special;
         AllocList pinned;
         AllocList cleanup;
@@ -914,6 +923,7 @@ typedef struct {
         int call;
         int _cause;
         int _class_;
+        int contains;
         int count;
         int _ctx;
         int _def_;

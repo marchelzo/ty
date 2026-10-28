@@ -148,7 +148,7 @@ shrink(Ty *ty, Value *v)
                         mF(vv(*a));
                         vv(*a) = NULL;
                 } else {
-                        mREu(vv(*a), vN(*a) * sizeof (Value));
+                        vv(*a) = GCOwnedResize(ty, vv(*a), vN(*a) * sizeof (Value), vN(*a) * sizeof (Value), GC_BUF_VALUES, false);
                 }
         }
 }

@@ -26,22 +26,22 @@ RealThreadId(void);
 bool
 HoldingLock(Ty *ty);
 
-#define GC_SPECIAL ( (1U << GC_GENERATOR)     \
-                   | (1U << GC_THREAD)        \
-                   | (1U << GC_REGEX)         \
-                   | (1U << GC_ARENA)         \
-                   | (1U << GC_FUN_INFO)      \
-                   | (1U << GC_JIT_CODE)      \
-                   | (1U << GC_LIR)           \
-                   | (1U << GC_FFI_AUTO)      \
-                   | (1U << GC_MUTEX)         \
-                   | (1U << GC_SPINLOCK)      \
-                   | (1U << GC_CONDVAR)       \
-                   | (1U << GC_NOTE)          \
-                   | (1U << GC_COUNTER)       \
-                   | (1U << GC_CHANNEL)       \
-                   | (1U << GC_SCREEN)        \
-                   | (1U << GC_SHARED_QUEUE)  )
+#define GC_SPECIAL ( (1ULL << GC_GENERATOR)     \
+                   | (1ULL << GC_THREAD)        \
+                   | (1ULL << GC_REGEX)         \
+                   | (1ULL << GC_ARENA)         \
+                   | (1ULL << GC_FUN_INFO)      \
+                   | (1ULL << GC_JIT_CODE)      \
+                   | (1ULL << GC_LIR)           \
+                   | (1ULL << GC_FFI_AUTO)      \
+                   | (1ULL << GC_MUTEX)         \
+                   | (1ULL << GC_SPINLOCK)      \
+                   | (1ULL << GC_CONDVAR)       \
+                   | (1ULL << GC_NOTE)          \
+                   | (1ULL << GC_COUNTER)       \
+                   | (1ULL << GC_CHANNEL)       \
+                   | (1ULL << GC_SCREEN)        \
+                   | (1ULL << GC_SHARED_QUEUE)  )
 
 #define AddAlloc(ty, a) do {                            \
         if (UNLIKELY((GC_SPECIAL >> (a)->type) & 1)) {  \
@@ -59,6 +59,10 @@ HoldingLock(Ty *ty);
 #else
  #define GC_INITIAL_LIMIT (1ULL << 22)
 #endif
+
+#define GC_NURSERY_MAX ((isize)1 << 26)
+#define GC_MINOR_MIN   ((isize)1 << 24)
+#define GC_MARK_DEEP   2048
 
 
 #if defined(TY_GC_STATS)
@@ -108,6 +112,11 @@ enum {
         GC_COUNTER,
         GC_CHANNEL,
         GC_SCREEN,
+        GC_BUF_VALUES,
+        GC_BUF_BYTES,
+        GC_BUF_DICT,
+        GC_BUF_SET,
+        GC_IDS,
         GC_ANY
 };
 
@@ -120,6 +129,9 @@ mrealloc(void *p, usize n);
 void
 GCRepin(Ty *ty, struct alloc const *old, struct alloc *new);
 
+void
+GCBlockDrop(Ty *ty, struct alloc *a);
+
 inline static void *
 gc_resize_unchecked(Ty *ty, void *p, usize n) {
         struct alloc *a;
@@ -127,6 +139,7 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
                 void *q = gc_resize_unchecked(ty, NULL, n);
                 memcpy(q, p, min(ALLOC_OF(p)->size, n));
+                GCBlockDrop(ty, ALLOC_OF(p));
                 return q;
         }
 
@@ -270,14 +283,57 @@ gc_alloc0_unchecked(Ty *ty, usize n)
         return a->data;
 }
 
-#define GC_BLOCKABLE ( (1U << GC_STRING)  \
-                     | (1U << GC_TUPLE)   \
-                     | (1U << GC_VALUE)   \
-                     | (1U << GC_ENV)     \
-                     | (1U << GC_OBJECT)  )
+#define GC_BLOCKABLE ( (1ULL << GC_STRING)      \
+                     | (1ULL << GC_TUPLE)       \
+                     | (1ULL << GC_VALUE)       \
+                     | (1ULL << GC_ENV)         \
+                     | (1ULL << GC_OBJECT)      \
+                     | (1ULL << GC_ARRAY)       \
+                     | (1ULL << GC_QUEUE)       \
+                     | (1ULL << GC_DICT)        \
+                     | (1ULL << GC_SET)         \
+                     | (1ULL << GC_HEAP)        \
+                     | (1ULL << GC_BUF_VALUES)  \
+                     | (1ULL << GC_BUF_DICT)    \
+                     | (1ULL << GC_BUF_SET)     \
+                     | (1ULL << GC_IDS)         )
+
+#define VEC_OWNED(v) _Generic(&(v),         \
+        struct array *: GC_BUF_VALUES,      \
+        default:        0                   \
+)
+
+void *
+GCOwnedResize(Ty *ty, void *p, usize n, usize used, char type, bool check);
+
+void
+GCTrackCleanup(Ty *ty, struct alloc *a);
+
+[[gnu::always_inline]]
+inline static void
+GCMarkOwned(Ty *ty, void const *owner, void const *buf)
+{
+        if (buf == NULL) {
+                return;
+        }
+
+        if (InGCBlocks(ALLOC_OF(buf))) {
+                GCBlock *b = GCBlockOf(ALLOC_OF(buf));
+                u32      i = GCCellOf(b, ALLOC_OF(buf));
+                if (b->owner == ty->gc_owner) {
+                        b->marks[i] = 1;
+                        b->refs[i]  = GCBlockRef(ALLOC_OF(owner));
+                }
+        } else if (InGCBlocks(ALLOC_OF(owner))) {
+                GCTrackCleanup(ty, ALLOC_OF(owner));
+        }
+}
 
 void *
 GCBlockAlloc(Ty *ty, usize n, char type);
+
+void *
+GCLargeAlloc(Ty *ty, usize n, char type);
 
 void
 GCTrackDynamic(Ty *ty, void const *obj);
@@ -289,6 +345,7 @@ gc_block_take(Ty *ty, GCBlock *b, u32 i, usize n, char type)
         struct alloc *a = (struct alloc *)(b->cells + (usize)i * b->cell);
 
         b->taken[i] = 1;
+        b->flags[i] = 0;
         b->cursor   = i + 1;
         b->used    += 1;
 
@@ -319,9 +376,16 @@ gc_block_object(Ty *ty, usize n, char type)
 inline static bool
 gc_blockable(usize n, char type)
 {
-        return (GCBlockSpan != 0)
-            && (n <= GC_BLOCK_CELL - sizeof (struct alloc))
-            && ((GC_BLOCKABLE >> type) & 1);
+        return (GCBlockSpan != 0) && ((GC_BLOCKABLE >> type) & 1);
+}
+
+[[gnu::always_inline]]
+inline static void *
+gc_range_object(Ty *ty, usize n, char type)
+{
+        return (n <= GC_BLOCK_CELL - sizeof (struct alloc))
+             ? gc_block_object(ty, n, type)
+             : GCLargeAlloc(ty, n, type);
 }
 
 [[gnu::always_inline]]
@@ -360,7 +424,7 @@ gc_object(Ty *ty, usize n, char type, bool zero, bool check)
                 CheckUsed(ty);
         }
 
-        void *p = gc_blockable(n, type) ? gc_block_object(ty, n, type) : NULL;
+        void *p = gc_blockable(n, type) ? gc_range_object(ty, n, type) : NULL;
 
         if (p == NULL) {
                 return gc_object_heap(ty, n, type, zero);
@@ -434,7 +498,9 @@ gc_notify(Ty *ty, usize n);
 inline static void
 gc_free(Ty *ty, void *p)
 {
-        if (p != NULL && !InGCBlocks(ALLOC_OF(p))) {
+        if (p != NULL && InGCBlocks(ALLOC_OF(p))) {
+                GCBlockDrop(ty, ALLOC_OF(p));
+        } else if (p != NULL) {
                 struct alloc *a = ALLOC_OF(p);
                 if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
                         GCRepin(ty, a, NULL);
@@ -455,6 +521,7 @@ gc_resize(Ty *ty, void *p, usize n) {
         if (UNLIKELY(p != NULL && InGCBlocks(ALLOC_OF(p)))) {
                 void *q = gc_resize(ty, NULL, n);
                 memcpy(q, p, min(ALLOC_OF(p)->size, n));
+                GCBlockDrop(ty, ALLOC_OF(p));
                 return q;
         }
 
@@ -555,6 +622,55 @@ GCFreeBlockCache(GCBlockCache *bc);
 
 void
 GCMarkPinned(Ty *ty, AllocList *pinned);
+
+void
+GCPinYoung(Ty *ty, AllocList const *pinned, AllocList *young);
+
+void
+GCUnpinYoung(AllocList *young);
+
+struct alloc *
+GCBufferOwner(Ty *ty, struct alloc const *buf);
+
+void
+GCRetrace(Ty *ty, struct alloc *a, char const *lo, char const *hi);
+
+void
+GCDrain(Ty *ty);
+
+void
+GCClearMarks(Ty *ty);
+
+bool
+GCPrepare(Ty *ty, bool minor);
+
+bool
+GCMinorOK(Ty *ty);
+
+void
+GCProtect(Ty *ty);
+
+void
+GCVerifyMinor(Ty *ty);
+
+void
+GCSnapshot(Ty *ty, byte_vector *snap, bool check);
+
+void
+DoGCKind(Ty *ty, bool minor);
+
+extern bool       GCVerify;
+extern atomic_bool GCShareWanted;
+
+void
+GCShare(Ty *ty);
+
+bool
+GCParallelBegin(Ty *ty, bool minor);
+
+void
+GCParallelEnd(Ty *ty);
+extern atomic_int GCIsolatedGroups;
 
 
 GCRootSet *

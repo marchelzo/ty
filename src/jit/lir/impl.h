@@ -5,7 +5,7 @@
 #include "jit/lir.h"
 
 #define dupn(p, n)       lir_copy(L, (p), (n), sizeof *(p))
-#define lir_rsz(p, n, m) ((p) = lir_grow(L, (p), (n), (m)))
+#define lir_rsz(v, p, n, m) ((p) = lir_grow(L, (p), (n), (m)))
 #define lvP(v, x)        vec_push_((v), (x), lir_rsz)
 #define lvR(v, n)        vec_reserve_((v), (n), lir_rsz)
 

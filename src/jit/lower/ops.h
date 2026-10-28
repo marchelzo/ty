@@ -135,6 +135,43 @@ class_check(BcLir *c, BcLirNode const *node)
 }
 
 static void
+aggregate_in(Ty *ty, Value *top)
+{
+        ty->stack.count = top - ty->stack.items;
+
+        isize  base = vXx(ty->st->sps);
+        i32    n    = ty->stack.count - base;
+        Value *xs   = ty->stack.items + base;
+        bool   in   = false;
+
+        for (i32 i = 0; !in && i < n; ++i) {
+                in = v_eq(xs - 1, &xs[i]);
+        }
+
+        xs[-1]          = BOOLEAN(in);
+        ty->stack.count = base;
+}
+
+inline static bool
+contains_next(BcLir const *c, char const *ip)
+{
+        char const      *next = StepInstruction(ip);
+        BcLirNode const *node = &c->nodes[next - c->code];
+
+        return (next < c->code + c->size)
+            && (node->op == INSTR_CALL_METHOD)
+            && (node->argc == 1)
+            && (node->nkw == 0)
+            && (node->member == NAMES.contains)
+            && (node->label == LIR_NONE)
+            && (node->deopt == LIR_NONE)
+            && (node->resume == LIR_NONE)
+            && (node->resume_id == 0)
+            && (node->osr_id == 0)
+            && (node->tierup == LIR_NONE);
+}
+
+static void
 aggregate(Ty *ty, Value *top, i32 op)
 {
         ty->stack.count = top - ty->stack.items;
@@ -457,6 +494,11 @@ lower_misc(BcLir *c, BcLirNode const *node, char const *ip)
                 return;
 
         case INSTR_ARRAY:
+                if (contains_next(c, ip)) {
+                        tycall(c, aggregate_in, LT_VOID, preg(top));
+                        c->skip_extra = 1;
+                        return;
+                }
         case INSTR_SET:
         case INSTR_DICT:
         case INSTR_GATHER_TUPLE:

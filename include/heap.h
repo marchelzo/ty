@@ -17,6 +17,9 @@ void
 heap_mark(Ty *ty, Heap *h);
 
 void
+heap_trace(Ty *ty, Heap *h);
+
+void
 heap_free(Ty *ty, Heap *h);
 
 void

@@ -930,25 +930,63 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
 void
 _value_mark(Ty *ty, Value const *v);
 
+enum : u64 {
+        GC_INERT_VALUES = (1ULL << VALUE_INTEGER)
+                        | (1ULL << VALUE_REAL)
+                        | (1ULL << VALUE_BOOLEAN)
+                        | (1ULL << VALUE_NIL)
+                        | (1ULL << VALUE_NONE)
+                        | (1ULL << VALUE_TAG)
+                        | (1ULL << VALUE_SENTINEL)
+                        | (1ULL << VALUE_INDEX),
+
+        GC_GREY_VALUES  = (1ULL << VALUE_ARRAY)
+                        | (1ULL << VALUE_DICT)
+                        | (1ULL << VALUE_SET)
+                        | (1ULL << VALUE_HEAP)
+                        | (1ULL << VALUE_QUEUE)
+                        | (1ULL << VALUE_OBJECT)
+                        | (1ULL << VALUE_TUPLE)
+};
+
+[[gnu::always_inline]]
 inline static void
 GCMarkPush(Ty *ty, Value *v)
 {
         enum : u64 {
-                INERT = (1ULL << VALUE_INTEGER)
-                      | (1ULL << VALUE_REAL)
-                      | (1ULL << VALUE_BOOLEAN)
-                      | (1ULL << VALUE_NIL)
-                      | (1ULL << VALUE_NONE)
-                      | (1ULL << VALUE_TAG)
-                      | (1ULL << VALUE_SENTINEL)
-                      | (1ULL << VALUE_INDEX)
+                INERT = GC_INERT_VALUES,
+                GREY  = GC_GREY_VALUES
         };
 
-        if ((v->src == 0) && ((INERT >> (v->type & 63)) & 1)) {
+        u32 t = v->type & 63;
+
+        if (LIKELY(v->src == 0) && ((INERT >> t) & 1)) {
                 return;
         }
 
-        xvP(ty->marking, v);
+        if ((v->src != 0) || !(((GREY | (1ULL << VALUE_STRING)) >> t) & 1)) {
+                xvP(ty->marking, ((GCWork) { .p = (uptr)v }));
+                return;
+        }
+
+        if (t == VALUE_STRING) {
+                if (!v->ro && (v->str0 != NULL)) {
+                        gc_mark_alloc(ALLOC_OF(v->str0), ty->gc_owner);
+                }
+                return;
+        }
+
+        void *p = (t == VALUE_OBJECT) ? (void *)v->object
+                : (t == VALUE_TUPLE)  ? (void *)v->items
+                :                       v->ptr;
+
+        if ((p != NULL) && gc_claim(ALLOC_OF(p), ty->gc_owner)) {
+                xvP(ty->marking, ((GCWork) { .p = (uptr)p | 1 }));
+        }
+
+        if ((t == VALUE_TUPLE) && (v->ids != NULL)) {
+                gc_mark_alloc(ALLOC_OF(v->ids), ty->gc_owner);
+        }
 }
 
 
@@ -961,15 +999,15 @@ value_array_new(Ty *ty)
 static inline Array *
 value_array_new_sized(Ty *ty, size_t n)
 {
-        Array *a = mAo(sizeof (Array), GC_ARRAY);
+        Array *a = mAo0(sizeof (Array), GC_ARRAY);
 
         if (n == 0) {
-                return memset(a, 0, sizeof *a);
+                return a;
         }
 
         NOGC(a);
 
-        a->items = mA(n * sizeof (Value));
+        a->items = GCOwnedResize(ty, NULL, n * sizeof (Value), 0, GC_BUF_VALUES, true);
         a->capacity = n;
         a->count = 0;
 
@@ -987,7 +1025,7 @@ value_array_new_sized_unchecked(Ty *ty, size_t n)
                 return memset(a, 0, sizeof *a);
         }
 
-        a->items = uA(n * sizeof (Value));
+        a->items = GCOwnedResize(ty, NULL, n * sizeof (Value), 0, GC_BUF_VALUES, false);
         a->capacity = n;
         a->count = 0;
 
@@ -1000,7 +1038,7 @@ value_array_push(Ty *ty, Array *a, Value v)
         if (a->count == a->capacity) {
                 gP(&v);
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
-                mRE(a->items, a->capacity * sizeof (Value));
+                a->items    = GCOwnedResize(ty, a->items, a->capacity * sizeof (Value), a->count * sizeof (Value), GC_BUF_VALUES, true);
                 gX();
         }
 
@@ -1019,7 +1057,7 @@ value_array_reserve(Ty *ty, Array *a, int count)
         while (a->capacity < count)
                 a->capacity *= 2;
 
-        mRE(a->items, a->capacity * sizeof (Value));
+        a->items = GCOwnedResize(ty, a->items, a->capacity * sizeof (Value), a->count * sizeof (Value), GC_BUF_VALUES, true);
 }
 
 static inline Value

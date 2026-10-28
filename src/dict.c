@@ -14,6 +14,7 @@
 
 #define HT                 Dict
 #define HT_ITEM            DictItem
+#define HT_BUF             GC_BUF_DICT
 #define HT_PAYLOAD(it, src) ((it)->v = (src)->v)
 #include "htab.h"
 
@@ -96,7 +97,7 @@ dict_new_sized(Ty *ty, usize n)
         }
 
         NOGC(d);
-        d->items = mA0(size * sizeof (DictItem));
+        d->items = GCOwnedResize(ty, NULL, size * sizeof (DictItem), 0, GC_BUF_DICT, true);
         d->size  = size;
         OKGC(d);
 
@@ -209,6 +210,14 @@ dict_mark(Ty *ty, Dict *d)
         if (MARKED(d)) return;
 
         MARK(d);
+
+        dict_trace(ty, d);
+}
+
+void
+dict_trace(Ty *ty, Dict *d)
+{
+        GCMarkOwned(ty, d, d->items);
 
         if (has_default(d)) {
                 GCMarkPush(ty, &d->dflt);

@@ -81,6 +81,9 @@ void
 set_mark(Ty *ty, Set *s);
 
 void
+set_trace(Ty *ty, Set *s);
+
+void
 set_free(Ty *ty, Set *s);
 
 Value

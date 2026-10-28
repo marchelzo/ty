@@ -17,9 +17,15 @@ queue_mark(Ty *ty, Queue *q)
 
         MARK(q);
 
+        queue_trace(ty, q);
+}
+
+void
+queue_trace(Ty *ty, Queue *q)
+{
         if (q->items == NULL) return;
 
-        MARK(q->items);
+        GCMarkOwned(ty, q, q->items);
 
         usize n = _queue_count(q->head, q->tail, q->cap);
 
@@ -124,7 +130,7 @@ QueueClone(Ty *ty, Queue const *q)
         if (n > 0) {
                 NOGC(c);
                 c->cap   = n + 1;
-                c->items = uA(c->cap * sizeof (Value));
+                c->items = GCOwnedResize(ty, NULL, c->cap * sizeof (Value), 0, GC_BUF_VALUES, false);
                 for (usize i = 0; i < n; ++i) {
                         c->items[i] = *at(q, i);
                 }

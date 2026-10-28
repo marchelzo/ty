@@ -1,0 +1,159 @@
+class Cell {
+    v: _
+    init(v: _) { self.v = v }
+}
+
+class Bag { init() { } }
+
+fn churn(n: Int) -> Int {
+    let t = 0
+    for i in ..n {
+        t += #[i, "churned string {i}"]
+    }
+    t
+}
+
+fn fields() -> Int {
+    let cells = [Cell(nil) for _ in ..5000]
+    churn(100000)
+    for round in ..20 {
+        for i in ..5000 if i % 20 == round {
+            cells[i].v = [round, "f{i}"]
+        }
+        churn(30000)
+    }
+    [i for i in ..5000 if cells[i].v[1] == "f{i}"].len()
+}
+
+fn elements() -> Int {
+    let xs: Array[_] = [nil] * 100000
+    churn(100000)
+    for round in ..20 {
+        for i in ..100000 if i % 997 == round {
+            xs[i] = "element number {i}"
+        }
+        churn(30000)
+    }
+    [i for i in ..100000 if xs[i] == "element number {i}"].len()
+}
+
+fn tables() -> Int {
+    let d: Dict[Int, _] = %{i: nil for i in ..3000}
+    let s: Set[_] = Set()
+    churn(100000)
+    for round in ..20 {
+        for i in ..3000 if i % 20 == round {
+            d[i] = "d{i}"
+            s.add("s{i}")
+        }
+        churn(30000)
+    }
+    [i for i in ..3000 if d[i] == "d{i}" && s.contains?("s{i}")].len()
+}
+
+fn counter*(n: Int) {
+    let held = []
+    for i in ..n {
+        held.push("g{i}")
+        yield held
+    }
+}
+
+fn generators() -> Int {
+    let gs = [counter(40) for _ in ..200]
+    churn(100000)
+    let t = 0
+    for round in ..20 {
+        for g in gs {
+            if let Some(held) = g() {
+                t += #held
+            }
+        }
+        churn(30000)
+    }
+    for g in gs {
+        if let Some(held) = g() {
+            for (i, s) in held.enumerate() {
+                assert(s == "g{i}")
+            }
+        }
+    }
+    t
+}
+
+fn stash(b: _, v: _) {
+    b.extra = v
+}
+
+fn dynamic() -> Int {
+    let bags = [Bag() for _ in ..3000]
+    for b in bags {
+        stash(b, 0)
+    }
+    churn(100000)
+    for round in ..20 {
+        for i in ..3000 if i % 20 == round {
+            stash(bags[i], "m{i}")
+        }
+        churn(30000)
+    }
+    let b: Array[_] = bags
+    [i for i in ..3000 if b[i].extra == "m{i}"].len()
+}
+
+fn boxed(i: Int) -> (?String) -> _ {
+    let box = nil
+    return fn (x: ?String) {
+        if x != nil {
+            box = [x, i]
+        }
+        box
+    }
+}
+
+fn closures() -> Int {
+    let fs = [boxed(i) for i in ..2000]
+    churn(100000)
+    for round in ..20 {
+        for i in ..2000 if i % 20 == round {
+            fs[i]("c{i}")
+        }
+        churn(30000)
+    }
+    [i for i in ..2000 if fs[i](nil)[0] == "c{i}"].len()
+}
+
+fn threads() -> Int {
+    let xs: Array[_] = [nil] * 20000
+    churn(100000)
+    let ts = [Thread(fn () {
+        for round in ..10 {
+            for i in ..20000 if i % 4 == k {
+                xs[i] = "t{i}"
+            }
+            churn(20000)
+        }
+    }) for k in ..4]
+    churn(200000)
+    for t in ts {
+        t.join()
+    }
+    churn(50000)
+    [i for i in ..20000 if xs[i] == "t{i}"].len()
+}
+
+fn builtins() -> Int {
+    let xs: Array[_] = [[i] for i in ..5000]
+    let d: Dict[String, _] = %{}
+    churn(100000)
+    for round in ..10 {
+        xs.push(["p{round}"])
+        xs.insert(0, ["q{round}"])
+        d.update(%{"u{round}": ["v{round}"]})
+        xs.sort!(by=(x -> str(x[0])))
+        churn(30000)
+    }
+    [x for x in xs if str(x[0])[0] in ['p', 'q']].len() + [r for r in ..10 if d["u{r}"][0] == "v{r}"].len()
+}
+
+print([fields(), elements(), tables(), generators(), dynamic(), closures(), threads(), builtins()])

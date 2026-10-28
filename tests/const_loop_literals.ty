@@ -1,0 +1,46 @@
+fn walk(n: Int) -> [_] {
+    let seen = []
+    for ..n {
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            seen.push(3 * dx + dy)
+        }
+        for s in ["a", "bc", nil, 2.5] {
+            seen.push(s)
+        }
+    }
+    seen
+}
+
+fn nested(n: Int) -> [[Int]] {
+    let seen = []
+    for i in ..n {
+        for xs in [[1, 2], [3]] {
+            xs.push(i)
+            seen.push(xs)
+        }
+    }
+    seen
+}
+
+fn conditional(flag: Bool) -> [Int] {
+    let out = []
+    for x in [1, 2 if flag, 3] {
+        out.push(x)
+    }
+    out
+}
+
+pub fn constant-literal-loops-see-every-element() {
+    let once = [3, -3, 1, -1, "a", "bc", nil, 2.5]
+    assert(walk(3) == [*once, *once, *once])
+}
+
+pub fn nested-arrays-are-fresh-each-time() {
+    let seen = nested(3)
+    assert(seen == [[1, 2, 0], [3, 0], [1, 2, 1], [3, 1], [1, 2, 2], [3, 2]])
+}
+
+pub fn conditional-elements-still-evaluate() {
+    assert(conditional(true) == [1, 2, 3])
+    assert(conditional(false) == [1, 3])
+}

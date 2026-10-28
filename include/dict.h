@@ -77,6 +77,9 @@ void
 dict_mark(Ty *ty, Dict *obj);
 
 void
+dict_trace(Ty *ty, Dict *d);
+
+void
 dict_free(Ty *ty, Dict *obj);
 
 void

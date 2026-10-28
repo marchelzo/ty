@@ -12,6 +12,7 @@
 
 #define HT                 Set
 #define HT_ITEM            SetItem
+#define HT_BUF             GC_BUF_SET
 #define HT_PAYLOAD(it, src) ((void)(it), (void)(src))
 #include "htab.h"
 
@@ -277,6 +278,14 @@ set_mark(Ty *ty, Set *s)
         if (MARKED(s)) return;
 
         MARK(s);
+
+        set_trace(ty, s);
+}
+
+void
+set_trace(Ty *ty, Set *s)
+{
+        GCMarkOwned(ty, s, s->items);
 
 #if defined(TY_TRACE_GC)
         if (s->size > 0) {

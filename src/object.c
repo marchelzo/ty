@@ -14,10 +14,14 @@
 void
 object_mark(Ty *ty, TyObject *o)
 {
-        if (!CLAIM(o)) {
-                return;
+        if (CLAIM(o)) {
+                object_trace(ty, o);
         }
+}
 
+void
+object_trace(Ty *ty, TyObject *o)
+{
         for (int i = 0; i < o->nslot; ++i) {
                 GCMarkPush(ty, &o->slots[i]);
         }

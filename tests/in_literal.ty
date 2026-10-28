@@ -1,0 +1,39 @@
+class Always {
+    ==(o: _) -> Bool { true }
+}
+
+class Never {
+    ==(o: _) -> Bool { false }
+}
+
+fn bump(log: Array[Int], x: Int) -> Int {
+    log.push(x)
+    x
+}
+
+pub fn membership-in-literal-arrays() {
+    let y = 9
+    for (x, want) in [(1, true), (4, false), (9, true), (nil, true), ('a', true), ('b', false)] {
+        assert((x in [1, 2, 3, y, nil, 'a']) == want, "{x}")
+        assert((x not in [1, 2, 3, y, nil, 'a']) == !want, "{x}")
+    }
+}
+
+pub fn custom-equality-still-runs() {
+    assert(Always() in [1, 2])
+    assert(Never() not in [1, 2])
+    assert(!(Never() in [1]))
+}
+
+pub fn the-left-side-is-evaluated-once() {
+    let log = []
+    assert(bump(log, 2) in [1, 2, 3])
+    assert(bump(log, 5) not in [1, 2, 3])
+    assert(log == [2, 5])
+}
+
+pub fn computed-elements-keep-the-general-path() {
+    let log = []
+    assert(2 in [bump(log, 1), bump(log, 2), bump(log, 3)])
+    assert(log == [1, 2, 3])
+}

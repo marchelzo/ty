@@ -218,6 +218,12 @@ shared_queue_mark(Ty *ty, SharedQueue *q)
                 return;
         }
         MARK(q);
+        shared_queue_trace(ty, q);
+}
+
+void
+shared_queue_trace(Ty *ty, SharedQueue *q)
+{
         for (usize i = 0; i < q->nlanes; ++i) {
                 struct queue_lane *s = &q->lanes[i];
                 struct queue_block *b = s->first;

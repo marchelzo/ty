@@ -261,6 +261,11 @@ static char const *GcTypeNames[] = {
         [GC_COUNTER]      = "counter",
         [GC_CHANNEL]      = "Channel",
         [GC_SCREEN]       = "Screen",
+        [GC_BUF_VALUES]   = "items",
+        [GC_BUF_BYTES]    = "bytes",
+        [GC_BUF_DICT]     = "dict items",
+        [GC_BUF_SET]      = "set items",
+        [GC_IDS]          = "tuple ids",
         [GC_ANY]          = "buffer"
 };
 

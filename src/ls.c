@@ -899,7 +899,14 @@ SendMeta(Ty *ty, Module const *mod)
 static void
 Serve(Ty *ty, Value req)
 {
-        static Array items;
+        static Value held;
+
+        if (held.type != VALUE_ARRAY) {
+                held = ARRAY(vA());
+                gc_immortalize(ty, &held);
+        }
+
+        Array *items = held.array;
 
         Value *what_field = ReqField(&req, "what", VALUE_INTEGER);
         Value *file_field = ReqField(&req, "file", VALUE_STRING);
@@ -1018,16 +1025,16 @@ Serve(Ty *ty, Value req)
                         goto EndRequest;
                 }
 
-                v0(items);
+                v0(*items);
 
-                if (!CompilerSuggestCompletions(ty, mod, line, col, &items)) {
+                if (!CompilerSuggestCompletions(ty, mod, line, col, items)) {
                         goto EndRequest;
                 }
 
                 result = vTn(
                         "source",      xSs(LocS(QueryExpr->start), LocS(QueryExpr->end) - LocS(QueryExpr->start)),
                         "type",        xSz(t2_show(ty, QueryExpr->_type)),
-                        "completions", ARRAY(&items)
+                        "completions", ARRAY(items)
                 );
                 break;
 
@@ -1036,13 +1043,13 @@ Serve(Ty *ty, Value req)
                         goto EndRequest;
                 }
 
-                v0(items);
+                v0(*items);
                 TokenVector tokens = {0};
                 TokenUnpack(&mod->tokens, &tokens);
-                EncodeTokens(ty, &items, &tokens, mod->source);
+                EncodeTokens(ty, items, &tokens, mod->source);
                 xvF(tokens);
 
-                result = ARRAY(&items);
+                result = ARRAY(items);
                 break;
         }
 

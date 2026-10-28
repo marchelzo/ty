@@ -1,0 +1,25 @@
+import support.process (run, FIXTURES)
+
+let EXPECTED = '[5000, 2020, 3000, 42000, 3000, 2000, 20000, 30]'
+
+fn workload(args: [String], env: Dict[String, String]) {
+    let r = run([*args, str(FIXTURES / 'gc_generational.ty')], env=env)
+    assert(r.status == 0, r.stderr)
+    assert(r.stdout.trim() == EXPECTED, r.stdout)
+}
+
+pub fn old-objects-keep-young-referents-alive() {
+    for args in [[], ['-j']] {
+        workload(args, %{})
+    }
+}
+
+pub fn minor-collections-agree-with-full-marking() {
+    for args in [[], ['-j']] {
+        workload(args, %{'TY_GC_VERIFY': '1'})
+    }
+}
+
+pub fn full-collections-alone-give-the-same-answer() {
+    workload([], %{'TY_GC_GEN': '0'})
+}

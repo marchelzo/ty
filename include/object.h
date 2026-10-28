@@ -10,4 +10,7 @@ object_new(Ty *ty, int class);
 void
 object_mark(Ty *ty, TyObject *obj);
 
+void
+object_trace(Ty *ty, TyObject *obj);
+
 #endif

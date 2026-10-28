@@ -1,0 +1,85 @@
+class Probe {
+    n: Int
+    log: Array[Int]
+    init(n: Int, log: Array[Int]) {
+        self.n = n
+        self.log = log
+    }
+    ==(o: _) -> Bool {
+        log.push(o)
+        o == n
+    }
+}
+
+class Box {
+    v: Int
+    init(v: Int) { self.v = v }
+}
+
+fn hits(boxes: Array[Box], n: Int) -> Int {
+    let c = 0
+    for i in ..n {
+        let b = boxes[i % #boxes]
+        if i % 7 in [b.v, b.v + 2, -1] {
+            c += 1
+        }
+        if (i % 3) not in [boxes[0].v, boxes[1].v] {
+            c += 2
+        }
+    }
+    c
+}
+
+fn slow(boxes: Array[Box], n: Int) -> Int {
+    let c = 0
+    for i in ..n {
+        let b = boxes[i % #boxes]
+        let xs = [b.v, b.v + 2, -1]
+        let ys = [boxes[0].v, boxes[1].v]
+        if xs.contains?(i % 7) {
+            c += 1
+        }
+        if !ys.contains?(i % 3) {
+            c += 2
+        }
+    }
+    c
+}
+
+fn probe(p: Probe, a: Box, b: Box) -> Bool {
+    p in [a.v, b.v, a.v + b.v]
+}
+
+fn evaluated(log: Array[String], a: Box) -> Bool {
+    let mark = (s: String, v: Int) -> do { log.push(s); v }
+    3 in [mark('x', a.v), mark('y', 3), mark('z', 9)]
+}
+
+pub fn fused-membership-matches-contains() {
+    let boxes = [Box(1), Box(2), Box(3)]
+    for ..3 {
+        assert(hits(boxes, 30000) == slow(boxes, 30000))
+    }
+}
+
+pub fn custom-equality-stops-at-the-first-match() {
+    let a = Box(1)
+    let b = Box(2)
+    for ..20000 {
+        let log = []
+        assert(probe(Probe(2, log), a, b))
+        assert(log == [1, 2])
+        let miss = []
+        assert(!probe(Probe(7, miss), a, b))
+        assert(miss == [1, 2, 3])
+    }
+}
+
+pub fn every-element-is-still-evaluated() {
+    let a = Box(5)
+    for ..20000 {
+        let log = []
+        assert(evaluated(log, a))
+        assert(log == ['x', 'y', 'z'])
+    }
+}

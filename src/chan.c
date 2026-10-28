@@ -362,11 +362,8 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         case VALUE_OBJECT: {
                 u32 nslot = (uptr)e.object;
                 usize size = sizeof (TyObject) + nslot * sizeof (Value);
-                Class    *class = class_get(ty, e.class);
-                TyObject *obj   = (class->finalizer.type != VALUE_NONE)
-                                ? gc_alloc_object_heap(ty, size, GC_OBJECT, true, false)
-                                : uAo0(size, GC_OBJECT);
-                obj->class = class;
+                TyObject *obj = uAo0(size, GC_OBJECT);
+                obj->class = class_get(ty, e.class);
                 obj->nslot = nslot;
                 if (UNLIKELY(obj->class->finalizer.type != VALUE_NONE)) {
                         GCTrackFinalizable(ty, obj);
@@ -386,7 +383,7 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
                 Queue *q = mAo0(sizeof (Queue), GC_QUEUE);
                 q->max = e.z;
                 if (n > 0) {
-                        q->items = uA((n + 1) * sizeof (Value));
+                        q->items = GCOwnedResize(ty, NULL, (n + 1) * sizeof (Value), 0, GC_BUF_VALUES, false);
                         q->cap = n + 1;
                 }
                 Value r = QUEUE(q);

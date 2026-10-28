@@ -1024,9 +1024,52 @@ IsRangeExpr(Expr const *expr)
             || (expr->type == EXPRESSION_DOT_DOT_DOT);
 }
 
+static bool
+IsQuietInt(Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_INTEGER:
+                return e->_type == t2_primitive(t2_global_universe(), T2_TYPE_INT);
+
+        case EXPRESSION_PLUS:
+        case EXPRESSION_MINUS:
+                return (e->_type == t2_primitive(t2_global_universe(), T2_TYPE_INT))
+                    && IsQuietInt(e->left)
+                    && IsQuietInt(e->right);
+
+        default:
+                return false;
+        }
+}
+
+inline static int
+CountingCall(Expr const *e)
+{
+        if (
+                (e->type != EXPRESSION_METHOD_CALL)
+             || e->maybe
+             || (e->mkw != NULL)
+             || (vN(e->method_args) != 1)
+             || (vN(e->mconds) > 0 && v__(e->mconds, 0) != NULL)
+             || !IsQuietInt(e->object)
+             || !IsQuietInt(v__(e->method_args, 0))
+        ) {
+                return 0;
+        }
+
+        return s_eq(e->method->identifier, "upto")   ?  1
+             : s_eq(e->method->identifier, "downto") ? -1
+             :                                          0;
+}
+
 inline static bool
 IsSimpleRange(Expr const *expr)
 {
+        if (CountingCall(expr) != 0) {
+                return true;
+        }
+
         if (
                 (expr->type == EXPRESSION_MEMBER_ACCESS)
              && s_eq(expr->member->identifier, "rev")
@@ -10932,6 +10975,22 @@ BeginRangeLoop(
 {
         bool reverse;
         bool inclusive;
+        Expr span;
+        Expr flip;
+        int  dir = CountingCall(range);
+
+        if (dir != 0) {
+                Expr *x = range->object;
+                Expr *y = v__(range->method_args, 0);
+                span        = *range;
+                flip        = *range;
+                span.type   = EXPRESSION_DOT_DOT_DOT;
+                span.left   = (dir > 0) ? x : y;
+                span.right  = (dir > 0) ? y : x;
+                flip.type   = EXPRESSION_MEMBER_ACCESS;
+                flip.object = &span;
+                range       = (dir > 0) ? &span : &flip;
+        }
 
         if (range->type == EXPRESSION_MEMBER_ACCESS) {
                 range = range->object;
@@ -11046,6 +11105,9 @@ emit_range_loop(Ty *ty, Stmt const *s, bool want_result)
         EndRangeLoop(ty, &loop);
 }
 
+static Value *
+ConstIterable(Ty *ty, Expr const *e);
+
 static void
 emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 {
@@ -11064,7 +11126,14 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                 INSN(PUSH_INDEX);
                 Ei32(n | flags);
 
-                EE(s->each.array);
+                Value const *k = ConstIterable(ty, s->each.array);
+
+                if (k != NULL) {
+                        INSN(VALUE);
+                        EP((uptr)k);
+                } else {
+                        EE(s->each.array);
+                }
 
                 begin_loop(ty, want_result, 2);
                 LABEL(start);
@@ -11616,6 +11685,53 @@ IsInert(Expr const *e)
         default:
                 return false;
         }
+}
+
+static bool
+emit_in_literal(Ty *ty, Expr const *e)
+{
+        enum { MAX_IN_LITERAL = 16 };
+
+        Expr const     *xs = e->right;
+        JumpPlaceholder hit[MAX_IN_LITERAL];
+        usize           n  = (xs->type == EXPRESSION_ARRAY) ? vN(xs->elements) : 0;
+
+        if (n == 0 || n > MAX_IN_LITERAL) {
+                return false;
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                if (
+                        (v__(xs->aconds, i) != NULL)
+                     || v__(LSX(xs)->optional, i)
+                     || !IsInert(v__(xs->elements, i))
+                ) {
+                        return false;
+                }
+        }
+
+        EE(e->left);
+
+        for (usize i = 0; i < n; ++i) {
+                INSN(DUP);
+                EE(v__(xs->elements, i));
+                INSN(EQ);
+                hit[i] = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
+        }
+
+        INSN(POP);
+        INSNx((e->type == EXPRESSION_IN) ? INSTR_FALSE : INSTR_TRUE);
+        PLACEHOLDER_JUMP(JUMP, done);
+
+        for (usize i = 0; i < n; ++i) {
+                PATCH_JUMP(hit[i]);
+        }
+
+        INSN(POP);
+        INSNx((e->type == EXPRESSION_IN) ? INSTR_TRUE : INSTR_FALSE);
+        PATCH_JUMP(done);
+
+        return true;
 }
 
 static bool
@@ -12319,6 +12435,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
+                if (emit_in_literal(ty, e)) {
+                        break;
+                }
                 EE(e->left);
                 EE(e->right);
                 EMCALL(M_ID("contains?"), 1);
@@ -13608,6 +13727,72 @@ LiteralValue(Ty *ty, Expr const *e, Value *out)
         case EXPRESSION_STRING:  *out = vSs(e->string.data, e->string.length); return true;
         default:                                                               return false;
         }
+}
+
+static bool
+ConstValue(Ty *ty, Expr const *e, Value *out)
+{
+        switch (e->type) {
+        case EXPRESSION_NIL:
+                *out = NIL;
+                return true;
+
+        case EXPRESSION_TUPLE:
+                if (e->tpx != NULL || vN(e->es) == 0) {
+                        return false;
+                }
+                for (usize i = 0; i < vN(e->names); ++i) {
+                        if (v__(e->names, i) != NULL) {
+                                return false;
+                        }
+                }
+                *out = value_tuple(ty, vN(e->es));
+                for (usize i = 0; i < vN(e->es); ++i) {
+                        if (!ConstValue(ty, v__(e->es, i), &out->items[i])) {
+                                return false;
+                        }
+                }
+                return true;
+
+        default:
+                return LiteralValue(ty, e, out);
+        }
+}
+
+static Value *
+ConstIterable(Ty *ty, Expr const *e)
+{
+        Value  v;
+        Value *k = NULL;
+
+        if (e->type != EXPRESSION_ARRAY || vN(e->elements) == 0 || ty->group->parent != NULL) {
+                return NULL;
+        }
+
+        GC_STOP();
+
+        v = ARRAY(vA());
+
+        for (usize i = 0; i < vN(e->elements); ++i) {
+                Value x;
+                if (
+                        (v__(e->aconds, i) != NULL)
+                     || v__(LSX(e)->optional, i)
+                     || !ConstValue(ty, v__(e->elements, i), &x)
+                ) {
+                        GC_RESUME();
+                        return NULL;
+                }
+                vAp(v.array, x);
+        }
+
+        k  = mrealloc(NULL, sizeof *k);
+        *k = v;
+        gc_immortalize(ty, k);
+
+        GC_RESUME();
+
+        return k;
 }
 
 static void

@@ -2078,6 +2078,8 @@ value_array_mark(Ty *ty, struct array *a)
                 return;
         }
 
+        GCMarkOwned(ty, a, a->items);
+
 #if defined(TY_TRACE_GC)
         if (a->items != NULL) {
                 ADD_REACHED(ALLOC_OF(a->items)->size);
@@ -2086,6 +2088,17 @@ value_array_mark(Ty *ty, struct array *a)
 
         for (int i = 0; i < a->count; ++i) {
                 MarkNext(ty, &a->items[i]);
+        }
+}
+
+inline static void
+trace_values(Ty *ty, Value *xs, usize n, char const *lo, char const *hi)
+{
+        usize i = (lo > (char const *)xs) ? (usize)(lo - (char const *)xs) / sizeof (Value) : 0;
+        usize j = (hi > (char const *)xs) ? ((usize)(hi - (char const *)xs) + sizeof (Value) - 1) / sizeof (Value) : 0;
+
+        for (j = min(j, n); i < j; ++i) {
+                MarkNext(ty, &xs[i]);
         }
 }
 
@@ -2106,15 +2119,30 @@ mark_tuple(Ty *ty, Value const *v)
 }
 
 inline static void
+trace_thread(Ty *ty, Thread *t);
+
+static void
+trace_generator(Ty *ty, Generator *gen);
+
+static void
+trace_code(Ty *ty, LirCode *code);
+
+inline static void
 mark_thread(Ty *ty, Value const *v)
 {
         if (MARKED(v->thread)) return;
 
         MARK(v->thread);
-        MarkNext(ty, &v->thread->v);
+        trace_thread(ty, v->thread);
+}
 
-        if (v->thread->ctx != NULL) {
-                for (Value *p = v->thread->ctx; p->type != VALUE_NONE; ++p) {
+inline static void
+trace_thread(Ty *ty, Thread *t)
+{
+        MarkNext(ty, &t->v);
+
+        if (t->ctx != NULL) {
+                for (Value *p = t->ctx; p->type != VALUE_NONE; ++p) {
                         MarkNext(ty, p);
                 }
         }
@@ -2136,9 +2164,15 @@ mark_generator(Ty *ty, Value const *v)
         }
 
         MARK(v->gen);
-        MarkNext(ty, &v->gen->f);
+        trace_generator(ty, v->gen);
+}
 
-        co_state *st = v->gen->st;
+static void
+trace_generator(Ty *ty, Generator *gen)
+{
+        MarkNext(ty, &gen->f);
+
+        co_state *st = gen->st;
         if (st == NULL) {
                 return;
         }
@@ -2293,6 +2327,12 @@ lir_code_mark(Ty *ty, LirCode *code)
                 MARK(code);
         }
 
+        trace_code(ty, code);
+}
+
+static void
+trace_code(Ty *ty, LirCode *code)
+{
         for (u32 i = 0; i < code->nroots; ++i) {
                 value_mark(ty, &code->roots[i]);
         }
@@ -2425,7 +2465,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
         case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
         case VALUE_REF:              MARK(v->ref); MarkNext(ty, v->ref);                               break;
-        case VALUE_BLOB:             MARK(v->blob);                                                    break;
+        case VALUE_BLOB:             MARK(v->blob); GCMarkOwned(ty, v->blob, v->blob->items);          break;
         case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
         case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                           break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
@@ -2440,17 +2480,267 @@ _value_mark_xd(Ty *ty, Value const *v)
 #endif
 }
 
+enum { MARK_AHEAD = 8, MARK_CHUNK = 1024 };
+
+inline static void
+scan_slice(Ty *ty, void *p, Value *xs, usize lo, usize n)
+{
+        usize hi = min(n, lo + MARK_CHUNK);
+
+        for (usize k = n; lo == 0 && k > MARK_CHUNK; k -= MARK_CHUNK) {
+                xvP(ty->marking, ((GCWork) { .p = (uptr)p | 1, .lo = (k - 1) / MARK_CHUNK * MARK_CHUNK }));
+        }
+
+        for (usize i = lo; i < hi; ++i) {
+                GCMarkPush(ty, &xs[i]);
+        }
+}
+
+static void
+scan_grey(Ty *ty, void *p, usize lo)
+{
+        Array *a = p;
+
+        switch (ALLOC_OF(p)->type) {
+        case GC_OBJECT:
+                object_trace(ty, p);
+                break;
+
+        case GC_ARRAY:
+                if (lo == 0) {
+                        GCMarkOwned(ty, a, a->items);
+                }
+                scan_slice(ty, p, a->items, lo, a->count);
+                break;
+
+        case GC_TUPLE:
+                scan_slice(ty, p, p, lo, ALLOC_OF(p)->size / sizeof (Value));
+                break;
+
+        case GC_HEAP:  heap_trace(ty, p);  break;
+        case GC_DICT:  dict_trace(ty, p);  break;
+        case GC_SET:   set_trace(ty, p);   break;
+        case GC_QUEUE: queue_trace(ty, p); break;
+        }
+}
+
+inline static bool
+helper_safe(Value const *v)
+{
+        if (v->src != 0) {
+                return false;
+        }
+
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+        case VALUE_NATIVE_FUNCTION:
+                return !from_eval(v);
+
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
+        case VALUE_REF:
+        case VALUE_BLOB:
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+static void
+mark_drain(Ty *ty)
+{
+        GCWork ring[MARK_AHEAD];
+        u32    head = 0;
+        u32    n    = 0;
+        u32    tick = 0;
+
+        for (;;) {
+                while (n < MARK_AHEAD && vN(ty->marking) > 0) {
+                        GCWork w = vXx(ty->marking);
+                        if ((w.p & 1) == 0 && ty->gc_helper != NULL && !helper_safe((Value *)w.p)) {
+                                xvP(*ty->gc_helper, w);
+                        } else if ((w.p & 1) == 0) {
+                                _value_mark_xd(ty, (Value *)w.p);
+                        } else {
+                                __builtin_prefetch(ALLOC_OF(w.p & ~(uptr)1));
+                                ring[(head + n++) % MARK_AHEAD] = w;
+                        }
+                }
+
+                if (n == 0) {
+                        break;
+                }
+
+                GCWork w = ring[head];
+
+                head  = (head + 1) % MARK_AHEAD;
+                n    -= 1;
+
+                scan_grey(ty, (void *)(w.p & ~(uptr)1), w.lo);
+
+                if (
+                        (UNLIKELY(GCShareWanted) && (++tick % 64) == 0)
+                     || (UNLIKELY(ty->gc_helper != NULL) && (vN(ty->marking) > GC_MARK_DEEP))
+                ) {
+                        GCShare(ty);
+                }
+        }
+}
+
 void
 _value_mark(Ty *ty, Value const *v)
 {
+        enum : u64 { FAST = GC_INERT_VALUES | GC_GREY_VALUES | (1ULL << VALUE_STRING) };
+
         RESET_REACHED();
 
-        _value_mark_xd(ty, v);
-
-        while (vN(ty->marking) > 0) {
-                v = vXx(ty->marking);
+        if ((v->src != 0) || !((FAST >> (v->type & 63)) & 1)) {
                 _value_mark_xd(ty, v);
+        } else {
+                GCMarkPush(ty, (Value *)v);
         }
+
+        if (vN(ty->marking) > 0) {
+                mark_drain(ty);
+        }
+}
+
+inline static bool
+live_key(Value const *k)
+{
+        return (k->type != VALUE_ZERO) && (k->type != VALUE_TOMBSTONE);
+}
+
+static void
+trace_dict_items(Ty *ty, Dict *d, char const *lo, char const *hi)
+{
+        usize i = (lo > (char const *)d->items) ? (usize)(lo - (char const *)d->items) / sizeof (DictItem) : 0;
+
+        for (; i < d->size && (char const *)&d->items[i] < hi; ++i) {
+                if (live_key(&d->items[i].k)) {
+                        MarkNext(ty, &d->items[i].k);
+                        MarkNext(ty, &d->items[i].v);
+                }
+        }
+}
+
+static void
+trace_set_items(Ty *ty, Set *s, char const *lo, char const *hi)
+{
+        usize i = (lo > (char const *)s->items) ? (usize)(lo - (char const *)s->items) / sizeof (SetItem) : 0;
+
+        for (; i < s->size && (char const *)&s->items[i] < hi; ++i) {
+                if (live_key(&s->items[i].k)) {
+                        MarkNext(ty, &s->items[i].k);
+                }
+        }
+}
+
+static void
+retrace_buffer(Ty *ty, struct alloc *a, char const *lo, char const *hi)
+{
+        struct alloc *o = GCBufferOwner(ty, a);
+
+        if (o == NULL) {
+                return;
+        }
+
+        Heap *h = (Heap *)o->data;
+
+        switch (o->type) {
+        case GC_ARRAY: trace_values(ty, (Value *)a->data, ((Array *)o->data)->count, lo, hi);  break;
+        case GC_HEAP:  trace_values(ty, h->xs.items, h->xs.count, lo, hi);                    break;
+        case GC_DICT:  trace_dict_items(ty, (Dict *)o->data, lo, hi);                        break;
+        case GC_SET:   trace_set_items(ty, (Set *)o->data, lo, hi);                          break;
+        case GC_QUEUE: queue_trace(ty, (Queue *)o->data);                                    break;
+        }
+}
+
+inline static bool
+old_buffer(Ty *ty, void const *buf)
+{
+        return (buf != NULL) && InGCBlocks(ALLOC_OF(buf)) && MARKED(buf);
+}
+
+static void
+retrace_owner(Ty *ty, struct alloc *a)
+{
+        void       *p   = a->data;
+        Dict       *d   = p;
+        Heap       *h   = p;
+        void const *buf = (a->type == GC_ARRAY) ? (void const *)((Array *)p)->items
+                        : (a->type == GC_HEAP)  ? (void const *)h->xs.items
+                        : (a->type == GC_DICT)  ? (void const *)d->items
+                        :                         (void const *)((Set *)p)->items;
+
+        if (!old_buffer(ty, buf)) {
+                switch (a->type) {
+                case GC_ARRAY:
+                        GCMarkOwned(ty, p, buf);
+                        trace_values(ty, ((Array *)p)->items, ((Array *)p)->count, NULL, (char *)-1);
+                        break;
+                case GC_HEAP: heap_trace(ty, p); break;
+                case GC_DICT: dict_trace(ty, p); break;
+                case GC_SET:  set_trace(ty, p);  break;
+                }
+                return;
+        }
+
+        GCMarkOwned(ty, p, buf);
+
+        switch (a->type) {
+        case GC_HEAP:
+                trace_values(ty, &h->order.by, 2, NULL, (char *)-1);
+                break;
+
+        case GC_DICT:
+                MarkNext(ty, &d->dflt);
+                break;
+        }
+}
+
+void
+GCRetrace(Ty *ty, struct alloc *a, char const *lo, char const *hi)
+{
+        void  *p = a->data;
+        Value *v = p;
+
+        switch (a->type) {
+        case GC_TUPLE:         trace_values(ty, v, a->size / sizeof (Value), lo, hi);  break;
+        case GC_VALUE:         trace_values(ty, v, 1, lo, hi);                         break;
+        case GC_OBJECT:        object_trace(ty, p);                                    break;
+        case GC_ARRAY:
+        case GC_HEAP:
+        case GC_DICT:
+        case GC_SET:           retrace_owner(ty, a);                                   break;
+        case GC_QUEUE:         queue_trace(ty, p);                                     break;
+        case GC_SHARED_QUEUE:  shared_queue_trace(ty, p);                              break;
+        case GC_GENERATOR:     trace_generator(ty, p);                                 break;
+        case GC_THREAD:        trace_thread(ty, p);                                    break;
+        case GC_JIT_CODE:      trace_code(ty, p);                                      break;
+        case GC_LIR:           lir_mark(ty, p);                                        break;
+        case GC_FFI_AUTO:      trace_values(ty, v, 2, NULL, (char *)-1);               break;
+        case GC_BUF_VALUES:
+        case GC_BUF_DICT:
+        case GC_BUF_SET:       retrace_buffer(ty, a, lo, hi);                          break;
+        case GC_ENV:
+                for (usize i = 0; i < a->size / sizeof (Value *); ++i) {
+                        Value *cell = ((Value **)p)[i];
+                        if (cell != NULL) {
+                                MARK(cell);
+                                MarkNext(ty, cell);
+                        }
+                }
+                break;
+        }
+}
+
+void
+GCDrain(Ty *ty)
+{
+        mark_drain(ty);
 }
 
 Blob *
@@ -2475,7 +2765,7 @@ Value
 value_record(Ty *ty, int n)
 {
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-        i32   *ids   = uAo(n * sizeof (i32),   GC_TUPLE);
+        i32   *ids   = uAo(n * sizeof (i32), GC_IDS);
 
         for (int i = 0; i < n; ++i) {
                 items[i] = NIL;
@@ -2501,7 +2791,7 @@ value_named_tuple(Ty *ty, char const *first, ...)
         va_end(ap);
 
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-        i32   *ids   = uAo(n * sizeof (i32),   GC_TUPLE);
+        i32   *ids   = uAo(n * sizeof (i32), GC_IDS);
 
         va_start(ap, first);
 

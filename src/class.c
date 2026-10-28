@@ -346,9 +346,8 @@ TyObject *
 class_new_instance(Ty *ty, int class)
 {
         Class *c    = C(class);
-        bool   heap = (c->finalizer.type != VALUE_NONE);
         usize  size = ObjectSize(c);
-        void  *mem  = heap ? gc_alloc_object_heap(ty, size, GC_OBJECT, false, true) : mAo(size, GC_OBJECT);
+        void  *mem  = mAo(size, GC_OBJECT);
 
         if (UNLIKELY(c->proto == NULL)) {
                 return NewPristine(c, mem);

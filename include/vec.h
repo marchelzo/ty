@@ -68,7 +68,7 @@ fit2(usize cap, usize min)
           UNLIKELY(vec_full(v))                                                         \
         ? (                                                                             \
                 rsz(                                                                    \
-                        (v).items,                                                      \
+                        (v), (v).items,                                                 \
                         ((v).capacity = vec_new_capacity(v)) * (sizeof (*(v).items)),   \
                         ((v).count * (sizeof (*(v).items)))                             \
                 ),                                                                      \
@@ -86,7 +86,7 @@ fit2(usize cap, usize min)
           ((v).count + (n) > (v).capacity)                              \
         ? (                                                             \
                 rsz(                                                    \
-                        (v).items,                                      \
+                        (v), (v).items,                                 \
                         (sizeof *((v).items)) * ((v).capacity = fit2(   \
                                 vec_new_capacity(v),                    \
                                 ((v).count + (n))                       \
@@ -140,42 +140,50 @@ fit2(usize cap, usize min)
         (                                                       \
                 ((v).capacity = (n)),                           \
                 rsz(                                            \
-                        (v).items,                              \
+                        (v), (v).items,                         \
                         (v).capacity * (sizeof (*(v).items)),   \
                         (v).count    * (sizeof (*(v).items))    \
                 )                                               \
         )                                                       \
 )
 
-#define vec_resize(p, n, m) resize((p), (n))
+#define vec_resize(v, p, n, m) (                                        \
+          VEC_OWNED(v)                                                  \
+        ? (void *)((p) = GCOwnedResize(ty, (p), (n), (m), VEC_OWNED(v), true)) \
+        : (void *)resize((p), (n))                                      \
+)
 #define vec_reserve(v, n) vec_reserve_((v), (n), vec_resize)
 #define vec_push(v, x) vec_push_((v), (x), vec_resize)
 #define vec_push_n(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize)
 #define vec_insert(v, x, i) vec_insert_((v), (x), (i), vec_resize)
 #define vec_insert_n(v, xs, n, i) vec_insert_n_((v), (xs), (n), (i), vec_resize)
 
-#define vec_resize_unchecked(p, n, m) resize_unchecked((p), (n))
+#define vec_resize_unchecked(v, p, n, m) (                              \
+          VEC_OWNED(v)                                                  \
+        ? (void *)((p) = GCOwnedResize(ty, (p), (n), (m), VEC_OWNED(v), false)) \
+        : (void *)resize_unchecked((p), (n))                            \
+)
 #define vec_reserve_unchecked(v, n) vec_reserve_((v), (n), vec_resize_unchecked)
 #define vec_push_unchecked(v, x) vec_push_((v), (x), vec_resize_unchecked)
 #define vec_push_n_unchecked(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize_unchecked)
 #define vec_insert_unchecked(v, x, i) vec_insert_((v), (x), (i), vec_resize_unchecked)
 #define vec_insert_n_unchecked(v, xs, n, i) vec_insert_n_((v), (xs), (n), (i), vec_resize_unchecked)
 
-#define vec_resize_nogc(p, n, m) mresize((p), (n))
+#define vec_resize_nogc(v, p, n, m) mresize((p), (n))
 #define vec_nogc_reserve(v, n) vec_reserve_((v), (n), vec_resize_nogc)
 #define vec_nogc_push(v, x) vec_push_((v), (x), vec_resize_nogc)
 #define vec_nogc_push_n(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize_nogc)
 #define vec_nogc_insert(v, x, i) vec_insert_((v), (x), (i), vec_resize_nogc)
 #define vec_nogc_insert_n(v, xs, n, i) vec_insert_n_((v), (xs), (n), (i), vec_resize_nogc)
 
-#define vec_resize_scratch(p, n, m) resize_scratch((p), (n), (m))
+#define vec_resize_scratch(v, p, n, m) resize_scratch((p), (n), (m))
 #define vec_reserve_scratch(v, n) vec_reserve_((v), (n), vec_resize_scratch)
 #define vec_push_scratch(v, x) vec_push_((v), (x), vec_resize_scratch)
 #define vec_push_n_scratch(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize_scratch)
 #define vec_insert_scratch(v, x, i) vec_insert_((v), (x), (i), vec_resize_scratch)
 #define vec_insert_n_scratch(v, xs, n, i) vec_insert_n_((v), (xs), (n), (i), vec_resize_scratch)
 
-#define vec_resize_arena(p, n, m) Resize((p), (n), (m))
+#define vec_resize_arena(v, p, n, m) Resize((p), (n), (m))
 #define VReserve(v, n) vec_reserve_((v), (n), vec_resize_arena)
 #define VPush(v, x) vec_push_((v), (x), vec_resize_arena)
 #define VPushN(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize_arena)

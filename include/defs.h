@@ -186,8 +186,8 @@ typedef vec(Module *)           ModuleVector;
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 #define Resize(p, n, m) ((p) = Reallocate(ty, (p), (m), (n)))
-#define TmpResize(p, n, m) ((p) = __builtin_memcpy(tmA(n), (p), (m)))
-#define RegrowResize(p, n, m) ((p) = Regrow(ty, (p), (m), (n)))
+#define TmpResize(v, p, n, m) ((p) = __builtin_memcpy(tmA(n), (p), (m)))
+#define RegrowResize(v, p, n, m) ((p) = Regrow(ty, (p), (m), (n)))
 #define rvP(v, x)          vec_push_((v), (x), RegrowResize)
 #define rvPn(v, xs, n)     vec_push_n_((v), (xs), (n), RegrowResize)
 #define rvPv(v, u)         vec_push_n_((v), ((u).items), ((u).count), RegrowResize)

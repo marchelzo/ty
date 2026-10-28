@@ -1851,7 +1851,7 @@ darr(JP *p, JNode *elem, Value *out)
         a->items    = NULL;
 
         if (n > 0) {
-                a->items = mA(n * sizeof (Value));
+                a->items = GCOwnedResize(ty, NULL, n * sizeof (Value), 0, GC_BUF_VALUES, true);
                 memcpy(a->items, Stk.v + base, n * sizeof (Value));
         }
 

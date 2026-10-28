@@ -19,7 +19,7 @@ _queue_grow(Ty *ty, Value **items, usize *head, usize *tail, usize *cap)
         usize n = _queue_count(*head, *tail, *cap);
         usize new_cap = (*cap == 0) ? QUEUE_INITIAL_CAP : (*cap * 2);
 
-        Value *new_items = uA(new_cap * sizeof (Value));
+        Value *new_items = GCOwnedResize(ty, NULL, new_cap * sizeof (Value), 0, GC_BUF_VALUES, false);
 
         for (usize i = 0; i < n; ++i) {
                 new_items[i] = (*items)[(*head + i) % *cap];
@@ -64,9 +64,11 @@ SharedQueue *shared_queue_new(Ty *ty, usize nlanes, bool work);
 void shared_queue_free(Ty *ty, SharedQueue *q);
 
 void queue_mark(Ty *ty, Queue *q);
+void queue_trace(Ty *ty, Queue *q);
 void queue_extend(Ty *ty, Queue *q, Value xs);
 Queue *QueueClone(Ty *ty, Queue const *q);
 void shared_queue_mark(Ty *ty, SharedQueue *q);
+void shared_queue_trace(Ty *ty, SharedQueue *q);
 
 void build_queue_method_table(void);
 void build_shared_queue_method_table(void);
