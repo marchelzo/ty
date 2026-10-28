@@ -441,7 +441,27 @@ typedef struct {
         Alloc *a;
         u64 seq;
         u64 epoch;
+        u32 full;
+        u32 w;
+        u8  owner;
 } LiveObj;
+
+typedef struct {
+        u64 seq;
+        u32 w;
+        u32 gcs;
+        u32 fulls;
+} Death;
+
+enum {
+        LIFE_YOUNG,
+        LIFE_AGE1,
+        LIFE_AGE2,
+        LIFE_AGE4,
+        LIFE_LIVE,
+        LIFE_TRACED,
+        LIFE_N
+};
 
 static LiveObj *Live;
 static u64 LiveCap;
@@ -449,6 +469,8 @@ static u64 LiveUsed;
 static pthread_mutex_t LiveLock = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic u64 AllocSeq;
 static u64 GcEpoch;
+static u32 FullEpoch;
+static vec(Death) Deaths;
 static vec(u32) SeqStack;
 static vec(u64) HeapTimeT;
 static vec(u64) HeapTimeB;
@@ -1211,7 +1233,7 @@ prof_alloc_slow(Ty *ty, usize n, int type)
 
         Synchronous(PK_ALLOC, k * AllocEvery, (u64)type | (seq << 8));
 
-        ProfPending = (type != GC_ANY) ? seq : 0;
+        ProfPending = (type < GC_BUF_VALUES) ? seq : 0;
 }
 
 void
@@ -2174,6 +2196,7 @@ typedef struct {
         u64 retained;
         u64 retained_objs;
         u64 retained_by[GC_ANY + 1];
+        u64 life[LIFE_N];
         char *slow_desc;
         int slow_classes;
         u32 stamp;
@@ -2213,6 +2236,7 @@ static struct {
         u64 retained;
         u64 retained_by[GC_ANY + 1];
         bool retained_exact;
+        u64 life[LIFE_N];
         u64 throws;
         u64 *sym_self;
         u64 *thread_total;
@@ -2698,6 +2722,60 @@ ObjSize(Alloc const *a);
 static void
 AttachCalls(void);
 
+static Line *
+SeqLine(u64 seq)
+{
+        if (seq >= vN(SeqStack) || v__(SeqStack, seq) == UINT32_MAX) {
+                return NULL;
+        }
+
+        Stack const *s = v_(Stacks, v__(SeqStack, seq));
+
+        return (s->n == 0) ? NULL : v_(M.lines, SiteOf(*v_(Keys, s->off))->line);
+}
+
+static void
+LifeAdd(Line *l, u64 w, u32 gcs, u32 fulls, bool live)
+{
+        int k = live       ? LIFE_LIVE
+              : (gcs == 0) ? LIFE_YOUNG
+              : (gcs == 1) ? LIFE_AGE1
+              : (gcs <  4) ? LIFE_AGE2
+              :              LIFE_AGE4;
+
+        l->life[k]           += w;
+        l->life[LIFE_TRACED] += w * fulls;
+        M.life[k]            += w;
+        M.life[LIFE_TRACED]  += w * fulls;
+}
+
+static void
+AttachLifetimes(void)
+{
+        pthread_mutex_lock(&LiveLock);
+
+        for (usize i = 0; i < vN(Deaths); ++i) {
+                Death const *d = v_(Deaths, i);
+                Line        *l = SeqLine(d->seq);
+                if (l != NULL) {
+                        LifeAdd(l, d->w, d->gcs, d->fulls, false);
+                }
+        }
+
+        for (u64 i = 0; i < LiveCap; ++i) {
+                LiveObj const *o = &Live[i];
+                if (o->a == NULL || o->a == LIVE_TOMB || o->epoch >= GcEpoch) {
+                        continue;
+                }
+                Line *l = SeqLine(o->seq);
+                if (l != NULL) {
+                        LifeAdd(l, o->w, (u32)(GcEpoch - o->epoch), FullEpoch - o->full, true);
+                }
+        }
+
+        pthread_mutex_unlock(&LiveLock);
+}
+
 static void
 AttachRetained(void)
 {
@@ -2716,13 +2794,9 @@ AttachRetained(void)
                         continue;
                 }
 
-                if (o->seq >= vN(SeqStack) || v__(SeqStack, o->seq) == UINT32_MAX) {
-                        continue;
-                }
+                Line *l = SeqLine(o->seq);
 
-                Stack const *s = v_(Stacks, v__(SeqStack, o->seq));
-
-                if (s->n == 0) {
+                if (l == NULL) {
                         continue;
                 }
 
@@ -2733,8 +2807,6 @@ AttachRetained(void)
                         : (u64)((double)AllocEvery * deep / shallow);
                 u64 objs = (shallow >= AllocEvery) ? 1 : AllocEvery / shallow;
                 u32 type = (o->a->type <= GC_ANY) ? o->a->type : GC_ANY;
-                Site const *site = SiteOf(*v_(Keys, s->off));
-                Line *l = v_(M.lines, site->line);
 
                 l->retained += est;
                 l->retained_objs += objs;
@@ -2905,6 +2977,8 @@ BuildModel(Ty *ty)
         }
 
         AttachRetained();
+
+        AttachLifetimes();
 
         AttachCalls();
 
@@ -3255,6 +3329,28 @@ ByLineRetained(void const *a_, void const *b_)
         Line const *a = *(Line const **)a_;
         Line const *b = *(Line const **)b_;
         return (a->retained < b->retained) - (a->retained > b->retained);
+}
+
+inline static u64
+LifeOld(u64 const *life)
+{
+        return life[LIFE_AGE1] + life[LIFE_AGE2] + life[LIFE_AGE4];
+}
+
+static int
+ByLineLifeOld(void const *a_, void const *b_)
+{
+        u64 a = LifeOld((*(Line const **)a_)->life);
+        u64 b = LifeOld((*(Line const **)b_)->life);
+        return (a < b) - (a > b);
+}
+
+static int
+ByLineTraced(void const *a_, void const *b_)
+{
+        u64 a = (*(Line const **)a_)->life[LIFE_TRACED];
+        u64 b = (*(Line const **)b_)->life[LIFE_TRACED];
+        return (a < b) - (a > b);
 }
 
 static char const *
@@ -3805,6 +3901,20 @@ SummaryHotLines(void)
         xvF(buf);
 }
 
+static u32
+MainType(Line const *l, u32 last)
+{
+        u32 type = 0;
+
+        for (u32 t = 0; t <= last; ++t) {
+                if (l->alloc_by[t] > l->alloc_by[type]) {
+                        type = t;
+                }
+        }
+
+        return type;
+}
+
 static void
 SummaryAllocs(void)
 {
@@ -3836,18 +3946,11 @@ SummaryAllocs(void)
                 Line const *l = ls[i];
                 Func const *f = v_(M.funcs, l->func);
                 double p = (double)l->alloc / M.alloc_total;
-                u32 type = 0;
                 char b[32];
-
-                for (u32 t = 0; t <= GC_ANY; ++t) {
-                        if (l->alloc_by[t] > l->alloc_by[type]) {
-                                type = t;
-                        }
-                }
 
                 FmtBytes(b, sizeof b, l->alloc);
 
-                fprintf(Out, "  %s%5.1f%% %10s%s  %-7s ", Heat(p), 100 * p, b, C(0), GcTypeNames[type]);
+                fprintf(Out, "  %s%5.1f%% %10s%s  %-7s ", Heat(p), 100 * p, b, C(0), GcTypeNames[MainType(l, GC_ANY)]);
                 PutLoc(f, l->line, 24);
                 fputc(' ', Out);
                 PutSource(l->mod, l->line, Cols - 54);
@@ -3855,6 +3958,91 @@ SummaryAllocs(void)
         }
 
         free(ls);
+}
+
+static void
+LifeRows(char const *title, char const *note, bool traced)
+{
+        Line **ls = SortedLines(traced ? ByLineTraced : ByLineLifeOld);
+        u64 total = traced ? M.life[LIFE_TRACED] : LifeOld(M.life);
+
+        fprintf(Out, "  %s%s%s", C(1), title, C(0));
+        if (note != NULL) {
+                fprintf(Out, "  %s%s%s", C(90), note, C(0));
+        }
+        fputc('\n', Out);
+
+        for (int i = 0; i < 3 && i < vN(M.lines); ++i) {
+                Line const *l = ls[i];
+                u64 v = traced ? l->life[LIFE_TRACED] : LifeOld(l->life);
+                double p = (double)v / total;
+                char b[32];
+
+                if (v == 0 || p < 0.1) {
+                        break;
+                }
+
+                FmtBytes(b, sizeof b, v);
+
+                fprintf(Out, "  %s%5.1f%% %10s%s  %-7s ", Heat(p), 100 * p, b, C(0), GcTypeNames[MainType(l, GC_BUF_VALUES - 1)]);
+                PutLoc(v_(M.funcs, l->func), l->line, 24);
+                fputc(' ', Out);
+                PutSource(l->mod, l->line, Cols - 54);
+                fputc('\n', Out);
+        }
+
+        free(ls);
+}
+
+static void
+SummaryLifetimes(void)
+{
+        u64 old   = LifeOld(M.life);
+        u64 total = M.life[LIFE_YOUNG] + old + M.life[LIFE_LIVE];
+
+        if (GcEpoch < 2 || total == 0) {
+                return;
+        }
+
+        char b[32];
+        char note[128];
+
+        FmtBytes(b, sizeof b, total);
+        ty_snprintf(note, sizeof note, "%llu GCs (%u full), %s sampled", (unsigned long long)GcEpoch, FullEpoch, b);
+
+        Heading("Object lifetimes", note);
+
+        fprintf(
+                Out,
+                "  %5.1f%% died before their first GC, %5.1f%% survived a GC and then died, %5.1f%% still allocated\n",
+                100.0 * M.life[LIFE_YOUNG] / total,
+                100.0 * old / total,
+                100.0 * M.life[LIFE_LIVE] / total
+        );
+
+        if (old > 0 && FullEpoch == GcEpoch) {
+                fprintf(
+                        Out,
+                        "  of those that died later: %.0f%% after 1 GC, %.0f%% after 2-3, %.0f%% after 4 or more\n",
+                        100.0 * M.life[LIFE_AGE1] / old,
+                        100.0 * M.life[LIFE_AGE2] / old,
+                        100.0 * M.life[LIFE_AGE4] / old
+                );
+        }
+
+        if (100 * old >= total) {
+                LifeRows(
+                        "Survived a GC, then died",
+                        (FullEpoch < GcEpoch) ? "reclaimed only by full GCs" : NULL,
+                        false
+                );
+        }
+
+        if (M.life[LIFE_TRACED] > 0) {
+                FmtBytes(b, sizeof b, M.life[LIFE_TRACED]);
+                ty_snprintf(note, sizeof note, "%s traced again over %u full GCs", b, FullEpoch);
+                LifeRows("Traced again by full GCs", note, true);
+        }
 }
 
 static void
@@ -4096,6 +4284,7 @@ Summary(void)
 
         SummaryAllocs();
         SummaryRetained();
+        SummaryLifetimes();
         SummaryNotes();
         SummaryFooter();
 
@@ -4377,6 +4566,7 @@ ExportJson(FILE *f)
                 (unsigned long long)M.throws,
                 NoJIT ? "false" : "true"
         );
+        fprintf(f, "\"gcs\":%llu,\"full_gcs\":%u,", (unsigned long long)GcEpoch, FullEpoch);
 
         fprintf(f, "\"categories\":{");
         for (int c = 0; c < CAT_COUNT; ++c) {
@@ -4460,6 +4650,16 @@ ExportJson(FILE *f)
                 }
                 if (l->retained > 0) {
                         fprintf(f, ",\"retained_objs\":%llu", (unsigned long long)l->retained_objs);
+                }
+                if (LifeOld(l->life) + l->life[LIFE_YOUNG] + l->life[LIFE_LIVE] > 0) {
+                        fprintf(f, ",\"life\":{\"young\":%llu,\"age1\":%llu,\"age2\":%llu,\"age4\":%llu,\"live\":%llu,\"traced\":%llu}",
+                                (unsigned long long)l->life[LIFE_YOUNG],
+                                (unsigned long long)l->life[LIFE_AGE1],
+                                (unsigned long long)l->life[LIFE_AGE2],
+                                (unsigned long long)l->life[LIFE_AGE4],
+                                (unsigned long long)l->life[LIFE_LIVE],
+                                (unsigned long long)l->life[LIFE_TRACED]
+                        );
                 }
                 fprintf(f, ",\"cat\":[");
                 for (int c = 0; c < CAT_COUNT; ++c) {
@@ -5372,7 +5572,7 @@ LiveGrow(void)
 }
 
 void
-prof_alloc_bind(Alloc *a)
+prof_alloc_bind(Ty *ty, Alloc *a)
 {
         u64 seq = ProfPending;
 
@@ -5395,11 +5595,32 @@ prof_alloc_bind(Alloc *a)
         }
 
         LiveUsed += (Live[j].a == NULL);
-        Live[j] = (LiveObj) { .a = a, .seq = seq, .epoch = GcEpoch };
+        Live[j] = (LiveObj) {
+                .a     = a,
+                .seq   = seq,
+                .epoch = GcEpoch,
+                .full  = FullEpoch,
+                .w     = (u32)min(max((u64)a->size, AllocEvery), (u64)UINT32_MAX),
+                .owner = ty->gc_owner
+        };
 
         atomic_fetch_add_explicit(&ProfLiveN, 1, memory_order_relaxed);
 
         pthread_mutex_unlock(&LiveLock);
+}
+
+static void
+LiveDie(LiveObj *o)
+{
+        xvP(Deaths, ((Death) {
+                .seq   = o->seq,
+                .w     = o->w,
+                .gcs   = (u32)(GcEpoch - o->epoch),
+                .fulls = FullEpoch - o->full
+        }));
+
+        o->a = LIVE_TOMB;
+        atomic_fetch_sub_explicit(&ProfLiveN, 1, memory_order_relaxed);
 }
 
 void
@@ -5411,13 +5632,36 @@ prof_free(Alloc *a)
                 u64 j = Mix(0, (uptr)a) & (LiveCap - 1);
                 while (Live[j].a != NULL) {
                         if (Live[j].a == a) {
-                                Live[j].a = LIVE_TOMB;
-                                atomic_fetch_sub_explicit(&ProfLiveN, 1, memory_order_relaxed);
+                                LiveDie(&Live[j]);
                                 break;
                         }
                         j = (j + 1) & (LiveCap - 1);
                 }
         }
+
+        pthread_mutex_unlock(&LiveLock);
+}
+
+void
+prof_gc_swept(Ty *ty, bool minor)
+{
+        pthread_mutex_lock(&LiveLock);
+
+        for (u64 i = 0; i < LiveCap && atomic_load_explicit(&ProfLiveN, memory_order_relaxed) != 0; ++i) {
+                LiveObj *o = &Live[i];
+                if (
+                        (o->a != NULL)
+                     && (o->a != LIVE_TOMB)
+                     && (o->owner == ty->gc_owner)
+                     && InGCBlocks(o->a)
+                     && !GCBlockLive(ty, o->a)
+                ) {
+                        LiveDie(o);
+                }
+        }
+
+        GcEpoch   += 1;
+        FullEpoch += !minor;
 
         pthread_mutex_unlock(&LiveLock);
 }
@@ -5493,8 +5737,6 @@ prof_module_done(int id)
 void
 prof_gc_done(u64 before, u64 after, u64 ns)
 {
-        GcEpoch += 1;
-
         if (Started && !Reported) {
                 xvP(HeapTimeT, NowNs() - StartWall);
                 xvP(HeapTimeB, after);

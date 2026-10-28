@@ -16,6 +16,7 @@ const SELECTED = '#343842'
 const SHADE    = '#2b2f38'
 const ACCENT   = '#e5c07b'
 const BLOCKS   = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+const FATES    = [('died-young', '░', '#98c379'), ('died-late', '█', '#e06c75'), ('still', '▒', '#61afef')]
 const KIB      = 1024
 const MIB      = 1024 * 1024
 const GIB      = 1024 * 1024 * 1024
@@ -49,6 +50,25 @@ fn bold(text: String) -> String {
 
 fn place(file: String, line: Int) -> String {
     "{chalk"[cyan]{file}:{line}[/]"}"
+}
+
+fn fate-bar(l: _, w: Int) -> String {
+    let all = float(max(FATES.map(\l[_.0]).sum() ?? 0, 1))
+    let (bar, at, sum) = ('', 0, 0)
+    for (key, glyph, color) in FATES {
+        sum += l[key]
+        let end = int(sum / all * w + 0.5)
+        bar += "{chalk"[{color}]{glyph * (end - at)}[/]"}"
+        at = end
+    }
+    "{bar}{' ' * (w - at)}"
+}
+
+fn fate-legend(short?: Bool = false) -> String {
+    let names = short?
+        ? %{'died-young': 'young', 'died-late': 'later', 'still': 'live'}
+        : %{'died-young': 'died young', 'died-late': 'died later', 'still': 'still allocated'}
+    FATES.map(|(key, glyph, color)| -> "{chalk"[{color}]{glyph}[/]"} {names[key]}").join(' ')
 }
 
 pub fn fmt-bytes(b: Int | Float) -> String {
@@ -203,6 +223,7 @@ pub class Profile {
     cats: Array[_]
     total: Int
     alloc-total: Int
+    life: _
     unit: String
     by-loc: Dict[String, _]
     sources: Dict[String, Source]
@@ -222,7 +243,18 @@ pub class Profile {
         for l; i in lines {
             l['id'] = i
             by-loc["{l['file']}:{l['line']}"] = l
+            let fate = l['life'] ?? %{}
+            for key in ['age1', 'age2', 'age4', 'traced'] {
+                l[key] = fate[key] ?? 0
+            }
+            l['died-young'] = fate['young'] ?? 0
+            l['died-late']  = l['age1'] + l['age2'] + l['age4']
+            l['still']      = fate['live'] ?? 0
         }
+        let sum = key -> lines.map(\_[key]).sum() ?? 0
+        let sampled = sum('died-young') + sum('died-late') + sum('still')
+        let fates = %{key: sum(key) for key in ['died-young', 'died-late', 'still', 'traced', 'age1', 'age2', 'age4']}
+        life = ((data['gcs'] ?? 0) >= 2 && sampled > 0) ? %{**fates, 'sampled': sampled} : nil
         for f; i in funcs {
             f['id'] = i
         }
@@ -265,6 +297,18 @@ pub class Profile {
     share(w: Int | Float) -> String {
         let p = pct(w)
         (p > 0) ? hot(p / 100, "{p:5.1f}%") : ' ' * 6
+    }
+
+    text-of(l: _) -> String {
+        let src = source(l['file'])
+        ((src != nil) ? src.line(l['line']) : (l['text'] ?? '')).strip()
+    }
+
+    life-share(l: _, key: String) -> String {
+        if l[key] == 0 {
+            return ' ' * 9
+        }
+        hot(l[key] / float(max(life[key], 1)), fmt-bytes(l[key]).fit(9, 1))
     }
 
     alloc-share(bytes: Int, width: Int = 9) -> String {
@@ -558,15 +602,13 @@ class Lines < Screen {
 
     row(i: Int, w: Int) -> String {
         let l = rows[i]
-        let src = prof.source(l['file'])
-        let text = (src != nil) ? src.line(l['line']) : (l['text'] ?? '')
         let bytes = (sort == 'retained') ? l['retained'] : l['alloc']
         [
             prof.share(l['self']),
             prof.share(l['total']),
             prof.alloc-share(bytes),
             place(l['file'], l['line']).fit(28),
-            text.strip()
+            prof.text-of(l)
         ].join(' ')
     }
 
@@ -587,6 +629,81 @@ class Lines < Screen {
     key(app: App, k: String) -> Bool {
         match k {
             's' => sort = cycle(['self', 'total', 'alloc', 'retained'], sort),
+            'S' => desc? = !desc?,
+            _   => return false
+        }
+        refresh()
+        true
+    }
+}
+
+class Lifetimes < Screen {
+    prof: Profile
+    rows: Array[_]
+    sort: String
+    desc?: Bool
+
+    init(prof: Profile) {
+        super('Lifetimes')
+        self.prof = prof
+        sort = 'died-late'
+        desc? = true
+        refresh()
+    }
+
+    refresh() {
+        let key = sort
+        rows = (prof.life == nil) ? [] : prof.lines
+            .filter(l -> FATES.any?(\l[_.0] > 0) && matches?(l['text'] ?? '', l['file'], filter))
+            .sort!(by=\_[key], desc=desc?)
+    }
+
+    count -> Int { #rows }
+
+    hint -> String { "s sort · S reverse · {fate-legend(short?: true)}" }
+
+    previews? -> Bool { true }
+
+    header(w: Int) -> String {
+        [
+            sorted-col('died late', 9, sort == 'died-late', desc?),
+            sorted-col('traced', 9, sort == 'traced', desc?),
+            sorted-col('still', 9, sort == 'still', desc?),
+            dim('fate'.fit(12)),
+            dim('location'.fit(28)),
+            dim('source')
+        ].join(' ')
+    }
+
+    row(i: Int, w: Int) -> String {
+        let l = rows[i]
+        [
+            prof.life-share(l, 'died-late'),
+            prof.life-share(l, 'traced'),
+            prof.life-share(l, 'still'),
+            fate-bar(l, 12),
+            place(l['file'], l['line']).fit(28),
+            prof.text-of(l)
+        ].join(' ')
+    }
+
+    preview -> Spot | nil {
+        if #rows == 0 {
+            return nil
+        }
+        let l = rows[sel]
+        Spot(l['file'], l['line'], prof.funcs[l['func']])
+    }
+
+    open(app: App) {
+        if #rows > 0 {
+            app.push(SourceView(prof, rows[sel]['file'], rows[sel]['line'], nil))
+        }
+    }
+
+    key(app: App, k: String) -> Bool {
+        match k {
+            's' => sort = cycle(['died-late', 'traced', 'still'], sort),
             'S' => desc? = !desc?,
             _   => return false
         }
@@ -1171,6 +1288,36 @@ class Summary < Page {
         }
     }
 
+    lifetimes(out: Array[String], w: Int) {
+        let $life = prof.life or return
+        let d = prof.data
+        let all = float(life['sampled'])
+        let late = life['died-late']
+        let gcs = "{d['gcs']} GCs ({d['full_gcs']} full), {fmt-bytes(life['sampled'])} sampled"
+        let split = [
+            "{100 * life['died-young'] / all:.1f}% died before their first GC",
+            "{hot(late / all, "{100 * late / all:.1f}%")} survived a GC and then died",
+            "{100 * life['still'] / all:.1f}% still allocated"
+        ].join(dim(' · '))
+        out.push('')
+        out.push("{bold('Object lifetimes')}  {dim(gcs)}")
+        out.push("  {fate-bar(life, 48)}  {fate-legend()}")
+        out.push("  {split}")
+        if late > 0 && d['full_gcs'] == d['gcs'] {
+            let ages = [
+                "{100 * life['age1'] / float(late):.0f}% after 1 GC",
+                "{100 * life['age2'] / float(late):.0f}% after 2-3",
+                "{100 * life['age4'] / float(late):.0f}% after 4 or more"
+            ].join(dim(' · '))
+            out.push("  {dim('of those that died later:')} {ages}")
+        } else if late > 0 {
+            out.push("  {dim('promoted objects are reclaimed only by full GCs; TY_GC_GEN=0 gives exact ages')}")
+        }
+        if life['traced'] > 0 {
+            out.push("  {fmt-bytes(life['traced'])} traced again over {d['full_gcs']} full GCs")
+        }
+    }
+
     heap(out: Array[String], w: Int) {
         let points: Array[Array[Int]] = prof.data['heap'] ?? []
         let span = max(prof.data['timeline_ns'] ?? 0, points.map(\_[0]).max() ?? 0, 1)
@@ -1249,6 +1396,7 @@ class Summary < Page {
         categories(out)
         timeline(out, w)
         memory(out, w)
+        lifetimes(out, w)
         imports(out)
         threads(out)
         text = out.map(\_.fit(w))
@@ -2106,6 +2254,7 @@ pub class App < Component {
             Tree(prof, s -> push(s), () -> invalidate!()),
             Flame(prof, s -> push(s)),
             Lines(prof, sort: 'alloc', title: 'Allocations'),
+            Lifetimes(prof),
             Natives(prof),
             Jit(prof),
             Summary(prof)
@@ -2303,7 +2452,7 @@ pub class App < Component {
                 focus(self)
             },
             'e'       => pane? = !pane?,
-            /^[1-8]$/ => switch(int(t) - 1),
+            /^[1-9]$/ => switch(int(t) - 1),
             _         => ()
         }
     }
@@ -2380,6 +2529,7 @@ pub fn stdio(prof: Profile, w: Int = 120) {
         Functions(prof),
         Lines(prof),
         Lines(prof, sort: 'alloc', title: 'Allocations'),
+        Lifetimes(prof),
         Natives(prof),
         JitMisses(prof),
         JitDeopts(prof),

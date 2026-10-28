@@ -132,6 +132,9 @@ GCRepin(Ty *ty, Alloc const *old, Alloc *new);
 void
 GCBlockDrop(Ty *ty, Alloc *a);
 
+bool
+GCBlockLive(Ty *ty, Alloc const *a);
+
 inline static void *
 gc_resize_unchecked(Ty *ty, void *p, usize n) {
         Alloc *a;
@@ -151,7 +154,12 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         }
 
         MemoryUsed += n;
-        NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
+        NoteAlloc(
+                (a != NULL && a->size < n) ? (n - a->size)
+              : (a == NULL)                ? n
+              :                              0,
+                (a != NULL) ? a->type : GC_ANY
+        );
 
         Alloc *old = a;
 
@@ -430,6 +438,8 @@ gc_object(Ty *ty, usize n, char type, bool zero, bool check)
                 return gc_object_heap(ty, n, type, zero);
         }
 
+        PROF_BIND(ty, ALLOC_OF(p));
+
         if (zero) {
                 memset(p, 0, n);
         }
@@ -505,6 +515,7 @@ gc_free(Ty *ty, void *p)
                 if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
                         GCRepin(ty, a, NULL);
                 }
+                PROF_FREE(a);
                 if (a->size >= MemoryUsed) {
                         MemoryUsed = 0;
                 } else {

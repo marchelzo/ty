@@ -7284,7 +7284,8 @@ parse_function_definition(Ty *ty)
         }
 
         s->target = target;
-        s->value = func;
+        s->value  = func;
+        s->end    = func->end;
 
         return s;
 }

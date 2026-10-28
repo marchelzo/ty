@@ -120,7 +120,10 @@ void
 prof_gc_done(u64 before, u64 after, u64 ns);
 
 void
-prof_alloc_bind(Alloc *a);
+prof_alloc_bind(Ty *ty, Alloc *a);
+
+void
+prof_gc_swept(Ty *ty, bool minor);
 
 void
 prof_free(Alloc *a);
@@ -182,7 +185,7 @@ prof_attach_exit(Ty *ty);
 
 #define PROF_BIND(ty, a) do {                                        \
         if (UNLIKELY(ProfPending != 0)) {                            \
-                prof_alloc_bind((a));                                \
+                prof_alloc_bind((ty), (a));                          \
         }                                                            \
 } while (0)
 

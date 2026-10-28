@@ -908,7 +908,7 @@ GCBlockInit(void)
                 GCBlockClass[k] = c;
         }
 
-        if ((knob != NULL && s_eq(knob, "0")) || ProfMode) {
+        if (knob != NULL && s_eq(knob, "0")) {
                 return;
         }
 
@@ -1379,6 +1379,7 @@ GCBlockDrop(Ty *ty, Alloc *a)
                 for (usize i = vN(ty->blocks.large); i > 0; --i) {
                         if (v__(ty->blocks.large, i - 1) == b) {
                                 *v_(ty->blocks.large, i - 1) = vXx(ty->blocks.large);
+                                PROF_FREE(a);
                                 MemoryUsed -= min((isize)large_charge(b), MemoryUsed);
                                 pool_give((uptr)b->cells, b->units);
                                 return;
@@ -1392,6 +1393,8 @@ GCBlockDrop(Ty *ty, Alloc *a)
         if (b->flags[i] != 0) {
                 return;
         }
+
+        PROF_FREE(a);
 
         b->taken[i]  = 0;
         b->marks[i]  = 0;
@@ -1948,6 +1951,12 @@ GCParallelEnd(Ty *ty)
         TyMutexUnlock(&Pool.lock);
 
         atomic_store(&Pool.busy, false);
+}
+
+bool
+GCBlockLive(Ty *ty, Alloc const *a)
+{
+        return block_registered(ty, a);
 }
 
 void

@@ -911,6 +911,10 @@ DoGCKind(Ty *ty, bool minor)
         AwaitReady(ty->group, nRunning);
         GCUnpinYoung(&ty->group->PinYoung);
 
+#ifdef TY_HAVE_SAMPLER
+        prof_gc_swept(ty, ty->group->GCMinor);
+#endif
+
         if (GCGen) {
                 GCProtect(ty);
         }
