@@ -86,6 +86,9 @@ clap! HistoryOptions v1 {
 clap! ShowOptions v1 {
     /// Run ID (default: latest)
     runId: Int, pos: true
+
+    /// Verbose output (include the list of dirty files and the binary's build options)
+    verbose: Bool
 }
 
 /** Compare one run with the best recorded times or another run. */
@@ -306,7 +309,7 @@ fn main() {
             opts.database, history.limit, !history.eligible, history.filter
         ),
         show: ShowOptions => print-run(
-            opts.database, required-run-id(opts.database, show.runId)
+            opts.database, required-run-id(opts.database, show.runId), show.verbose
         ),
         compare: CompareOptions => compare-runs(
             opts.database, required-run-id(opts.database, compare.runId), compare.against

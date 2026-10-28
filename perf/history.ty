@@ -427,7 +427,7 @@ fn best-times(excluding: Int | nil = nil) -> String {
     """
 }
 
-pub fn print-run(path: String, run-id: Int) {
+pub fn print-run(path: String, run-id: Int, verbose: Bool = false) {
     open-history(path)
     let $stored-run = Run.get(run-id)
         or throw ValueError("no performance run #{run-id}")
@@ -461,6 +461,13 @@ pub fn print-run(path: String, run-id: Int) {
     }
     print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
     print(chalk"  {'Geomean':>{width}} {' ':>10}  {' ':>10}   {geomean-label(geomean)}")
+    if verbose {
+        pp({
+            files: json.parse!(run['dirty_files_json'] as String),
+            cflags: run['cflags'],
+            ldflags: run['ldflags']
+        })
+    }
     close-history()
 }
 
