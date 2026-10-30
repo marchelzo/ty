@@ -2469,7 +2469,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
         case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                           break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
-        case VALUE_MODULE:           MarkArena(ty, &v->mod->arena);                                        break;
+        case VALUE_MODULE:           MarkArena(ty, &v->mod->arena);                                    break;
         case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
         case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
         default:                                                                                       break;

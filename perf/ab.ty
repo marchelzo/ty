@@ -1,0 +1,139 @@
+import math
+import path (Path)
+import chalk (chalk)
+import sh (run, Success)
+import ty
+
+import lib (Benchmark, Build, calibrate-on, measure, median)
+import builds (library-roots, snapshot, find, checkout)
+import history (run-build, benchmark-label, duration-label)
+
+pub use Contender = {
+    label: String,
+    build: Build,
+    tree:  String,
+}
+
+let T95 = [
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+     2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+     2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+]
+
+fn stored(label: String, tree: String) -> Contender {
+    {label: label, build: checkout(tree), tree: tree}
+}
+
+fn recorded(database: String, id: Int) -> Contender {
+    let $tree = run-build(database, id)
+        or throw ValueError("run #{id} was recorded before builds were snapshotted")
+    stored("#{id}", tree)
+}
+
+fn unrecorded(spec: String) -> Contender {
+    if let $tree = find(spec) {
+        return stored(tree[;12], tree)
+    }
+    if !Path(spec).file? {
+        throw ValueError("'{spec}' is not a run number, a stored build, or a ty binary")
+    }
+    let tree = snapshot(spec, library-roots(spec))
+    {label: spec, build: {exe: spec, lib: nil, tree: tree}, tree: tree}
+}
+
+pub fn resolve(spec: String, database: String) -> Contender {
+    match spec {
+        /^#?(\d{1,6})$/ => recorded(database, Int($1)),
+        _               => unrecorded(spec)
+    }
+}
+
+fn commit-of(build: Build) -> String {
+    let result = run([build.exe, '--version'])
+    if result.fate != Success {
+        return '?'
+    }
+    let $m = result.stdout.match(/(?mi)^commit:\s*(\S{1,12})/) or return '?'
+    m[1].trim()
+}
+
+fn interval(ratios: [Float]) -> (Float, Float, Float) {
+    let logs = ratios.map(math.log)
+    let n    = #logs
+    let m    = logs.sum()! / n
+    let sd   = (logs.map(x -> (x - m) * (x - m)).sum()! / (n - 1)).sqrt
+    let t    = (n - 1 <= #T95) ? T95[n - 2] : 1.96
+    let h    = t * sd / Float(n).sqrt
+    (math.exp(m), math.exp(m - h), math.exp(m + h))
+}
+
+fn pct(x: Float) -> String {
+    "{x * 100:.1f}%"
+}
+
+fn verdict(ci: (Float, Float, Float)) {
+    let (g, lo, hi) = ci
+    (hi < 1.0) ? chalk"[bright green bold]B {pct(1.0 - g)} faster[/]  [dim]({pct(1.0 - hi)} – {pct(1.0 - lo)})[/]"
+  : (lo > 1.0) ? chalk"[red bold]B {pct(g - 1.0)} slower[/]  [dim]({pct(lo - 1.0)} – {pct(hi - 1.0)})[/]"
+  :              chalk"[dim]no measurable difference (±{pct(max(hi - 1.0, 1.0 - lo))})[/]"
+}
+
+fn race(a: Build, b: Build, bench: Benchmark, iters: Int, warmup: Int, rounds: Int, pairs: Int, progress) -> ([Float], [Float]) {
+    let ta: [Float] = []
+    let tb: [Float] = []
+    for i in ..pairs {
+        progress(i)
+        let first  = (i % 2 == 0) ? a : b
+        let second = (i % 2 == 0) ? b : a
+        let t1 = measure(first,  bench, iters, warmup, rounds).med
+        let t2 = measure(second, bench, iters, warmup, rounds).med
+        ta.push((i % 2 == 0) ? t1 : t2)
+        tb.push((i % 2 == 0) ? t2 : t1)
+    }
+    (ta, tb)
+}
+
+pub fn ab(
+    a: Contender,
+    b: Contender,
+    benches: [Benchmark],
+    pairs: Int,
+    warmup: Int,
+    rounds: Int,
+    target: Float,
+    settings: [String],
+) {
+    let mode = ty.jit ? 'jit' : 'interpreter'
+    print(chalk"[bold bright cyan]A/B[/]  [dim]{mode} · {#benches} benchmark(s) · {pairs} pairs · "
+               "{rounds} rounds × {target}s · {settings.join(' · ') || 'default scheduling'}[/]")
+    print(chalk"  [magenta bold]A[/]  {a.label}  [dim]commit {commit-of(a.build)} · build {a.tree[;12]}[/]")
+    print(chalk"  [bright cyan bold]B[/]  {b.label}  [dim]commit {commit-of(b.build)} · build {b.tree[;12]}[/]")
+    if a.tree == b.tree {
+        print(chalk"  [yellow]A and B are the same build; any difference below is noise[/]")
+    }
+    print()
+
+    let width: Int = (benches.map(\#_.name).max() ?? 0) + 2
+    let per-pair: [[Float]] = [[] for _ in ..pairs]
+    for bench in benches {
+        let label = benchmark-label(bench.name, width)
+        print(chalk"{label} [dim]calibrating…[/]", end='', flush=true)
+        let iters = calibrate-on(b.build, bench, target)
+        let (ta, tb) = race(
+            a.build, b.build, bench, iters, warmup, rounds, pairs,
+            i -> print(chalk"\r\x1b[K{label} [dim]pair {i + 1}/{pairs}…[/]", end='', flush=true)
+        )
+        let ratios = [tb[i] / ta[i] for i in ..pairs]
+        for r; i in ratios {
+            per-pair[i].push(r)
+        }
+        print(chalk"\r\x1b[K{label} {duration-label(median(ta), role='baseline', width=10)} [dim]→[/] "
+                   "{duration-label(median(tb), width=10)}   {verdict(interval(ratios))}")
+    }
+
+    if #benches > 1 {
+        let overall = per-pair.map(rs -> math.exp(rs.map(math.log).sum()! / #rs))
+        print()
+        print(chalk"{benchmark-label('overall', width)} {'':>10}   {'':>10}   {verdict(interval(overall))}")
+    }
+}

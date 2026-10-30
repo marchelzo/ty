@@ -9,12 +9,14 @@ import chalk (chalk)
 import sh (sh, run, Success)
 import ty
 
-import lib (Result, fmt-time, fmt-delta)
+import lib (Result, median, fmt-time, fmt-count, fmt-delta)
+import counters (METRICS, TIME_METRICS)
 
 let PERF_DIR = Path(__file__).parent
 let ROOT_DIR = PERF_DIR.parent
 
 pub DEFAULT_DATABASE = "{PERF_DIR}/history.sqlite3"
+pub DEFAULT_METRICS  = ['user', 'cycles', 'insns']
 let MAX_CV = 0.25
 
 use Metadata = {
@@ -40,7 +42,7 @@ use BuildInfo = {
 }
 
 @table
-class Run {
+pub class Run {
     table-name = 'runs'
 
     id:                  Int
@@ -76,10 +78,11 @@ class Run {
     cflags:              String | nil
     ldflags:             String | nil
     version_text:        String | nil
+    build_tree:          String | nil
 }
 
 @table
-class Measurement {
+pub class Measurement {
     table-name = 'measurements'
 
     id:                  Int
@@ -101,13 +104,35 @@ class Measurement {
 }
 
 @table
-class Sample {
+pub class Sample {
     table-name = 'samples'
     primary-key = [measurement_id, sample_index]
 
     measurement_id: ForeignKey[Measurement.id]
     sample_index:   Int
     seconds:        Float
+}
+
+@table
+pub class Metric {
+    table-name = 'metrics'
+    primary-key = [measurement_id, name]
+
+    measurement_id: ForeignKey[Measurement.id]
+    name:           String
+    median:         Float
+    coverage:       Float
+}
+
+@table
+pub class MetricSample {
+    table-name = 'metric_samples'
+    primary-key = [measurement_id, name, sample_index]
+
+    measurement_id: ForeignKey[Measurement.id]
+    name:           String
+    sample_index:   Int
+    value:          Float
 }
 
 fn command(cmd: String) -> String {
@@ -201,6 +226,7 @@ pub fn record-run(
     expected-count: Int,
     duration: Float,
     note: String | nil,
+    build-tree: String | nil = nil,
 ) -> Int {
     open-history(path)
     let meta = metadata()
@@ -249,7 +275,8 @@ pub fn record-run(
                 full_suite=full-suite-value,
                 auto_eligible=eligible-value,
                 eligibility_reason=eligibility-reason,
-                note=note
+                note=note,
+                build_tree=build-tree
             ).insert()
             let $inserted-run-id = run.id
                 or throw RuntimeError('run insert did not return an id')
@@ -287,6 +314,24 @@ pub fn record-run(
                         sample_index=i,
                         seconds=seconds
                     ).insert()
+                }
+                for name, coverage in r.coverage {
+                    phase = "metric '{name}' for '{r.name}'"
+                    let $values = r.per-iter(name) or continue
+                    Metric(
+                        measurement_id=measurement-id,
+                        name=name,
+                        median=median(values),
+                        coverage=coverage
+                    ).insert()
+                    for value; i in values {
+                        MetricSample(
+                            measurement_id=measurement-id,
+                            name=name,
+                            sample_index=i,
+                            value=value
+                        ).insert()
+                    }
                 }
             }
             phase = 'dirty-file metadata'
@@ -383,16 +428,79 @@ pub fn mode-label(mode, width: Int = 0) {
     else { chalk"[yellow]{text}[/]" }
 }
 
+fn role-style(role: String, verdict: String | nil) -> String {
+    match (verdict, role) {
+        ('regression', _)  => 'red bold',
+        ('improvement', _) => 'bright green bold',
+        ('anomaly', _)     => 'yellow bold',
+        (_, 'baseline')    => 'magenta',
+        (_, 'spread')      => 'dim cyan',
+        (_, 'user')        => 'cyan',
+        (_, 'count')       => 'blue',
+        _                  => 'bright cyan'
+    }
+}
+
 pub fn duration-label(value: Float | nil, role: String = 'current', verdict: String | nil = nil, width: Int = 0) {
     let text = display-time(value)
     let padded = width > 0 ? "{text:>{width}}" : text
-    let style = match verdict {
-        'regression' => 'red bold',
-        'improvement' => 'bright green bold',
-        'anomaly' => 'yellow bold',
-        _ => role == 'baseline' ? 'magenta' : role == 'spread' ? 'dim cyan' : 'bright cyan'
+    chalk"[{role-style(role, verdict)}]{padded}[/]"
+}
+
+pub fn count-label(value: Float | Int | nil, role: String = 'count', width: Int = 0) {
+    let text = value == nil ? '—' : fmt-count(value)
+    let padded = width > 0 ? "{text:>{width}}" : text
+    chalk"[{role-style(role, nil)}]{padded}[/]"
+}
+
+pub fn metric-label(name: String, value: Float | nil, width: Int = 0) {
+    name in TIME_METRICS ? duration-label(value, role='user', width=width)
+                         : count-label(value, width=width)
+}
+
+pub fn metric-names(selection: [String]) -> [String] {
+    let names = selection.flat-map(\_.split(',')).map(\_.trim()).filter(\#_ > 0)
+    if 'all' in names {
+        return METRICS
     }
-    chalk"[{style}]{padded}[/]"
+    if let [$bad, *_] = names.filter(\_ not in METRICS) {
+        throw ValueError("unknown metric '{bad}' (known: {METRICS.join(', ')})")
+    }
+    names
+}
+
+fn run-metrics(run-id: Int) -> Dict[String, Dict[String, Float]] {
+    let metrics: Dict[String, Dict[String, Float]] = %{}
+    let rows: [_] = sql-rows(
+        """
+        SELECT m.benchmark, x.name, x.median
+          FROM metrics AS x JOIN measurements AS m ON m.id = x.measurement_id
+         WHERE m.run_id = ?
+        """, run-id
+    )
+    for row in rows {
+        (metrics[row['benchmark']] ?= %{})[row['name']] = row['median']
+    }
+    metrics
+}
+
+fn run-coverage(run-id: Int) -> Dict[String, Float] {
+    let rows: [_] = sql-rows(
+        """
+        SELECT x.name, MIN(x.coverage) AS coverage
+          FROM metrics AS x JOIN measurements AS m ON m.id = x.measurement_id
+         WHERE m.run_id = ? GROUP BY x.name
+        """, run-id
+    )
+    %{row['name']: row['coverage'] for row in rows}
+}
+
+fn ratio(current: Float | nil, baseline: Float | nil) -> Float | nil {
+    baseline && current ? current / baseline : nil
+}
+
+fn geomean(ratios: [Float]) -> Float | nil {
+    #ratios > 0 ? math.exp(ratios.map(math.log).sum()! / #ratios) : nil
 }
 
 pub fn delta-label(ratio, width: Int = 0) {
@@ -427,7 +535,7 @@ fn best-times(excluding: Int | nil = nil) -> String {
     """
 }
 
-pub fn print-run(path: String, run-id: Int, verbose: Bool = false) {
+pub fn print-run(path: String, run-id: Int, verbose: Bool = false, metrics: [String] = DEFAULT_METRICS) {
     open-history(path)
     let $stored-run = Run.get(run-id)
         or throw ValueError("no performance run #{run-id}")
@@ -441,26 +549,32 @@ pub fn print-run(path: String, run-id: Int, verbose: Bool = false) {
          ORDER BY m.benchmark
         """, run-id
     )
-    let ratios = rows.filter(r -> r['best'] && r['current']).map(r -> r['current'] / r['best'])
-    let geomean = #ratios > 0 ? math.exp(ratios.map(math.log).sum()! / #ratios) : nil
+    let values = run-metrics(run-id)
+    let g = geomean([*rows.map(r -> ratio(r['current'], r['best'])).compact()])
     print(chalk"[bold bright cyan]Run[/] {run-label(run-id)}  {timestamp-label(run['recorded_at'])}  "
                "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}  {build-label(run)}")
     print(chalk"{revision-label(run['commit_hash'], 12)}  {branch-label(run['branch'])}  "
-               "[dim]machine=[/]{machine-label(run['machine_id'])}")
+               "[dim]machine=[/]{machine-label(run['machine_id'])}  "
+               "[dim]build=[/]{run['build_tree'].?slice(0, 12) ?? '—'}")
     if run['note'] { print(chalk"[italic dim]Note:[/] [italic]{run['note']}[/]") }
     print()
     let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
-    print(chalk"[bold]  {'Benchmark':{width}} {'Current':>10}  {'Best':>10}  {'vs Best':>8}  Best run[/]")
-    print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
+    let mw = 12
+    let rule = width + 46 + #metrics * mw
+    let heads = metrics.map(\"{_:>{mw}}").join('')
+    print(chalk"[bold]  {'Benchmark':{width}} {'Current':>10}{heads}  {'Best':>10}  {'vs Best':>8}  Best run[/]")
+    print(chalk"[dim]  {'─'.repeat(rule)}[/]")
     for row in rows {
+        let mine = values[row['benchmark']] ?? %{}
+        let cols = metrics.map(name -> metric-label(name, mine[name], mw)).join('')
         print(chalk"  {benchmark-label(row['benchmark'], width)}"
-                   " {duration-label(row['current'], width=10)}  "
+                   " {duration-label(row['current'], width=10)}{cols}  "
                    "{duration-label(row['best'], role='baseline', width=10)}  "
-                   "{delta-label(row['best'] ? row['current'] / row['best'] : nil, 8)}  "
+                   "{delta-label(ratio(row['current'], row['best']), 8)}  "
                    "{row['best_run'] ? run-label(row['best_run'], 4) : ''}")
     }
-    print(chalk"[dim]  {'─'.repeat(width + 46)}[/]")
-    print(chalk"  {'Geomean':>{width}} {' ':>10}  {' ':>10}   {geomean-label(geomean)}")
+    print(chalk"[dim]  {'─'.repeat(rule)}[/]")
+    print(chalk"  {'Geomean':>{width}} {' ':>{10 + #metrics * mw}}  {' ':>10}   {geomean-label(g)}")
     if verbose {
         pp({
             files: json.parse!(run['dirty_files_json'] as String),
@@ -584,6 +698,14 @@ fn lead-label(ratio: Float | nil, width: Int) {
     chalk"[{color}]{text:>{width}}[/]"
 }
 
+pub fn run-build(path: String, run-id: Int) -> String | nil {
+    open-history(path)
+    let run = Run.get(run-id)
+    close-history()
+    let $found = run or throw ValueError("no performance run #{run-id}")
+    found.build_tree
+}
+
 pub fn latest-run-id(path: String) -> Int | nil {
     open-history(path)
     let id = Run.query().max('id')
@@ -591,12 +713,13 @@ pub fn latest-run-id(path: String) -> Int | nil {
     id == nil ? nil : Int(id)
 }
 
-pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
+pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil, metrics: [String] = DEFAULT_METRICS) {
     open-history(path)
     let rows: [_] = if against != nil {
         sql-rows(
             """
-            SELECT n.benchmark, n.median_seconds AS current, o.median_seconds AS baseline
+            SELECT n.benchmark, n.median_seconds AS current, o.median_seconds AS baseline,
+                   o.run_id AS base_run
               FROM measurements AS n LEFT JOIN measurements AS o
                 ON o.run_id = ? AND o.benchmark = n.benchmark
              WHERE n.run_id = ? ORDER BY n.benchmark
@@ -605,12 +728,22 @@ pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
     } else {
         sql-rows(
             """
-            SELECT m.benchmark, m.median_seconds AS current, b.best AS baseline
+            SELECT m.benchmark, m.median_seconds AS current, b.best AS baseline,
+                   b.best_run AS base_run
               FROM measurements AS m LEFT JOIN ({best-times(excluding=run-id)}) AS b
                 ON b.benchmark = m.benchmark
              WHERE m.run_id = ? ORDER BY m.benchmark
             """, run-id
         )
+    }
+    let mine = run-metrics(run-id)
+    let theirs = %{}
+    for id in rows.map(&['base_run']).compact().nub() {
+        theirs[id] = run-metrics(id)
+    }
+    fn pair(row, name: String) -> (Float | nil, Float | nil) {
+        let base = theirs[row['base_run']] ?? %{}
+        (mine[row['benchmark']].?[name], base[row['benchmark']].?[name])
     }
     let reference-label = if against != nil {
         run-label(against)
@@ -621,13 +754,34 @@ pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
                "[dim]vs[/] {reference-label}")
     print()
     let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
+    let mw = 14
+    let heads = metrics.map(\"{_:>{mw}}").join('')
+    print(chalk"[bold]  {'Benchmark':{width}} {'Baseline':>10}   {'Current':>10}  {'wall':>8}{heads}[/]")
+    print(chalk"[dim]  {'─'.repeat(width + 34 + #metrics * mw)}[/]")
     for row in rows {
-        let ratio = row['baseline'] ? row['current'] / row['baseline'] : nil
-        let verdict = ratio == nil ? nil : ratio > 1.05 ? 'regression' : ratio < 0.95 ? 'improvement' : 'stable'
+        let r = ratio(row['current'], row['baseline'])
+        let verdict = r == nil      ? nil
+                    : r > 1.05      ? 'regression'
+                    : r < 0.95      ? 'improvement'
+                    :                 'stable'
+        let cols = metrics.map(\delta-label(ratio(*pair(row, _)), mw)).join('')
         print(chalk"  {benchmark-label(row['benchmark'], width)} "
                    "{duration-label(row['baseline'], role='baseline', width=10)} "
                    "[dim]→[/] {duration-label(row['current'], verdict=verdict, width=10)}  "
-                   "{delta-label(ratio, 8)}")
+                   "{delta-label(r, 8)}{cols}")
+    }
+    let coverage = run-coverage(run-id)
+    let present = METRICS.filter(\_ in coverage)
+    let mwidth: Int = (present.map(\#_).max() ?? 6) + 2
+    print()
+    print(chalk"[bold]  {'Metric':>{mwidth}} {'Geomean':>8}  {'Benches':>7}  {'Coverage':>8}[/]")
+    print(chalk"[dim]  {'─'.repeat(mwidth + 30)}[/]")
+    let walls = [*rows.map(r -> ratio(r['current'], r['baseline'])).compact()]
+    print(chalk"  {benchmark-label('wall', mwidth)} {delta-label(geomean(walls), 8)}  [cyan]{#walls:>7}[/]  {'':>8}")
+    for name in present {
+        let ratios = [*rows.map(r -> ratio(*pair(r, name))).compact()]
+        print(chalk"  {benchmark-label(name, mwidth)} {delta-label(geomean(ratios), 8)}  "
+                   "[cyan]{#ratios:>7}[/]  [dim]{(coverage[name] ?? 0.0) * 100:>7.0f}%[/]")
     }
     close-history()
 }

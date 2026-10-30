@@ -3007,17 +3007,13 @@ make_temp_dir(char *template)
 TY_BUILTIN_RAW(os_tmpdir)
 {
         ASSERT_ARGC("os.tmpdir()", 0);
-
-        usize n;
-        char const *dir = dirs_tmp(&n);
-
-        return vSs(dir, n);
+        return vSb(dirs_tmp());
 }
 
 static char *
 mktemplate(Ty *ty, char const *fmt, char const *p, usize n)
 {
-        usize cap = max(n + sizeof "/tmp.XXXXXX", PATH_MAX + 1);
+        usize cap = zmaxu(n + sizeof "/tmp.XXXXXX", PATH_MAX + 1);
         char *template = TY_BUF_A(cap);
 
         ty_snprintf(template, cap, fmt, (int)n, p);
@@ -3028,17 +3024,15 @@ mktemplate(Ty *ty, char const *fmt, char const *p, usize n)
 static char *
 xmktemplate(Ty *ty, char const *_name__, int argc)
 {
-        Value prefix;
-        char const *p;
-        usize n;
-
-        if (argc == 0 || ARG(0).type == VALUE_NIL) {
-                p = dirs_tmp(&n);
-                return mktemplate(ty, "%.*s/tmp.XXXXXX", p, n);
+        if (argc == 0 || IsNil(ARG(0))) {
+                Bytes path = dirs_tmp();
+                return mktemplate(ty, "%.*s/tmp.XXXXXX", bb(path), bN(path));
         }
 
-        prefix = PATH_ARGx(0);
-        p      = TyPathBytes(&prefix, &n);
+        Value prefix  = PATH_ARGx(0);
+
+        usize n;
+        char const *p = TyPathBytes(&prefix, &n);
 
         return mktemplate(ty, "%.*s.XXXXXX", p, n);
 }
@@ -3171,14 +3165,14 @@ TY_BUILTIN_RAW(os_readdir)
         ino_t ino = entry->d_ino;
         unsigned short reclen = entry->d_reclen;
         unsigned char type = entry->d_type;
-        char *entry_name = strdup(entry->d_name);
+        char *entry_name = S2(entry->d_name);
         LockTy();
         if (entry_name == NULL) {
                 zP("os.readdir(): out of memory");
         }
 
         Value name = vSsz(entry_name);
-        free(entry_name);
+        xmF(entry_name);
 
         NOGC(ss(name));
 
@@ -11505,7 +11499,7 @@ TY_BUILTIN_RAW(ty_mod_which)
         char real[PATH_MAX + 1];
         char *name = mod_name(ty, TY_TMP_C_STR_A(ARGx(0, VALUE_STRING)));
         Value from = (argc > 1) ? ARGx(1, VALUE_STRING, VALUE_NIL) : NIL;
-        char *home = S2N(
+        char *home = S2(
                 (from.type == VALUE_NIL)
               ? CompilerCurrentModule(ty)->path
               : TY_TMP_C_STR_B(from)
@@ -11845,7 +11839,7 @@ static Value
 ParseSource(Ty *ty, Value input, Value path, Scope *scope, u32 flags, Value diagnostics)
 {
         Bytes bytes = (input.type == VALUE_STRING)
-                    ? s_bytes(input)
+                    ? vs_bytes(input)
                     : v_bytes(*input.blob);
         Value result;
 

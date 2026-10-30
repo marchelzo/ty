@@ -91,9 +91,6 @@ trait_new(Ty *ty, Stmt *s);
 void
 class_mark(Ty *ty, int c);
 
-void
-class_mark_refs(Ty *ty);
-
 char const *
 class_name(Ty *ty, int class);
 

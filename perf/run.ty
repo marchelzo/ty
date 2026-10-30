@@ -15,6 +15,8 @@ import lib (
     BenchRecord,
 )
 import sched (elevate, SCHED_ENV)
+import builds (snapshot-self)
+import ab (ab, resolve)
 import history (
     DEFAULT_DATABASE,
     record-run,
@@ -30,7 +32,10 @@ import history (
     tag-label,
     mode-label,
     duration-label,
+    metric-label,
+    metric-names,
     delta-label,
+    DEFAULT_METRICS,
 )
 
 let PERF_DIR = Path(__file__).parent
@@ -64,6 +69,36 @@ clap! RunOptions v1 {
     noPin: Bool, short: 'P'
 }
 
+/** Race two builds against each other, alternating runs so drift hits both equally. */
+clap! AbOptions v1 {
+    /// Baseline build A: run number, stored build hash, or path to a ty binary
+    base: String, pos: true, required: true
+
+    /// Candidate build B: run number, stored build hash, or path to a ty binary
+    new: String, pos: true, required: true
+
+    /// Benchmark name or tag filter (space-separated terms are ANDed)
+    filter: String, pos: true
+
+    /// Alternating A/B pairs per benchmark
+    pairs: Int, short: 'n', default: 6, check: 4..100
+
+    /// Timed rounds per process
+    rounds: Int, short: 'r', default: 3, check: 1..100
+
+    /// Warmup iterations per process
+    warmup: Int, short: 'w', default: 3, check: 0..100
+
+    /// Seconds per timed round
+    target: Float, short: 't', default: 0.2
+
+    /// CPU to pin benchmark processes to (Linux; default: fastest available)
+    cpu: Int, short: None, check: 0..65536
+
+    /// Don't pin benchmark processes or raise their scheduling priority
+    noPin: Bool, short: 'P'
+}
+
 /** Browse available benchmarks and their tags. */
 clap! ListOptions v1 {
     /// Only show benchmarks matching this name/tag filter
@@ -89,6 +124,9 @@ clap! ShowOptions v1 {
 
     /// Verbose output (include the list of dirty files and the binary's build options)
     verbose: Bool
+
+    /// Metric columns to show (comma-separated or repeated; 'all' for every metric)
+    metric: [String], short: 'm'
 }
 
 /** Compare one run with the best recorded times or another run. */
@@ -98,6 +136,9 @@ clap! CompareOptions v1 {
 
     /// Other run ID (default: best time from any other run)
     against: Int, pos: true
+
+    /// Metric columns to show (comma-separated or repeated; 'all' for every metric)
+    metric: [String], short: 'm'
 }
 
 /** Visualize a benchmark over time. */
@@ -147,6 +188,9 @@ clap! Perf v1 {
     /// Run benchmarks
     cmd run: RunOptions
 
+    /// Which of two builds is faster?
+    cmd ab: AbOptions
+
     /// List benchmarks
     cmd list: ListOptions
 
@@ -172,7 +216,7 @@ clap! Perf v1 {
     cmd goats: GoatsOptions
 }
 
-let COMMANDS = ['run', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status', 'goats']
+let COMMANDS = ['run', 'ab', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status', 'goats']
 
 fn normalized-argv() -> [String] {
     let args = argv
@@ -257,6 +301,7 @@ fn run-suite(opts: RunOptions, database: String) {
     print(chalk"[dim]{settings.join(' · ') || 'default scheduling'}[/]")
     print()
 
+    let build-tree = snapshot-self()
     let started = now()
     let results: [Result] = []
     let name-width: Int = (running.map(\#_.name).max() ?? 0) + 2
@@ -268,6 +313,7 @@ fn run-suite(opts: RunOptions, database: String) {
         print("\r\x1b[K", end='')
         print(chalk"{label} {duration-label(r.med, width=10)}[dim]/iter[/] "
                    "[dim]±[/] {duration-label(r.sd, role='spread', width=9)}  "
+                   "{DEFAULT_METRICS.map(name -> chalk"{metric-label(name, r.metric(name), 10)} [dim]{name}[/]").join('')}  "
                    "[dim]{r.iters:>7} iters × {opts.rounds:>3} rounds[/]")
     }
 
@@ -283,16 +329,44 @@ fn run-suite(opts: RunOptions, database: String) {
     }
 
     print()
-    print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum(0.0))}")
+    let totals = DEFAULT_METRICS.map(name -> do {
+        let xs = results.map(\_.metric(name))
+        "{metric-label(name, nil in xs ? nil : xs.sum(0.0))} {name}"
+    })
+    print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum(0.0))} wall  {totals.join('  ')}")
     if opts.noSave { return }
 
     let run-id = record-run(
         database, results, mode, opts.warmup, opts.rounds, opts.filter,
-        #all, now() - started, opts.note
+        #all, now() - started, opts.note, build-tree
     )
     save-results(RESULTS_FILE, results)
     print()
     print-run(database, run-id)
+}
+
+fn run-ab(opts: AbOptions, database: String) {
+    let running = opts.filter
+        ? benchmarks().filter(entry -> matches-filter(entry, opts.filter))
+        : benchmarks()
+    if #running == 0 {
+        print(chalk"[red bold]No benchmarks matched[/] '{opts.filter}'.")
+        os.exit(1)
+    }
+    let (a, b) = try {
+        (resolve(opts.base, database), resolve(opts.new, database))
+    } catch e: ValueError {
+        print(chalk"[red bold]{e.what}[/]")
+        os.exit(1)
+    }
+    unsetenv(SCHED_ENV)
+    let settings = opts.noPin ? [] : elevate(opts.cpu)
+    ab(a, b, running, opts.pairs, opts.warmup, opts.rounds, opts.target, settings)
+}
+
+fn selected-metrics(selection: [String] | nil) -> [String] {
+    let names = metric-names(selection ?? [])
+    (#names > 0) ? names : DEFAULT_METRICS
 }
 
 fn required-run-id(database: String, requested: Int | nil) -> Int {
@@ -304,15 +378,18 @@ fn main() {
     let (opts, _) = Perf.parse(normalized-argv())
     match opts.cmd {
         run: RunOptions => run-suite(run, opts.database),
+        ab: AbOptions => run-ab(ab, opts.database),
         list: ListOptions => print-catalog(list),
         history: HistoryOptions => print-history(
             opts.database, history.limit, !history.eligible, history.filter
         ),
         show: ShowOptions => print-run(
-            opts.database, required-run-id(opts.database, show.runId), show.verbose
+            opts.database, required-run-id(opts.database, show.runId), show.verbose,
+            selected-metrics(show.metric)
         ),
         compare: CompareOptions => compare-runs(
-            opts.database, required-run-id(opts.database, compare.runId), compare.against
+            opts.database, required-run-id(opts.database, compare.runId), compare.against,
+            selected-metrics(compare.metric)
         ),
         trend: TrendOptions => print-trend(
             opts.database, trend.benchmark, trend.limit, trend.all

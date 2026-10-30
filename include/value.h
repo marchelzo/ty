@@ -1067,18 +1067,22 @@ value_array_push(Ty *ty, Array *a, Value v)
 }
 
 static inline void
-value_array_reserve(Ty *ty, Array *a, int count)
+value_array_reserve(Ty *ty, Array *a, usize count)
 {
-        if (a->capacity >= count)
+        if (a->capacity >= count) {
                 return;
+        }
 
-        if (a->capacity == 0)
-                a->capacity = 16;
+        a->capacity = count;
 
-        while (a->capacity < count)
-                a->capacity *= 2;
-
-        a->items = GCOwnedResize(ty, a->items, a->capacity * sizeof (Value), a->count * sizeof (Value), GC_BUF_VALUES, true);
+        a->items = GCOwnedResize(
+                ty,
+                vv(*a),
+                vC(*a) * sizeof (Value),
+                vN(*a) * sizeof (Value),
+                GC_BUF_VALUES,
+                true
+        );
 }
 
 [[gnu::always_inline]]
@@ -1123,7 +1127,6 @@ static inline Value
 STRING_CLONE(Ty *ty, void const *s, u32 n)
 {
         u8 *clone = value_string_clone(ty, s, n);
-
         return StringWords(clone, n, false, clone);
 }
 
@@ -1138,6 +1141,13 @@ STRING_CLONE_C(Ty *ty, void const *s)
         u8 *clone = value_string_clone(ty, s, n);
 
         return StringWords(clone, n, false, clone);
+}
+
+static inline Value
+STRING_CLONE_BYTES(Ty *ty, Bytes str)
+{
+        u8 *clone = value_string_clone(ty, bb(str), bN(str));
+        return StringWords(clone, bN(str), false, clone);
 }
 
 static inline Value
@@ -1770,7 +1780,8 @@ PrettySource(Ty *ty, Value const *v);
 static inline Value *
 NewZero(Ty *ty)
 {
-        return mAo0(sizeof (Value), GC_VALUE);
+        return alloc0(sizeof (struct alloc) + sizeof *NewZero(ty))
+             + sizeof (struct alloc);
 }
 
 #define PutMember(o, m, x) ((PutMember)(ty, (o), (m), (x)))

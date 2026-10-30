@@ -98,7 +98,7 @@ NewPackage(Ty *ty, char const *dir, char const *manifest, u8 kind)
 
         *pkg = (Package) {
                 .dir      = S2(dir),
-                .manifest = S2N(manifest),
+                .manifest = S2(manifest),
                 .gen      = SearchGen(ty),
                 .kind     = kind,
                 .read     = (kind != PKG_DECLARED)

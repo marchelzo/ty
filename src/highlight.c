@@ -75,9 +75,9 @@ highlight_string(Ty *ty, byte_vector *out, Bytes string, LiteralStyle style)
 {
         struct highlight h = { .out = out, .style = style, .end = SIZE_MAX };
 
-        emit(z_bytes("'"), STRING_TEXT, &h);
+        emit(s_bytes("'"), STRING_TEXT, &h);
         str_escape(ty, string, '\'', (emit), &h);
-        emit(z_bytes("'"), STRING_TEXT, &h);
+        emit(s_bytes("'"), STRING_TEXT, &h);
 }
 
 static usize
@@ -948,7 +948,7 @@ syntax_highlight(
         char const *theme
 )
 {
-        Bytes src = z_bytes(source);
+        Bytes src = s_bytes(source);
 
         char const **pal = build_palette(find_palette(theme));
         char const *attr_on = attr ? attr : "";

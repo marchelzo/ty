@@ -9192,7 +9192,7 @@ set_solver_error(
         solver->failure_left    = left;
         solver->failure_right   = right;
         ty_free(solver->failure_provenance);
-        solver->failure_provenance = S2N(provenance);
+        solver->failure_provenance = S2(provenance);
         char *left_string  = t2_type_string(solver->universe, left);
         char *right_string = t2_type_string(solver->universe, right);
         ty_snprintf(
@@ -9226,7 +9226,7 @@ set_predicate_error(T2Solver *solver, T2Predicate const *predicate)
         solver->failure_predicate = predicate->kind;
         solver->failure_operand   = predicate->operand;
         ty_free(solver->failure_name);
-        solver->failure_name = S2N(predicate->name);
+        solver->failure_name = S2(predicate->name);
 }
 
 static char const *
@@ -9238,7 +9238,7 @@ record_cause(
         char const *provenance
 )
 {
-        char *owned = S2N(provenance);
+        char *owned = S2(provenance);
 
         xvP(solver->causes, ((T2Cause) {
                 .kind       = kind,
@@ -9338,7 +9338,7 @@ t2_solver_new_meta(
         }
 
         u32 id = (u32)(vN(solver->metas) + 1);
-        char *owned_provenance = S2N(provenance);
+        char *owned_provenance = S2(provenance);
 
         xvP(solver->metas, ((T2Meta) {
                 .parent        = id,
@@ -9802,8 +9802,8 @@ retain_predicate(
         T2Predicate const *predicate
 )
 {
-        char *name       = S2N(predicate->name);
-        char *provenance = S2N(predicate->provenance);
+        char *name       = S2(predicate->name);
+        char *provenance = S2(predicate->provenance);
 
         usize index = vN(solver->obligations);
         xvP(solver->obligations, ((T2Obligation) {
@@ -12654,8 +12654,8 @@ t2_solver_constrain_predicate(
                 ) {
                         return T2_RELATION_NO;
                 }
-                char *name       = S2N(predicate->name);
-                char *provenance = S2N(predicate->provenance);
+                char *name       = S2(predicate->name);
+                char *provenance = S2(predicate->provenance);
                 xvP(solver->obligations, ((T2Obligation) {
                         .predicate  = *predicate,
                         .name       = name,
@@ -13464,10 +13464,10 @@ t2_scheme_new(
                 scheme->predicate_count = predicate_count;
                 for (usize i = 0; i < predicate_count; ++i) {
                         scheme->predicates[i] = predicates[i];
-                        scheme->predicates[i].name = S2N(
+                        scheme->predicates[i].name = S2(
                                 predicates[i].name
                         );
-                        scheme->predicates[i].provenance = S2N(
+                        scheme->predicates[i].provenance = S2(
                                 predicates[i].provenance
                         );
                 }
@@ -13514,7 +13514,7 @@ t2_scheme_name_quantifier(T2Scheme *scheme, usize index, char const *name)
                 scheme->names = xtA0(*scheme->names, scheme->quantifier_count);
         }
 
-        char *owned = S2N(name);
+        char *owned = S2(name);
 
         ty_free(scheme->names[index]);
         scheme->names[index] = owned;

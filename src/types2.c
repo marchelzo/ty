@@ -1225,7 +1225,7 @@ add_diagnostic(
                                  IsStmt(expr) ? T2_ROLE_STATEMENT : T2_ROLE_EXPRESSION
                            )
         ;
-        char *owned_code = S2N(code);
+        char *owned_code = S2(code);
         if (owned_code == NULL) {
                 ty_free(message);
                 return NULL;
@@ -12355,7 +12355,12 @@ infer_member_type(
                         memcpy(alt, name, n - 1);
                         alt[n - 1] = '\0';
                         if (t2_type_kind(checker->universe, infer_member_type(checker, object, alt, false, site, false)) != T2_TYPE_ERROR) {
-                                ty_snprintf(hint, sizeof hint, "; did you mean `%s`?", KebabNameInto(kebab, sizeof kebab, alt));
+                                char const *k = KebabNameInto(kebab, sizeof kebab, alt);
+                                if (name[n - 1] == '!') {
+                                        ty_snprintf(hint, sizeof hint, "; to unwrap `%s`, write `(….%s)!`", k, k);
+                                } else {
+                                        ty_snprintf(hint, sizeof hint, "; did you mean `%s`?", k);
+                                }
                         }
                 }
 
@@ -30936,7 +30941,7 @@ cache_file_path(Ty *ty, Module const *module)
                 return NULL;
         }
 
-        return S2N(path);
+        return S2(path);
 }
 
 static bool
@@ -31076,16 +31081,16 @@ cache_symbol_out(void *context, u64 symbol)
              && (class_id < class_count(checker->ty))
         ) {
                 Class const *class = class_get(checker->ty, class_id);
-                entry.name    = S2N((class == NULL) ? NULL : class->name);
-                entry.module  = S2N(class_module_path(class));
+                entry.name    = S2((class == NULL) ? NULL : class->name);
+                entry.module  = S2(class_module_path(class));
                 entry.ordinal = class_ordinal(checker->ty, class_id);
         } else if (
                 (tag_id > 0)
              && (tag_id <= tags_count(checker->ty))
         ) {
                 entry.is_tag  = true;
-                entry.name    = S2N(tags_name(checker->ty, tag_id));
-                entry.module  = S2N(class_module_path(tags_get_class(checker->ty, tag_id)));
+                entry.name    = S2(tags_name(checker->ty, tag_id));
+                entry.module  = S2(class_module_path(tags_get_class(checker->ty, tag_id)));
                 entry.ordinal = tag_ordinal(checker->ty, tag_id);
         }
 
@@ -34351,7 +34356,7 @@ declarations_cache_path(Ty *ty)
                 configuration_key(ty)
         );
 
-        return (written < 0 || (usize)written >= sizeof path) ? NULL : S2N(path);
+        return (written < 0 || (usize)written >= sizeof path) ? NULL : S2(path);
 }
 
 static void

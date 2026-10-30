@@ -307,17 +307,21 @@ typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
 typedef pthread_barrier_t    TyBarrier;
 
-typedef nsync_mu             TyMutex;
-typedef nsync_mu             TyRwLock;
-typedef nsync_cv             TyCondVar;
-typedef nsync_note           TyNote;
-typedef nsync_counter        TyCounter;
-typedef nsync_once           TyOnce;
+typedef nsync_mu      TyMutex;
+typedef nsync_mu      TyRwLock;
+typedef nsync_cv      TyCondVar;
+typedef nsync_note    TyNote;
+typedef nsync_counter TyCounter;
+typedef nsync_once    TyOnce;
+typedef nsync_time    TyInstant;
+typedef u64           TyDuration;
+typedef i64           TyTimeDelta;
 
-#define TY_MUTEX_INIT  NSYNC_MU_INIT
-#define TY_RWLOCK_INIT NSYNC_MU_INIT
-#define TY_THREAD_OK   NULL
-#define TY_ONCE_INIT   NSYNC_ONCE_INIT
+#define TY_MUTEX_INIT   NSYNC_MU_INIT
+#define TY_CONDVAR_INIT {0}
+#define TY_RWLOCK_INIT  NSYNC_MU_INIT
+#define TY_THREAD_OK    NULL
+#define TY_ONCE_INIT    NSYNC_ONCE_INIT
 
 #define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
 
@@ -466,6 +470,12 @@ TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
                 nsync_time_ms((unsigned)nMs)
         );
         return nsync_cv_wait_with_deadline(cv, m, abs_deadline, NULL) == 0;
+}
+
+inline static bool
+TyCondVarTimedWait(TyCondVar *cv, TyMutex *m, TyInstant deadline)
+{
+        return nsync_cv_wait_with_deadline(cv, m, deadline, NULL) == 0;
 }
 
 inline static bool
@@ -618,6 +628,40 @@ TyCounterWait(TyCounter c, u64 ms)
                 ? nsync_time_no_deadline
                 : nsync_time_add(nsync_time_now(), nsync_time_ms((unsigned)ms));
         return nsync_counter_wait(c, deadline);
+}
+
+inline static nsync_time
+NsyncDuration(TyDuration duration)
+{
+	return nsync_time_s_ns(duration / TY_1e9, duration % TY_1e9);
+}
+
+inline static TyInstant
+TyTimeAdd(TyInstant t0, TyTimeDelta delta)
+{
+        if (delta >= 0) {
+                return nsync_time_add(t0, NsyncDuration(delta));
+        } else {
+                return nsync_time_sub(t0, NsyncDuration(-delta));
+        }
+}
+
+inline static TyTimeDelta
+TyTimeDeltaNanos(i64 msecs)
+{
+        return msecs;
+}
+
+inline TyInstant
+TyTimeAddMs(TyInstant t0, i64 msecs)
+{
+        return TyTimeAdd(t0, msecs * TY_1e6);
+}
+
+inline static TyInstant
+TyTimeNow(void)
+{
+        return nsync_time_now();
 }
 
 /*

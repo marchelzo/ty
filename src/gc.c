@@ -101,6 +101,7 @@ typedef struct {
 static struct {
         TySpinLock    lock;
         GCBlockList   free;
+        GCBlockList   cold;
         vec(BlockRun) runs;
         usize         used;
         usize         cached;
@@ -979,6 +980,8 @@ pool_take(usize units)
 
         if (units == 1 && vN(BlockPool.free) > 0) {
                 at = (uptr)vXx(BlockPool.free)->cells;
+        } else if (units == 1 && vN(BlockPool.cold) > 0) {
+                at = (uptr)vXx(BlockPool.cold)->cells;
         } else {
                 for (usize i = 0; i < vN(BlockPool.runs); ++i) {
                         BlockRun *r = v_(BlockPool.runs, i);
@@ -1019,13 +1022,15 @@ pool_give(uptr at, usize units)
 
         BlockPool.used -= units;
 
-        if (units == 1) {
-                if (vN(BlockPool.free) >= max(GC_BLOCK_KEEP, BlockPool.used)) {
-                        VDrop((void *)at, GC_BLOCK_SIZE);
-                }
+        usize keep = max(GC_BLOCK_KEEP, BlockPool.used);
+
+        if (units == 1 && vN(BlockPool.free) >= keep) {
+                VDrop((void *)at, GC_BLOCK_SIZE);
+                xvP(BlockPool.cold, GCBlockAt((void *)at));
+        } else if (units == 1) {
                 xvP(BlockPool.free, GCBlockAt((void *)at));
         } else {
-                if (BlockPool.cached + units > max(GC_BLOCK_KEEP, BlockPool.used)) {
+                if (BlockPool.cached + units > keep) {
                         VDrop((void *)at, units << GC_BLOCK_SHIFT);
                 } else {
                         BlockPool.cached += units;
@@ -2008,6 +2013,23 @@ gc_register(Ty *ty, void *p)
 void
 gc_immortalize(Ty *ty, Value const *v)
 {
+        enum : u64 {
+                INERT = GC_INERT_VALUES
+                      | (1ULL << VALUE_BUILTIN_FUNCTION)
+        };
+
+        u32 t = v->type & 63;
+
+        if (
+                (v->src == 0)
+             && (
+                        ((INERT >> t) & 1)
+                     || ((t == VALUE_PTR) && (v->gcptr == NULL))
+                )
+        ) {
+                return;
+        }
+
         TySpinLockLock(&ImmortalLock);
         xvP(ImmortalSet, *v);
         TySpinLockUnlock(&ImmortalLock);

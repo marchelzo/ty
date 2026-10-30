@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS runs (
     bolt                TEXT,
     cflags              TEXT,
     ldflags             TEXT,
-    version_text        TEXT
+    version_text        TEXT,
+    build_tree          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS measurements (
@@ -61,6 +62,22 @@ CREATE TABLE IF NOT EXISTS samples (
     sample_index        INTEGER NOT NULL,
     seconds             REAL NOT NULL,
     PRIMARY KEY (measurement_id, sample_index)
+);
+
+CREATE TABLE IF NOT EXISTS metrics (
+    measurement_id      INTEGER NOT NULL REFERENCES measurements(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    median              REAL NOT NULL,
+    coverage            REAL NOT NULL,
+    PRIMARY KEY (measurement_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS metric_samples (
+    measurement_id      INTEGER NOT NULL REFERENCES measurements(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    sample_index        INTEGER NOT NULL,
+    value               REAL NOT NULL,
+    PRIMARY KEY (measurement_id, name, sample_index)
 );
 
 CREATE INDEX IF NOT EXISTS runs_context_idx

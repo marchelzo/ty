@@ -120,11 +120,25 @@ s_eq_n(char const *a, char const *b, usize n)
         return strncmp(a, b, n) == 0;
 }
 
+#define bytes_eq(a, b)                    \
+        _Generic((b),                     \
+                char *:       bytes_eq_s, \
+                char const *: bytes_eq_s, \
+                Bytes:        bytes_eq_b  \
+        )((a), (b))
+
 inline static int
-bytes_eq(Bytes const a, Bytes const b)
+bytes_eq_b(Bytes const a, Bytes const b)
 {
-        return (a.length == b.length)
-            && (memcmp(a.data, b.data, a.length) == 0);
+        return (bN(a) == bN(b))
+            && (memcmp(bb(a), bb(b), bN(a)) == 0);
+}
+
+inline static int
+bytes_eq_s(Bytes const a, char const *b)
+{
+        return (strlen(b) == bN(a))
+            && (memcmp(bb(a), b, bN(a)) == 0);
 }
 
 inline static Bytes
@@ -161,24 +175,34 @@ char *
 sclonea(Ty *ty, char const *s);
 
 static inline char *
-S2(char const *s)
+S2n(char const *s, usize n)
 {
-        usize n = strlen(s);
+        if (s == NULL) {
+                return NULL;
+        }
+
+        char const *nul = memchr(s, '\0', n);
+
+        if (LIKELY(nul != NULL)) {
+                n = nul - s;
+        }
+
         char *new = ty_malloc(n + 1);
 
         if (UNLIKELY(new == NULL)) {
                 panic("out of memory");
         }
 
-        memcpy(new, s, n + 1);
+        memcpy(new, s, n);
+        new[n] = '\0';
 
         return new;
 }
 
 static inline char *
-S2N(char const *s)
+S2(char const *s)
 {
-        return (s == NULL) ? NULL : S2(s);
+        return S2n(s, SIZE_MAX);
 }
 
 bool

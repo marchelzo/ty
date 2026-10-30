@@ -2086,7 +2086,7 @@ ss_next_str(Ty *ty, int quotes)
                 // TODO: this shouldn't be necessary. we threw away a SS string
                 // and were unable to rewind back through preprocessor-generated
                 // tokens in order to produce it again
-                return (Token) { .type = TOKEN_STRING, .string = z_bytes("") };
+                return (Token) { .type = TOKEN_STRING, .string = s_bytes("") };
         }
 
         str = *tok();
@@ -2286,7 +2286,7 @@ re_next_part(Ty *ty)
         setctx(LEX_REGEX);
 
         if (T0 != TOKEN_STRING) {
-                return z_bytes("");
+                return s_bytes("");
         }
 
         str = tok()->string;

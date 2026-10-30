@@ -1,0 +1,98 @@
+import os
+import path (Path)
+import sh (run, Success)
+import git (Repository, Signature, Tree)
+import ty
+
+import lib (Build)
+
+let PERF_DIR = Path(__file__).parent
+let STORE    = PERF_DIR / 'builds.git'
+let CACHE    = PERF_DIR / 'builds'
+let REFS     = 'refs/builds/'
+
+fn store() -> Repository {
+    STORE.dir? ? git.open(STORE) : git.init(STORE, bare=true)
+}
+
+fn dir-tree(repo: Repository, dir: Path) -> Tree | nil {
+    let ^tb = repo.tree-builder
+    let n = 0
+    for p in dir.ls() {
+        if p.dir? {
+            if let $sub = dir-tree(repo, p) {
+                tb.put(p.name, sub)
+                n += 1
+            }
+        } else {
+            tb.write(p.name, p.read-bytes(), p.executable? ? 0o100755 : 0o100644)
+            n += 1
+        }
+    }
+    (n > 0) ? tb.build() : nil
+}
+
+pub fn library-roots(exe: String) -> [String] {
+    let result = run([exe, '-e', "print(ty.path.join('\\n')); nil"])
+    match result.fate {
+        Success => result.stdout.lines().filter(\#_ > 0),
+        fate    => throw RuntimeError("{exe}: cannot query its library path: {fate}")
+    }
+}
+
+pub fn snapshot(exe: String, roots: [String]) -> String {
+    let ^repo = store()
+    let ^tb   = repo.tree-builder
+    tb.write('ty', Path(exe).read-bytes(), 0o100755)
+    for root; i in roots {
+        if let $lib = dir-tree(repo, Path(root)) {
+            tb.put((i == 0) ? 'lib' : "lib-{i}", lib)
+        }
+    }
+    let tree = tb.build()
+    let ref  = "{REFS}{tree.hex}"
+    if !repo.contains?(ref) {
+        repo.commit(
+            "{exe}\n\n{run([exe, '--version']).stdout.trim()}\n\nlib: {roots.join(':')}",
+            author=Signature('ty perf', 'perf@localhost'),
+            parents=[],
+            tree=tree,
+            update-ref=ref
+        )
+    }
+    tree.hex
+}
+
+pub fn snapshot-self() -> String {
+    snapshot(ty.executable, ty.path)
+}
+
+pub fn find(prefix: String) -> String | nil {
+    if !STORE.dir? || !prefix.match?(/^[0-9a-f]{4,40}$/) {
+        return nil
+    }
+    let ^repo = store()
+    let trees = [r.name.slice(#REFS) for r in repo.refs if r.name.starts?("{REFS}{prefix}")]
+    match trees {
+        [$tree] => tree,
+        []      => nil,
+        many    => throw ValueError("build '{prefix}' is ambiguous: {many.map(\_[;12]).join(', ')}")
+    }
+}
+
+pub fn checkout(tree: String) -> Build {
+    let dir = CACHE / tree
+    if !(dir / 'ty').file? {
+        let ^repo = store()
+        let tmp = CACHE / ".{tree}.{os.getpid()}"
+        for entry in repo.tree-at("{REFS}{tree}").walk() {
+            let file = tmp / entry.path
+            file.parent.mkdir(parents=true, exist-ok=true)
+            file.write(entry.bytes)
+            file.chmod(entry.executable? ? 0o755 : 0o644)
+        }
+        tmp.rename(dir)
+    }
+    let libs = os.listdir("{dir}").filter(\_.starts?('lib')).sort()
+    {exe: "{dir / 'ty'}", lib: libs.map(\"{dir / _}").join(':'), tree: tree}
+}

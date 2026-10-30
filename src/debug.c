@@ -177,8 +177,8 @@ typedef struct {
 } LineSlot;
 
 static struct {
-        pthread_mutex_t lock;
-        pthread_cond_t cond;
+        TyMutex lock;
+        TyCondVar cond;
 
         vec(TyDebugThread *) threads;
 
@@ -215,18 +215,18 @@ static struct {
 
         int urg;
 } D = {
-        .lock   = PTHREAD_MUTEX_INITIALIZER,
-        .cond   = PTHREAD_COND_INITIALIZER,
-        .wake   = { -1, -1 },
+        .lock   = TY_MUTEX_INIT,
+        .cond   = TY_CONDVAR_INIT,
+        .wake   = {-1, -1},
         .client = -1,
         .lines1 = true,
         .cols1  = true
 };
 
-static pthread_mutex_t LocLock     = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t CacheLock   = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t CompileLock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t SendLock    = PTHREAD_MUTEX_INITIALIZER;
+static TyMutex LocLock     = TY_MUTEX_INIT;
+static TyMutex CacheLock   = TY_MUTEX_INIT;
+static TyMutex CompileLock = TY_MUTEX_INIT;
+static TyMutex SendLock    = TY_MUTEX_INIT;
 
 static vec(CompiledExpr) Compiled;
 
@@ -749,14 +749,14 @@ SendMessage(JsonWriter *w)
         char header[64];
         int n = ty_snprintf(header, sizeof header, "Content-Length: %zu\r\n\r\n", (usize)vN(w->b));
 
-        pthread_mutex_lock(&SendLock);
+        TyMutexLock(&SendLock);
 
         if (D.client >= 0) {
                 WriteAll(D.client, header, n);
                 WriteAll(D.client, vv(w->b), vN(w->b));
         }
 
-        pthread_mutex_unlock(&SendLock);
+        TyMutexUnlock(&SendLock);
 
         xvF(w->b);
 }
@@ -833,13 +833,13 @@ PostEvent(DebugEvent ev)
 void
 DebugLockLocations(void)
 {
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 }
 
 void
 DebugUnlockLocations(void)
 {
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 }
 
 Expr const *
@@ -860,7 +860,7 @@ FindExpr(char const *ip, bool *start)
 
         *start = false;
 
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 
         location_vector const *lists = compiler_location_lists(&nl);
 
@@ -908,7 +908,7 @@ FindExpr(char const *ip, bool *start)
                 break;
         }
 
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 
         return e;
 }
@@ -946,7 +946,7 @@ LocAt(char const *ip, bool *start)
 
         uptr key = (uptr)ip;
 
-        pthread_mutex_lock(&CacheLock);
+        TyMutexLock(&CacheLock);
 
         if (LineCap > 0) {
                 usize h = (key * 0x9E3779B97F4A7C15ULL) >> 20;
@@ -955,7 +955,7 @@ LocAt(char const *ip, bool *start)
                         if (slot->ip == key) {
                                 Expr const *e = slot->e;
                                 *start = slot->start;
-                                pthread_mutex_unlock(&CacheLock);
+                                TyMutexUnlock(&CacheLock);
                                 return e;
                         }
                         if (slot->ip == 0) {
@@ -979,7 +979,7 @@ LocAt(char const *ip, bool *start)
         LineCache[h & (LineCap - 1)] = (LineSlot) { .ip = key, .e = e, .start = *start };
         LineCount += 1;
 
-        pthread_mutex_unlock(&CacheLock);
+        TyMutexUnlock(&CacheLock);
 
         return e;
 }
@@ -1255,9 +1255,9 @@ DisarmLocked(TyDebugThread *d, char *ip)
 void
 DebugRearm(Ty *ty)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         RearmLocked(ty->dbg);
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 u8
@@ -1266,9 +1266,9 @@ DebugOriginalOp(char const *ip)
         isize i;
         u8 op;
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         op = TrapFind(ip, &i) ? v_(D.traps, i)->op : (u8)*ip;
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         return op;
 }
@@ -1276,7 +1276,7 @@ DebugOriginalOp(char const *ip)
 void
 DebugSanitizeCode(char const *src, char *dst, usize n)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.traps); ++i) {
                 Trap const *trap = v_(D.traps, i);
@@ -1285,7 +1285,7 @@ DebugSanitizeCode(char const *src, char *dst, usize n)
                 }
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 static bool
@@ -1675,26 +1675,26 @@ ParkLocked(Ty *ty, TyDebugThread *d, char const *ip)
         ReleaseLock(ty, true);
         d->state = DBG_PARKED;
 
-        pthread_cond_broadcast(&D.cond);
+        TyCondVarBroadcast(&D.cond);
 
         for (;;) {
                 DebugJob *job = d->job;
 
                 if (job != NULL && !job->done) {
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                         vm_take_lock_raw(ty);
                         d->suppress += 1;
                         RunJob(ty, job);
                         d->suppress -= 1;
-                        pthread_mutex_lock(&D.lock);
+                        TyMutexLock(&D.lock);
                         RearmLocked(d);
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                         ReleaseLock(ty, true);
-                        pthread_mutex_lock(&D.lock);
+                        TyMutexLock(&D.lock);
                         d->state = DBG_PARKED;
                         d->job = NULL;
                         job->done = true;
-                        pthread_cond_broadcast(&D.cond);
+                        TyCondVarBroadcast(&D.cond);
                         continue;
                 }
 
@@ -1702,13 +1702,13 @@ ParkLocked(Ty *ty, TyDebugThread *d, char const *ip)
                         break;
                 }
 
-                pthread_cond_wait(&D.cond, &D.lock);
+                TyCondVarWait(&D.cond, &D.lock);
         }
 
         d->rearm = rearm;
         d->state = DBG_RUNNING;
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         vm_take_lock_raw(ty);
 }
@@ -1725,15 +1725,15 @@ StopWorld(
         char *type
 )
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         while (D.stopped && D.session) {
                 ParkLocked(ty, d, ip);
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
         }
 
         if (!D.session) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 ty_free(text);
                 ty_free(type);
                 return;
@@ -1825,11 +1825,11 @@ DebugSafepoint(Ty *ty)
         }
 
         if (D.stopped) {
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
                 if (D.stopped) {
                         ParkLocked(ty, d, SafeIp(ty));
                 } else {
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                 }
                 return;
         }
@@ -1853,13 +1853,13 @@ DebugReacquire(Ty *ty)
                 return;
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (D.stopped && d->suppress == 0) {
                 ParkLocked(ty, d, ty->ip);
         } else {
                 d->state = DBG_RUNNING;
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
         }
 }
 
@@ -1899,13 +1899,13 @@ ScopeFor(Expr const *ctx)
 static char *
 CompileExpr(Ty *ty, char const *src, Scope *scope, Expr const *ctx, Value *err)
 {
-        pthread_mutex_lock(&CompileLock);
+        TyMutexLock(&CompileLock);
 
         for (isize i = 0; i < vN(Compiled); ++i) {
                 CompiledExpr const *c = v_(Compiled, i);
                 if (c->scope == scope && strcmp(c->src, src) == 0) {
                         char *code = c->code;
-                        pthread_mutex_unlock(&CompileLock);
+                        TyMutexUnlock(&CompileLock);
                         return code;
                 }
         }
@@ -1922,7 +1922,7 @@ CompileExpr(Ty *ty, char const *src, Scope *scope, Expr const *ctx, Value *err)
                 }));
         }
 
-        pthread_mutex_unlock(&CompileLock);
+        TyMutexUnlock(&CompileLock);
 
         return code;
 }
@@ -2044,9 +2044,9 @@ RunJob(Ty *ty, DebugJob *job)
 
         job->ok = EvalHere(ty, job->src, ctx, ScopeFor(ctx), &v);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         D.job_result = job->ok ? v : NIL;
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         xvP(ty->stack, v);
 
@@ -2190,11 +2190,11 @@ DebugTrap(Ty *ty, char *ip)
 {
         isize ti;
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (!TrapFind(ip, &ti)) {
                 u8 op = (u8)*ip;
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 if (op == INSTR_TRAP_TY) {
                         zP("debugger: unknown trap at %p", (void *)ip);
                 }
@@ -2205,14 +2205,14 @@ DebugTrap(Ty *ty, char *ip)
 
         if (d == NULL) {
                 TrapDisarm(ip);
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 return;
         }
 
         if (d->agent || d->suppress > 0 || !D.session || d->skip_trap == ip) {
                 d->skip_trap = NULL;
                 DisarmLocked(d, ip);
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 return;
         }
 
@@ -2239,7 +2239,7 @@ DebugTrap(Ty *ty, char *ip)
                 }
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Expr const *ctx = ExprAt(ty, ip);
         i64 *ids = alloc0((nhit + 1) * sizeof *ids);
@@ -2259,13 +2259,13 @@ DebugTrap(Ty *ty, char *ip)
 
                 i64 count = 0;
 
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
                 for (isize j = 0; j < vN(D.bps); ++j) {
                         if (v__(D.bps, j)->id == hit->id) {
                                 count = ++v__(D.bps, j)->hits;
                         }
                 }
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
 
                 if (!HitConditionMet(hit->hit, count)) {
                         continue;
@@ -2273,13 +2273,13 @@ DebugTrap(Ty *ty, char *ip)
 
                 if (hit->log != NULL) {
                         char *text = FormatLogMessage(ty, hit->log, ctx);
-                        pthread_mutex_lock(&D.lock);
+                        TyMutexLock(&D.lock);
                         PostEvent((DebugEvent) {
                                 .kind   = EV_OUTPUT,
                                 .thread = d->id,
                                 .text   = text
                         });
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                         continue;
                 }
 
@@ -2298,9 +2298,9 @@ DebugTrap(Ty *ty, char *ip)
 
         ty_free(ids);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         DisarmLocked(d, ip);
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 void
@@ -2456,7 +2456,7 @@ CollectLine(char const *path, int line, Expr const *only, vec(char *) *out)
 static void
 ResolveLine(Breakpoint *bp)
 {
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 
         for (int delta = 0; delta < 64; ++delta) {
                 if (CollectLine(bp->path, bp->line + delta, NULL, (void *)&bp->ips) > 0) {
@@ -2465,7 +2465,7 @@ ResolveLine(Breakpoint *bp)
                 }
         }
 
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 }
 
 static Value const *
@@ -2541,7 +2541,7 @@ FindFunctionExpr(char const *name)
 static void
 ResolveFunctionCode(Breakpoint *bp)
 {
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 
         Expr const *fn = FindFunctionExpr(bp->name);
 
@@ -2553,7 +2553,7 @@ ResolveFunctionCode(Breakpoint *bp)
                 }
         }
 
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 }
 
 static void
@@ -2615,7 +2615,7 @@ DebugCodeLoaded(Ty *ty)
                 return;
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.bps); ++i) {
                 Breakpoint *bp = v__(D.bps, i);
@@ -2628,7 +2628,7 @@ DebugCodeLoaded(Ty *ty)
                 }
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 void
@@ -2657,13 +2657,13 @@ DebugThreadStart(Ty *ty, TyThread self)
 
         ty->dbg = d;
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         xvP(D.threads, d);
         d->registered = true;
         if (D.session && !d->agent) {
                 PostEvent((DebugEvent) { .kind = EV_THREAD_START, .thread = d->id });
         }
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 void
@@ -2675,7 +2675,7 @@ DebugThreadExit(Ty *ty)
                 return;
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.threads); ++i) {
                 if (v__(D.threads, i) == d) {
@@ -2696,8 +2696,8 @@ DebugThreadExit(Ty *ty)
 
         ty->dbg = NULL;
 
-        pthread_cond_broadcast(&D.cond);
-        pthread_mutex_unlock(&D.lock);
+        TyCondVarBroadcast(&D.cond);
+        TyMutexUnlock(&D.lock);
 
         ty_free(d);
 }
@@ -2733,7 +2733,7 @@ ResumeWorld(void)
 
         RecomputeInterrupt();
 
-        pthread_cond_broadcast(&D.cond);
+        TyCondVarBroadcast(&D.cond);
 }
 
 static bool
@@ -2753,13 +2753,10 @@ AllQuiet(void)
 static void
 WaitQuiet(void)
 {
-        struct timespec deadline;
-
-        clock_gettime(CLOCK_REALTIME, &deadline);
-        deadline.tv_sec += 3;
+        TyInstant deadline = TyTimeAddMs(TyTimeNow(), 3000);
 
         while (D.stopped && !AllQuiet()) {
-                if (pthread_cond_timedwait(&D.cond, &D.lock, &deadline) == ETIMEDOUT) {
+                if (!TyCondVarTimedWait(&D.cond, &D.lock, deadline)) {
                         break;
                 }
         }
@@ -2780,7 +2777,7 @@ AgentLock(Ty *ty)
 static void
 Detach(Ty *ty)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.bps); ++i) {
                 FreeBreakpoint(v__(D.bps, i));
@@ -2811,7 +2808,7 @@ Detach(Ty *ty)
         v0(D.events);
         v0(D.sources);
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 }
 
 static void
@@ -2940,7 +2937,7 @@ ReqSetBreakpoints(Ty *ty, Json const *req, Json const *args)
         jw_key(&body, "breakpoints");
         jw_open(&body, '[');
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.bps); ++i) {
                 Breakpoint *bp = v__(D.bps, i);
@@ -2961,7 +2958,7 @@ ReqSetBreakpoints(Ty *ty, Json const *req, Json const *args)
                 WriteBreakpoint(&body, bp);
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         jw_close(&body, ']');
         jw_close(&body, '}');
@@ -2978,7 +2975,7 @@ ReqSetFunctionBreakpoints(Ty *ty, Json const *req, Json const *args)
         jw_key(&body, "breakpoints");
         jw_open(&body, '[');
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.bps); ++i) {
                 Breakpoint *bp = v__(D.bps, i);
@@ -3002,7 +2999,7 @@ ReqSetFunctionBreakpoints(Ty *ty, Json const *req, Json const *args)
                 WriteBreakpoint(&body, bp);
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         jw_close(&body, ']');
         jw_close(&body, '}');
@@ -3028,9 +3025,9 @@ ReqSetExceptionBreakpoints(Ty *ty, Json const *req, Json const *args)
                 }
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         D.exc_filters = filters;
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, NULL);
 }
@@ -3057,7 +3054,7 @@ ReqBreakpointLocations(Ty *ty, Json const *req, Json const *args)
         jw_key(&body, "breakpoints");
         jw_open(&body, '[');
 
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 
         for (int line = lo; line <= hi && line - lo < 10000; ++line) {
                 vec(char *) ips = {0};
@@ -3069,7 +3066,7 @@ ReqBreakpointLocations(Ty *ty, Json const *req, Json const *args)
                 xvF(ips);
         }
 
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 
         jw_close(&body, ']');
         jw_close(&body, '}');
@@ -3110,7 +3107,7 @@ ReqThreads(Ty *ty, Json const *req, Json const *args)
         jw_key(&body, "threads");
         jw_open(&body, '[');
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.threads); ++i) {
                 TyDebugThread const *d = v__(D.threads, i);
@@ -3125,7 +3122,7 @@ ReqThreads(Ty *ty, Json const *req, Json const *args)
                 jw_close(&body, '}');
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         jw_close(&body, ']');
         jw_close(&body, '}');
@@ -3161,12 +3158,12 @@ Inspectable(TyDebugThread const *d)
 static void
 ReqStackTrace(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         TyDebugThread *d = ThreadById(JInt(args, "threadId", 0));
 
         if (d == NULL || !Inspectable(d)) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "thread is not stopped", NULL);
                 return;
         }
@@ -3215,7 +3212,7 @@ ReqStackTrace(Ty *ty, Json const *req, Json const *args)
         jw_kint(&body, "totalFrames", vN(frames));
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         xvF(frames);
 
@@ -3262,13 +3259,13 @@ FrameMarks(Ty *ty, FrameRef const *fr)
 static void
 ReqScopes(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         i64 id = JInt(args, "frameId", 0);
         FrameRef *fr = FrameById(id);
 
         if (fr == NULL) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "invalid frame", NULL);
                 return;
         }
@@ -3311,7 +3308,7 @@ ReqScopes(Ty *ty, Json const *req, Json const *args)
         jw_close(&body, ']');
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, &body);
 }
@@ -3537,12 +3534,12 @@ WriteChildren(Ty *ty, JsonWriter *w, Handle const *h, isize start, isize count)
 static void
 ReqVariables(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         i64 ref = JInt(args, "variablesReference", 0);
 
         if (ref < 1 || ref > vN(D.handles)) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "invalid variablesReference", NULL);
                 return;
         }
@@ -3578,7 +3575,7 @@ ReqVariables(Ty *ty, Json const *req, Json const *args)
         jw_close(&body, ']');
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, &body);
 }
@@ -3586,12 +3583,12 @@ ReqVariables(Ty *ty, Json const *req, Json const *args)
 static Module const *
 MainModule(Ty *ty)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         TyDebugThread *main = ThreadById(1);
 
         if (main == NULL || !Inspectable(main)) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 return NULL;
         }
 
@@ -3605,7 +3602,7 @@ MainModule(Ty *ty)
                 mod = (e != NULL) ? e->mod : NULL;
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         xvF(frames);
 
@@ -3627,14 +3624,14 @@ Evaluate(Ty *ty, FrameRef *fr, char const *src, char **text, char **type, Value 
 
                 AgentUnlock(ty);
 
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
                 d->job = &job;
-                pthread_cond_broadcast(&D.cond);
+                TyCondVarBroadcast(&D.cond);
                 while (!job.done) {
-                        pthread_cond_wait(&D.cond, &D.lock);
+                        TyCondVarWait(&D.cond, &D.lock);
                 }
                 *result = D.job_result;
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
 
                 AgentLock(ty);
 
@@ -3680,11 +3677,11 @@ ReqEvaluate(Ty *ty, Json const *req, Json const *args)
 
         i64 fid = JInt(args, "frameId", 0);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         FrameRef *fr = FrameById(fid);
         FrameRef copy = (fr != NULL) ? *fr : (FrameRef) {0};
         bool stopped = D.stopped;
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         if (!stopped && fr != NULL) {
                 Respond(req, "the program is running", NULL);
@@ -3706,7 +3703,7 @@ ReqEvaluate(Ty *ty, Json const *req, Json const *args)
 
         JsonWriter body = {0};
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         jw_open(&body, '{');
         jw_kstr(&body, "result", text);
@@ -3727,7 +3724,7 @@ ReqEvaluate(Ty *ty, Json const *req, Json const *args)
 
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         ty_free(text);
         ty_free(type);
@@ -3741,12 +3738,12 @@ ReqSetVariable(Ty *ty, Json const *req, Json const *args)
         char const *name = JStr(args, "name");
         char const *value = JStr(args, "value");
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         i64 ref = JInt(args, "variablesReference", 0);
 
         if (name == NULL || value == NULL || ref < 1 || ref > vN(D.handles) || !D.stopped) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "invalid setVariable request", NULL);
                 return;
         }
@@ -3755,7 +3752,7 @@ ReqSetVariable(Ty *ty, Json const *req, Json const *args)
         FrameRef copy = (h.frame >= 0) ? v__(D.frames, h.frame) : (FrameRef) {0};
         FrameRef *fr = (h.frame >= 0) ? &copy : NULL;
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         byte_vector src = {0};
         char *text = NULL;
@@ -3817,10 +3814,10 @@ ReqSetVariable(Ty *ty, Json const *req, Json const *args)
 static void
 ReqExceptionInfo(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (!D.stopped || D.reason != REASON_EXCEPTION) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "not stopped on an exception", NULL);
                 return;
         }
@@ -3838,7 +3835,7 @@ ReqExceptionInfo(Ty *ty, Json const *req, Json const *args)
         jw_close(&body, '}');
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, &body);
 }
@@ -3850,24 +3847,24 @@ ReqSource(Ty *ty, Json const *req, Json const *args)
         char const *path = JStr(JGet(args, "source"), "path");
         char const *text = NULL;
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (ref >= 1 && ref <= vN(D.sources)) {
                 text = v__(D.sources, ref - 1)->source;
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         if (text == NULL && path != NULL) {
                 isize nl;
-                pthread_mutex_lock(&LocLock);
+                TyMutexLock(&LocLock);
                 location_vector const *lists = compiler_location_lists(&nl);
                 for (isize l = 0; l < nl && text == NULL; ++l) {
                         if (vN(lists[l]) > 0 && PathMatches(v_(lists[l], 0)->e, path)) {
                                 text = v_(lists[l], 0)->e->mod->source;
                         }
                 }
-                pthread_mutex_unlock(&LocLock);
+                TyMutexUnlock(&LocLock);
         }
 
         if (text == NULL) {
@@ -3890,7 +3887,7 @@ ReqLoadedSources(Ty *ty, Json const *req, Json const *args)
         vec(Module const *) mods = {0};
         isize nl;
 
-        pthread_mutex_lock(&LocLock);
+        TyMutexLock(&LocLock);
 
         location_vector const *lists = compiler_location_lists(&nl);
 
@@ -3908,11 +3905,11 @@ ReqLoadedSources(Ty *ty, Json const *req, Json const *args)
                 }
         }
 
-        pthread_mutex_unlock(&LocLock);
+        TyMutexUnlock(&LocLock);
 
         JsonWriter body = {0};
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         jw_open(&body, '{');
         jw_key(&body, "sources");
@@ -3925,7 +3922,7 @@ ReqLoadedSources(Ty *ty, Json const *req, Json const *args)
         jw_close(&body, ']');
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         xvF(mods);
 
@@ -3935,7 +3932,7 @@ ReqLoadedSources(Ty *ty, Json const *req, Json const *args)
 static void
 ReqResume(Ty *ty, Json const *req, Json const *args, int step)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.threads); ++i) {
                 v__(D.threads, i)->step = STEP_NONE;
@@ -3944,7 +3941,7 @@ ReqResume(Ty *ty, Json const *req, Json const *args, int step)
         D.entry = false;
 
         if (!D.stopped) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 Respond(req, "the program is not stopped", NULL);
                 return;
         }
@@ -3954,7 +3951,7 @@ ReqResume(Ty *ty, Json const *req, Json const *args, int step)
                 char const *granularity = JStr(args, "granularity");
 
                 if (d == NULL) {
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                         Respond(req, "invalid thread", NULL);
                         return;
                 }
@@ -3976,7 +3973,7 @@ ReqResume(Ty *ty, Json const *req, Json const *args, int step)
 
         ResumeWorld();
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         JsonWriter body = {0};
 
@@ -3990,7 +3987,7 @@ ReqResume(Ty *ty, Json const *req, Json const *args, int step)
 static void
 ReqPause(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (!D.stopped) {
                 D.stopped      = true;
@@ -4006,7 +4003,7 @@ ReqPause(Ty *ty, Json const *req, Json const *args)
                 PostEvent((DebugEvent) { .kind = EV_STOP });
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, NULL);
 }
@@ -4056,7 +4053,7 @@ ReqInitialize(Ty *ty, Json const *req, Json const *args)
 static void
 ReqConfigurationDone(Ty *ty, Json const *req, Json const *args)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         for (isize i = 0; i < vN(D.bps); ++i) {
                 Breakpoint *bp = v__(D.bps, i);
@@ -4066,9 +4063,9 @@ ReqConfigurationDone(Ty *ty, Json const *req, Json const *args)
         }
 
         D.configured = true;
-        pthread_cond_broadcast(&D.cond);
+        TyCondVarBroadcast(&D.cond);
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Respond(req, NULL, NULL);
 }
@@ -4147,10 +4144,10 @@ SendStopped(Ty *ty, u64 gen)
 {
         AgentUnlock(ty);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (!D.stopped || D.gen != gen) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 AgentLock(ty);
                 return;
         }
@@ -4192,7 +4189,7 @@ SendStopped(Ty *ty, u64 gen)
 
         jw_close(&body, '}');
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         AgentLock(ty);
 
@@ -4208,11 +4205,11 @@ DrainEvents(Ty *ty)
                 continue;
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         DebugEvent *events = vv(D.events);
         isize n = vN(D.events);
         v00(D.events);
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         for (isize i = 0; i < n; ++i) {
                 DebugEvent *ev = &events[i];
@@ -4241,7 +4238,7 @@ DrainEvents(Ty *ty)
                         break;
 
                 case EV_BREAKPOINT:
-                        pthread_mutex_lock(&D.lock);
+                        TyMutexLock(&D.lock);
                         for (isize j = 0; j < vN(D.bps); ++j) {
                                 if (v__(D.bps, j)->id == ev->bp) {
                                         jw_open(&body, '{');
@@ -4251,7 +4248,7 @@ DrainEvents(Ty *ty)
                                         jw_close(&body, '}');
                                 }
                         }
-                        pthread_mutex_unlock(&D.lock);
+                        TyMutexUnlock(&D.lock);
                         if (vN(body.b) > 0) {
                                 SendEvent("breakpoint", &body);
                         }
@@ -4470,10 +4467,10 @@ AgentMain(void *ctx)
         }
 
         if (fd < 0) {
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
                 D.agent = false;
-                pthread_cond_broadcast(&D.cond);
-                pthread_mutex_unlock(&D.lock);
+                TyCondVarBroadcast(&D.cond);
+                TyMutexUnlock(&D.lock);
                 return NULL;
         }
 
@@ -4481,32 +4478,32 @@ AgentMain(void *ctx)
 
         Ty *ty = vm_new_debug_ty();
 
-        pthread_mutex_lock(&SendLock);
+        TyMutexLock(&SendLock);
         D.client = fd;
-        pthread_mutex_unlock(&SendLock);
+        TyMutexUnlock(&SendLock);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         D.session        = true;
         D.lines1         = true;
         D.cols1          = true;
         DebugJitOff      = 1;
         JitInterruptFlag = 1;
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         Session(ty, fd);
 
         Detach(ty);
 
-        pthread_mutex_lock(&SendLock);
+        TyMutexLock(&SendLock);
         D.client = -1;
-        pthread_mutex_unlock(&SendLock);
+        TyMutexUnlock(&SendLock);
 
         close(fd);
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
         D.agent = false;
-        pthread_cond_broadcast(&D.cond);
-        pthread_mutex_unlock(&D.lock);
+        TyCondVarBroadcast(&D.cond);
+        TyMutexUnlock(&D.lock);
 
         vm_free_debug_ty(ty);
 
@@ -4533,16 +4530,16 @@ AttachRequested(void)
 static void
 StartAgent(void)
 {
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         if (D.agent) {
-                pthread_mutex_unlock(&D.lock);
+                TyMutexUnlock(&D.lock);
                 return;
         }
 
         D.agent = true;
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         pthread_t t;
         pthread_attr_t attr;
@@ -4552,10 +4549,10 @@ StartAgent(void)
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
         if (pthread_create(&t, &attr, AgentMain, NULL) != 0) {
-                pthread_mutex_lock(&D.lock);
+                TyMutexLock(&D.lock);
                 D.agent = false;
-                pthread_cond_broadcast(&D.cond);
-                pthread_mutex_unlock(&D.lock);
+                TyCondVarBroadcast(&D.cond);
+                TyMutexUnlock(&D.lock);
         }
 
         pthread_attr_destroy(&attr);
@@ -4639,12 +4636,12 @@ StartWatcher(void)
 static void
 AfterFork(void)
 {
-        pthread_mutex_init(&D.lock, NULL);
-        pthread_cond_init(&D.cond, NULL);
-        pthread_mutex_init(&LocLock, NULL);
-        pthread_mutex_init(&CacheLock, NULL);
-        pthread_mutex_init(&CompileLock, NULL);
-        pthread_mutex_init(&SendLock, NULL);
+        TyMutexInit(&D.lock);
+        TyCondVarInit(&D.cond);
+        TyMutexInit(&LocLock);
+        TyMutexInit(&CacheLock);
+        TyMutexInit(&CompileLock);
+        TyMutexInit(&SendLock);
 
         Ty *self = get_my_ty();
 
@@ -4777,10 +4774,10 @@ DebugWaitForClient(Ty *ty)
                 ReleaseLock(ty, true);
         }
 
-        pthread_mutex_lock(&D.lock);
+        TyMutexLock(&D.lock);
 
         while (D.agent && !D.configured) {
-                pthread_cond_wait(&D.cond, &D.lock);
+                TyCondVarWait(&D.cond, &D.lock);
         }
 
         if (D.session && D.configured) {
@@ -4793,7 +4790,7 @@ DebugWaitForClient(Ty *ty)
                 RecomputeInterrupt();
         }
 
-        pthread_mutex_unlock(&D.lock);
+        TyMutexUnlock(&D.lock);
 
         if (held) {
                 vm_take_lock_raw(ty);

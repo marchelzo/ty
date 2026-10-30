@@ -204,7 +204,7 @@ escape_emit(Ty *ty, Bytes s, StringPart kind, void *ctx)
                 if (v.type != VALUE_STRING) {
                         zP("String.escape(): callback must return a String, got %s", VSC(&v));
                 }
-                s = s_bytes(v);
+                s = vs_bytes(v);
         }
 
         if (s.length != 0) {
@@ -237,7 +237,7 @@ string_escape(Ty *ty, Value *string, int argc, Value *kwargs)
         SCRATCH_SAVE();
         gP(string);
         gP(&ctx.f);
-        str_escape(ty, s_bytes(*string), q, escape_emit, &ctx);
+        str_escape(ty, vs_bytes(*string), q, escape_emit, &ctx);
         Value result = (vN(ctx.out) == 0) ? STRING_EMPTY : vSs(vv(ctx.out), vN(ctx.out));
         gX();
         gX();
@@ -3708,7 +3708,7 @@ string_fit(Ty *ty, Value *string, int argc, Value *kwargs)
 
         Value align = ARGxD(1, "align", INTEGER, STRING, _NIL, _NONE);
         Value _fill = ARGxD(2, "fill", STRING, _NIL, _NONE);
-        Bytes  fill = !IsMissing(_fill) ? s_bytes(_fill) : BYTES(" ", 1);
+        Bytes  fill = !IsMissing(_fill) ? vs_bytes(_fill) : BYTES(" ", 1);
 
         int just = fit_justify(ty, _name__, align);
 

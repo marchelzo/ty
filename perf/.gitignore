@@ -1,2 +1,4 @@
 *.json
 *.sqlite3*
+builds.git/
+builds/

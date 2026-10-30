@@ -377,19 +377,27 @@ typedef struct {
 static vec(Declaration) Declarations;
 
 static CompileState STATE;
-
 static ModuleVector modules;
-static vec(ProgramAnnotation) annotations;
-static vec(location_vector) location_lists;
-typedef struct { uptr lo; uptr hi; } LocationSpan;
-static vec(LocationSpan) location_spans;
+
+typedef struct {
+        uptr lo;
+        uptr hi;
+} LocationSpan;
+
 typedef struct {
         Expr const *e;
-        void       *arena;
+        void *arena;
 } SourceNode;
 
-static vec(SourceNode) source_map;
-static u32 source_map_hole;
+static struct {
+        intrusive_vec(SourceNode);
+        usize hole;
+} source_map;
+
+static vec(ProgramAnnotation) annotations;
+static vec(location_vector)   location_lists;
+static vec(LocationSpan)      location_spans;
+
 static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
 static u32 ImportFlags;
@@ -942,7 +950,7 @@ DefaultConstructor(Ty *ty, Class *class)
         ctor->end         = class->def->end;
 
         AddFieldParams(ty, ctor, &class->def->class->fields);
-        class_add_method(ty, class->i, "init", REF(NewZero(ty)));
+        class_add_method_i(ty, class->i, NAMES.init, REF(NewZero(ty)));
 
         return ctor;
 }
@@ -2483,18 +2491,17 @@ add_location_info(Ty *ty)
 
         sort_locations(vv(STATE.expression_locations), vN(STATE.expression_locations));
 
-        struct eloc *locs = vv(STATE.expression_locations);
+        struct eloc  *locs = vv(STATE.expression_locations);
+        usize         n    = vN(STATE.expression_locations) * sizeof *locs;
+        LocationSpan  span = { 0 };
+
         for (int i = 0; i < vN(STATE.expression_locations); ++i) {
                 locs[i].p_start = (uptr)(v_(STATE.code, locs[i].start_off));
-                locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
+                locs[i].p_end   = (uptr)(v_(STATE.code, locs[i].end_off));
+                span.hi         = max(span.hi, locs[i].p_end);
         }
 
-        usize n  = vN(STATE.expression_locations) * sizeof *locs;
-        uptr  hi = 0;
-
-        for (int i = 0; i < vN(STATE.expression_locations); ++i) {
-                hi = max(hi, locs[i].p_end);
-        }
+        span.lo = locs[0].p_start;
 
         STATE.expression_locations.items    = memcpy(xmA(n), locs, n);
         STATE.expression_locations.capacity = vN(STATE.expression_locations);
@@ -2503,7 +2510,7 @@ add_location_info(Ty *ty)
 
         DebugLockLocations();
         xvP(location_lists, STATE.expression_locations);
-        xvP(location_spans, ((LocationSpan) { .lo = locs[0].p_start, .hi = hi }));
+        xvP(location_spans, span);
         DebugUnlockLocations();
 
         DebugCodeLoaded(ty);
@@ -5155,7 +5162,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         STATE.active = scope;
 
-        Symbol *var;
         Scope *subscope;
 
         Expr             *func = STATE.func;
@@ -9250,12 +9256,11 @@ emit_xcase(
                 INSN(POP);
         }
 
-        bool returns;
+        bool returns = false;
         if (s != NULL) {
-                returns = emit_arm(ty, s, want_result);
+                returns |= emit_arm(ty, s, want_result);
         } else if (want_result) {
                 INSN(NIL);
-                returns = false;
         }
 
         if (pattern->has_resources) {
@@ -11113,9 +11118,6 @@ emit_range_loop(Ty *ty, Stmt const *s, bool want_result)
         EndRangeLoop(ty, &loop);
 }
 
-static Value *
-ConstIterable(Ty *ty, Expr const *e);
-
 static void
 emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 {
@@ -11134,14 +11136,7 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                 INSN(PUSH_INDEX);
                 Ei32(n | flags);
 
-                Value const *k = ConstIterable(ty, s->each.array);
-
-                if (k != NULL) {
-                        INSN(VALUE);
-                        EP((uptr)k);
-                } else {
-                        EE(s->each.array);
-                }
+                EE(s->each.array);
 
                 begin_loop(ty, want_result, 2);
                 LABEL(start);
@@ -12763,7 +12758,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 INSN(NIL);
                         } else {
                                 INSN(STRING);
-                                ESL(z_bytes(v__(e->names, i)));
+                                ESL(s_bytes(v__(e->names, i)));
                         }
                         EE(v__(e->es, i));
                         if (v__(TPX(e)->required, i)) {
@@ -13737,72 +13732,6 @@ LiteralValue(Ty *ty, Expr const *e, Value *out)
         }
 }
 
-static bool
-ConstValue(Ty *ty, Expr const *e, Value *out)
-{
-        switch (e->type) {
-        case EXPRESSION_NIL:
-                *out = NIL;
-                return true;
-
-        case EXPRESSION_TUPLE:
-                if (e->tpx != NULL || vN(e->es) == 0) {
-                        return false;
-                }
-                for (usize i = 0; i < vN(e->names); ++i) {
-                        if (v__(e->names, i) != NULL) {
-                                return false;
-                        }
-                }
-                *out = value_tuple(ty, vN(e->es));
-                for (usize i = 0; i < vN(e->es); ++i) {
-                        if (!ConstValue(ty, v__(e->es, i), &out->items[i])) {
-                                return false;
-                        }
-                }
-                return true;
-
-        default:
-                return LiteralValue(ty, e, out);
-        }
-}
-
-static Value *
-ConstIterable(Ty *ty, Expr const *e)
-{
-        Value  v;
-        Value *k = NULL;
-
-        if (e->type != EXPRESSION_ARRAY || vN(e->elements) == 0 || ty->group->parent != NULL) {
-                return NULL;
-        }
-
-        GC_STOP();
-
-        v = ARRAY(vA());
-
-        for (usize i = 0; i < vN(e->elements); ++i) {
-                Value x;
-                if (
-                        (v__(e->aconds, i) != NULL)
-                     || v__(LSX(e)->optional, i)
-                     || !ConstValue(ty, v__(e->elements, i), &x)
-                ) {
-                        GC_RESUME();
-                        return NULL;
-                }
-                vAp(v.array, x);
-        }
-
-        k  = mrealloc(NULL, sizeof *k);
-        *k = v;
-        gc_immortalize(ty, k);
-
-        GC_RESUME();
-
-        return k;
-}
-
 static void
 SeedConst(Ty *ty, Symbol const *sym, Expr *value)
 {
@@ -14512,7 +14441,7 @@ compiler_path_in_search_path(Ty *ty, char const *path)
 
         Array *search = v_(Globals, NAMES.path)->array;
         for (int i = 0; i < vN(*search); ++i) {
-                char const *root = ss(v__(*search, i));
+                char const *root = (char const *)ss(v__(*search, i));
                 usize length = strlen(root);
                 if (
                         (s_eq_n(path, root, length))
@@ -16058,16 +15987,16 @@ source_register(Ty *ty, void const *src)
                 .arena = ArenaOf(src)
         };
 
-        for (u32 i = source_map_hole; i < vN(source_map); ++i) {
+        for (u32 i = source_map.hole; i < vN(source_map); ++i) {
                 if (v_(source_map, i)->e == NULL) {
                         *v_(source_map, i) = node;
-                        source_map_hole = i + 1;
+                        source_map.hole = i + 1;
                         return i + 1;
                 }
         }
 
         xvP(source_map, node);
-        source_map_hole = vN(source_map);
+        source_map.hole = vN(source_map);
 
         return vN(source_map);
 }
@@ -16101,7 +16030,7 @@ ForgetSourceNodesFrom(void const *_base, usize len)
                 uptr expr = (uptr)v_(source_map, i)->e;
                 if (expr >= base && expr < base + len) {
                         *v_(source_map, i) = (SourceNode) {0};
-                        source_map_hole = min(source_map_hole, i);
+                        source_map.hole = min(source_map.hole, i);
                 }
         }
 }
@@ -16113,7 +16042,7 @@ ForgetSourceNodesWhere(bool (*f)(void const *, void *), void *ctx)
                 Expr const *expr = v_(source_map, i)->e;
                 if (expr != NULL && f(expr, ctx)) {
                         *v_(source_map, i) = (SourceNode) {0};
-                        source_map_hole = min(source_map_hole, i);
+                        source_map.hole = min(source_map.hole, i);
                 }
         }
 }
@@ -17992,7 +17921,7 @@ function_type_input(Ty *ty, Value const *source)
         }
 
         for (int i = 0; i < vN(*params->array); ++i) {
-                Value const *entry = v_(*params->array, i);
+                Value *entry = v_(*params->array, i);
                 int tag = (entry->tags == 0) ? 0 : tags_first(ty, entry->tags);
 
                 if (tag == TyRecordEntry) {
@@ -18054,7 +17983,7 @@ cexpr(Ty *ty, Value *v)
 
         if (src != NULL) {
                 e->start = src->start;
-                e->end = src->end;
+                e->end  = src->end;
                 e->mod = src->mod;
                 e->bang = (src->type < EXPRESSION_MAX_TYPE) && src->bang;
         } else {
@@ -18127,11 +18056,8 @@ cexpr(Ty *ty, Value *v)
                 Value *value = xmA(sizeof *value);
 
                 *value = *v;
-
-                value->tags = tags_pop(ty, value->tags);
-                if (value->tags == 0) {
-                        value->type &= ~VALUE_TAGGED;
-                }
+                PopTag(value);
+                value->src = 0;
 
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
@@ -18313,7 +18239,7 @@ cexpr(Ty *ty, Value *v)
                 }
 
                 if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
-                        avP(e->strings, z_bytes(""));
+                        avP(e->strings, s_bytes(""));
                 }
                 break;
         }
@@ -20616,9 +20542,6 @@ define_class(Ty *ty, Stmt *s)
         aggregate_overloads(ty, class, &cd->s_methods, false);
 
         SCRATCH_SAVE();
-
-        char scratch[512];
-        char const *name;
 
         int keep = 0;
         for (int i = 0; i < vN(cd->methods); ++i) {
@@ -23518,8 +23441,10 @@ TyCompileModule(
         if (flags & TYC_RESULT) {
                 mod->flags |= MOD_RESULT;
         }
+
         xvP(modules, mod);
         TyImmortalizeArena(ty);
+
         return mod;
 }
 
@@ -23804,7 +23729,7 @@ CompilerReset(Ty *ty)
         v0(location_lists);
         v0(location_spans);
         v0(source_map);
-        source_map_hole = 0;
+        source_map.hole = 0;
         v0(PreludeAssertionOffsets);
         v0(xD.tests);
 

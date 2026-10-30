@@ -1,5 +1,4 @@
 #include <ctype.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +12,8 @@
 #include <unistd.h>
 #endif
 
+#include "ty/thread.h"
+#include "xd.h"
 #include "dirs.h"
 
 #if defined(_WIN32)
@@ -40,7 +41,7 @@ char const *const DirNames[DIR_COUNT] = {
 
 static char const     *Dirs[DIR_COUNT];
 static bool            Ready = false;
-static pthread_mutex_t Lock  = PTHREAD_MUTEX_INITIALIZER;
+static TyMutex Lock  = TY_MUTEX_INIT;
 
 static char const *const Vars[] = {
         HOME_VAR,
@@ -53,25 +54,10 @@ static char const *const Vars[] = {
         "PUBLIC",
 };
 
-static char *
-Join(char const *dir, char const *sub, usize n)
-{
-        if (dir == NULL) {
-                return NULL;
-        }
-
-        usize m = strlen(dir) + sizeof SEP + n;
-        char *p = malloc(m);
-
-        snprintf(p, m, "%s" SEP "%.*s", dir, (int)n, sub);
-
-        return p;
-}
-
 inline static char *
 Sub(char const *dir, char const *sub)
 {
-        return Join(dir, sub, strlen(sub));
+        return xfmt("%s" SEP "%s", dir, sub);
 }
 
 inline static bool
@@ -87,20 +73,11 @@ absolute(char const *p)
 }
 
 static char const *
-Temp(void)
-{
-        usize       n;
-        char const *dir = dirs_tmp(&n);
-
-        return strndup(dir, n);
-}
-
-static char const *
 Xdg(char const *var, char const *dir, char const *sub)
 {
         char const *p = getenv(var);
 
-        return (p != NULL && absolute(p)) ? strdup(p)
+        return (p != NULL && absolute(p)) ? S2(p)
              : (sub != NULL)              ? Sub(dir, sub)
              :                              NULL;
 }
@@ -112,21 +89,22 @@ set(char const *s)
 }
 
 static char const *
-Runtime(void)
+Temp(void)
 {
-        char const *dir = Xdg("XDG_RUNTIME_DIR", NULL, NULL);
-        return (dir != NULL) ? dir : Temp();
+        Bytes path = dirs_tmp();
+        return S2n(bb(path), bN(path));
 }
 
 static char const *
 Home(void)
 {
+        char buf[4096];
+
         char const *home = getenv(HOME_VAR);
         char const *user = getenv(USER_VAR);
-        char        buf[4096];
 
         if (set(home)) {
-                return strdup(home);
+                return S2(home);
         }
 
 #ifdef _WIN32
@@ -134,12 +112,11 @@ Home(void)
         char const *path  = getenv("HOMEPATH");
 
         if (set(drive) && set(path)) {
-                snprintf(buf, sizeof buf, "%s%s", drive, path);
-                return strdup(buf);
+                return xfmt("%s%s", drive, path);
         }
 
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PROFILE, NULL, 0, buf))) {
-                return strdup(buf);
+                return S2(buf);
         }
 #else
         struct passwd  pw;
@@ -150,15 +127,20 @@ Home(void)
              && (res != NULL)
              && set(res->pw_dir)
         ) {
-                return strdup(res->pw_dir);
+                return S2(res->pw_dir);
         }
 
         user = set(user) ? user : getlogin();
 #endif
 
-        snprintf(buf, sizeof buf, HOME_ROOT "%s", set(user) ? user : "nobody");
+        return xfmt("%s", set(user) ? user : "nobody");
+}
 
-        return strdup(buf);
+static char const *
+Runtime(void)
+{
+        char const *dir = Xdg("XDG_RUNTIME_DIR", NULL, NULL);
+        return (dir != NULL) ? dir : Temp();
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -179,37 +161,36 @@ static struct {
 static void
 UserDir(char const *line)
 {
-        char const *key = line + 4;
+        char const *_key = line + 4;
         char const *eq  = strstr(line, "_DIR=\"");
-        char const *v;
+        char const *val;
         char const *end;
 
-        if (strncmp(line, "XDG_", 4) != 0 || eq == NULL || eq < key) {
+        if (!s_eq_n(line, "XDG_", 4) || eq == NULL || eq < _key) {
                 return;
         }
 
-        v   = eq + 6;
-        end = strrchr(v, '"');
+        val = eq + 6;
+        end = strrchr(val, '"');
 
         if (end == NULL) {
                 return;
         }
 
+        Bytes key = BYTES(_key, eq - _key);
+
         for (usize i = 0; i < countof(UserDirs); ++i) {
-                if (
-                        (strlen(UserDirs[i].key) != (usize)(eq - key))
-                     || (strncmp(UserDirs[i].key, key, eq - key) != 0)
-                ) {
+                if (!bytes_eq(key, UserDirs[i].key)) {
                         continue;
                 }
 
-                free((char *)Dirs[UserDirs[i].dir]);
+                ty_free((char *)Dirs[UserDirs[i].dir]);
 
-                if (strncmp(v, "$HOME", 5) == 0 && (v[5] == '/' || v + 5 == end)) {
-                        v += 5 + (v[5] == '/');
-                        Dirs[UserDirs[i].dir] = Join(Dirs[DIR_HOME], v, end - v);
+                if (s_eq_n(val, "$HOME", 5) && (val[5] == '/' || val + 5 == end)) {
+                        val += 5 + (val[5] == '/');
+                        Dirs[UserDirs[i].dir] = xfmt("%s" SEP "%.*s", Dirs[DIR_HOME], (int)(end - val), val);
                 } else {
-                        Dirs[UserDirs[i].dir] = strndup(v, end - v);
+                        Dirs[UserDirs[i].dir] = S2n(val, end - val);
                 }
 
                 return;
@@ -223,7 +204,7 @@ ReadUserDirs(void)
         char *path = Sub(Dirs[DIR_CONFIG], "user-dirs.dirs");
         FILE *f    = (path != NULL) ? fopen(path, "r") : NULL;
 
-        free(path);
+        xmF(path);
 
         if (f == NULL) {
                 return;
@@ -288,7 +269,7 @@ Init(void)
         D(TEMPLATES)    = Sub(D(HOME), "Templates");
         D(VIDEOS)       = Sub(D(HOME), "Movies");
 
-        free(lib);
+        xmF(lib);
 #else
         D(CACHE)        = Xdg("XDG_CACHE_HOME",  D(HOME), ".cache");
         D(CONFIG)       = Xdg("XDG_CONFIG_HOME", D(HOME), ".config");
@@ -318,7 +299,51 @@ Init(void)
 }
 
 char const *
-dirs_tmp(usize *n)
+dirs_get(int which)
+{
+        char const *dir;
+
+        TyMutexLock(&Lock);
+
+        if (!Ready) {
+                Init();
+                Ready = true;
+        }
+
+        dir = Dirs[which];
+
+        TyMutexUnlock(&Lock);
+
+        return dir;
+}
+
+bool
+dirs_affected(char const *var)
+{
+        if (s_eq_n(var, "XDG_", 4)) {
+                return true;
+        }
+
+        for (usize i = 0; i < countof(Vars); ++i) {
+                if (s_eq(var, Vars[i])) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+void
+dirs_reload(void)
+{
+        TyMutexLock(&Lock);
+        Init();
+        Ready = true;
+        TyMutexUnlock(&Lock);
+}
+
+Bytes
+dirs_tmp(void)
 {
 #ifdef _WIN32
         static _Thread_local char buf[MAX_PATH + 1];
@@ -330,57 +355,13 @@ dirs_tmp(usize *n)
         char const *seps = "/";
 #endif
 
-        *n = strlen(dir);
+        usize n = strlen(dir);
 
-        while (*n > 1 && strchr(seps, dir[*n - 1]) != NULL) {
-                *n -= 1;
+        while (n > 1 && strchr(seps, dir[n - 1]) != NULL) {
+                n -= 1;
         }
 
-        return dir;
-}
-
-char const *
-dirs_get(int which)
-{
-        char const *dir;
-
-        pthread_mutex_lock(&Lock);
-
-        if (!Ready) {
-                Init();
-                Ready = true;
-        }
-
-        dir = Dirs[which];
-
-        pthread_mutex_unlock(&Lock);
-
-        return dir;
-}
-
-bool
-dirs_affected(char const *var)
-{
-        if (strncmp(var, "XDG_", 4) == 0) {
-                return true;
-        }
-
-        for (usize i = 0; i < countof(Vars); ++i) {
-                if (strcmp(var, Vars[i]) == 0) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
-void
-dirs_reload(void)
-{
-        pthread_mutex_lock(&Lock);
-        Init();
-        Ready = true;
-        pthread_mutex_unlock(&Lock);
+        return BYTES(dir, n);
 }
 
 bool
@@ -394,14 +375,14 @@ dirs_path(char *out, usize n, int which, char const *fmt, ...)
                 return false;
         }
 
-        k = snprintf(out, n, "%s" SEP, dir);
+        k = ty_snprintf(out, n, "%s" SEP, dir);
 
         if (k < 0 || (usize)k >= n) {
                 return false;
         }
 
         va_start(ap, fmt);
-        int m = vsnprintf(out + k, n - k, fmt, ap);
+        int m = ty_vsnprintf(out + k, n - k, fmt, ap);
         va_end(ap);
 
         return (m >= 0) && ((usize)m < n - k);

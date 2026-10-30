@@ -1465,13 +1465,13 @@ builtin_jit_dump(Ty *ty, int argc, Value *kwargs)
         ASSERT_ARGC("jit._dump", 2);
 
         Lir  *L     = ASM(0);
-        Bytes stage = s_bytes(ARGx(1, VALUE_STRING));
+        Bytes stage = vs_bytes(ARGx(1, VALUE_STRING));
 
-        if (bytes_eq(stage, z_bytes("lir"))) {
+        if (bytes_eq(stage, s_bytes("lir"))) {
                 return outcome(ty, listing(ty, L, NULL), NULL);
         }
 
-        bool           regs  = bytes_eq(stage, z_bytes("alloc"));
+        bool           regs  = bytes_eq(stage, s_bytes("alloc"));
         LirConstraint *cs    = NULL;
         u32            ncs   = 0;
         Lir           *legal = NULL;

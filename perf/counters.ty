@@ -1,0 +1,187 @@
+import ffi as c (C!)
+import os
+
+C! struct PerfEventAttr {
+    u32 type;
+    u32 size;
+    u64 config;
+    u64 sample_period;
+    u64 sample_type;
+    u64 read_format;
+    u64 flags;
+    u32 wakeup_events;
+    u32 bp_type;
+    u64 config1;
+}
+
+C! struct PerfReading {
+    u64 value;
+    u64 enabled;
+    u64 running;
+}
+
+C! struct RUsage {
+    long utime_sec;
+    long utime_usec;
+    long stime_sec;
+    long stime_usec;
+    long maxrss;
+    long ixrss;
+    long idrss;
+    long isrss;
+    long minflt;
+    long majflt;
+    long nswap;
+    long inblock;
+    long oublock;
+    long msgsnd;
+    long msgrcv;
+    long nsignals;
+    long nvcsw;
+    long nivcsw;
+}
+
+C! fn {
+    int getrusage(int who, void *usage);
+    long read(int fd, void *buf, unsigned long n);
+}
+
+const RUSAGE_SELF          = 0
+const PERF_FLAG_FD_CLOEXEC = 8
+const PERF_FORMAT_TIMES    = 0b11
+
+const HW    = 0
+const SW    = 1
+const CACHE = 3
+
+const L1D  = 0
+const L1I  = 1
+const LLC  = 2
+const DTLB = 3
+const ITLB = 4
+
+const INHERIT = 1 << 1
+const PINNED  = 1 << 2
+const NO_KERN = (1 << 5) | (1 << 6)
+
+const USER  = INHERIT | NO_KERN
+const EXACT = USER | PINNED
+const TASK  = INHERIT
+
+fn load-miss(cache: Int) -> Int {
+    cache | (1 << 16)
+}
+
+let EVENTS = [
+    ('cycles',        HW,    0,               EXACT),
+    ('insns',         HW,    1,               EXACT),
+    ('ref-cycles',    HW,    9,               USER),
+    ('branch-misses', HW,    5,               USER),
+    ('l1d-misses',    CACHE, load-miss(L1D),  USER),
+    ('l1i-misses',    CACHE, load-miss(L1I),  USER),
+    ('llc-misses',    CACHE, load-miss(LLC),  USER),
+    ('dtlb-misses',   CACHE, load-miss(DTLB), USER),
+    ('itlb-misses',   CACHE, load-miss(ITLB), USER),
+    ('minor-faults',  SW,    5,               TASK),
+    ('major-faults',  SW,    6,               TASK),
+    ('ctx-switches',  SW,    3,               TASK),
+    ('migrations',    SW,    4,               TASK),
+]
+
+use Reading = (Float, Float, Float)
+
+pub TIME_METRICS = ['user', 'sys']
+pub METRICS      = [*TIME_METRICS, *EVENTS.map(&0)]
+
+fn open-event(nr: Int, attr, tid: Int) -> Int | nil {
+    let fd = c.syscall(
+        nr,
+        (c.ptr,  attr.get()),
+        (c.int,  tid),
+        (c.int,  -1),
+        (c.int,  -1),
+        (c.long, PERF_FLAG_FD_CLOEXEC)
+    )
+    (fd >= 0) ? fd : nil
+}
+
+fn open-all(nr: Int, tids: [Int], event) -> (String, [Int]) | nil {
+    let (name, type, config, flags) = event
+    let attr = PerfEventAttr(
+        type=type,
+        size=c.size(PerfEventAttr.ctype()),
+        config=config,
+        read_format=PERF_FORMAT_TIMES,
+        flags=flags
+    )
+    let fds = [*tids.map(open-event@(nr, attr, _)).compact()]
+    if #fds == #tids {
+        return (name, fds)
+    }
+    fds.each(os.close)
+    nil
+}
+
+fn scaled(before: Reading, after: Reading) -> (Float, Float) | nil {
+    let (v0, e0, r0) = before
+    let (v1, e1, r1) = after
+    let dv = v1 - v0
+    let de = e1 - e0
+    let dr = r1 - r0
+    (de == 0.0) ? (dv, 1.0)
+  : (dr == 0.0) ? nil
+  :               (dv * de / dr, dr / de)
+}
+
+pub class Counters {
+    __events:  [(String, [Int])]
+    __reading: _
+    __usage:   _
+
+    init(events: [(String, [Int])]) {
+        __events  = events
+        __reading = PerfReading()
+        __usage   = RUsage()
+    }
+
+    static open() -> Counters {
+        let $nr = os.sysno('perf_event_open') or return Counters([])
+        let tids = [*os.listdir('/proc/self/task').map(int).compact()]
+        Counters([*EVENTS.map(open-all@(nr, tids, _)).compact()])
+    }
+
+    __total(fds: [Int]) -> Reading {
+        let (v, e, r) = (0.0, 0.0, 0.0)
+        for fd in fds {
+            if read(fd, __reading.get(), 24) != 24 {
+                throw OSError('read(perf_event)')
+            }
+            v += __reading.value
+            e += __reading.enabled
+            r += __reading.running
+        }
+        (v, e, r)
+    }
+
+    snapshot() -> Dict[String, Reading] {
+        getrusage(RUSAGE_SELF, __usage.get())
+        let snap: Dict[String, Reading] = %{
+            'user': (__usage.utime_sec + __usage.utime_usec / 1.0e6, 0.0, 0.0),
+            'sys':  (__usage.stime_sec + __usage.stime_usec / 1.0e6, 0.0, 0.0),
+        }
+        for (name, fds) in __events {
+            snap[name] = self.__total(fds)
+        }
+        snap
+    }
+
+    static delta(a: Dict[String, Reading], b: Dict[String, Reading]) -> Dict[String, (Float, Float)] {
+        let d: Dict[String, (Float, Float)] = %{}
+        for name, before in a {
+            if let $after = b[name] and let $x = scaled(before, after) {
+                d[name] = x
+            }
+        }
+        d
+    }
+}

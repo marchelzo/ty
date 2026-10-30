@@ -1,0 +1,6 @@
+class Box {
+    pack: ?String
+}
+
+let box = Box('x')
+print(box.pack!.size)

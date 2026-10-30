@@ -385,32 +385,6 @@ class_ctor(Ty *ty, int class)
         return &c->init;
 }
 
-inline static void
-mark_refs(Ty *ty, struct itable const *t)
-{
-        for (u32 i = 0; i < vN(t->values); ++i) {
-                Value const *v = v_(t->values, i);
-                if (v->type == VALUE_REF) {
-                        value_mark(ty, v);
-                }
-        }
-}
-
-void
-class_mark_refs(Ty *ty)
-{
-        for (int i = 0; i < vN(classes); ++i) {
-                Class const *c = v__(classes, i);
-                mark_refs(ty, &c->s_fields);
-                mark_refs(ty, &c->s_methods);
-                mark_refs(ty, &c->s_getters);
-                mark_refs(ty, &c->s_setters);
-                mark_refs(ty, &c->methods);
-                mark_refs(ty, &c->getters);
-                mark_refs(ty, &c->setters);
-        }
-}
-
 void
 class_mark(Ty *ty, int c)
 {

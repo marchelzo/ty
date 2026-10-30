@@ -149,3 +149,14 @@ pub fn method-missing-checks-the-method-name() {
     assert(err.match?(/^CompileError: this argument does not match parameter `name`/), err)
     assert("found:    'sideways'" in err, err)
 }
+
+pub fn bang-member-suggests-unwrapping() {
+    let (status, err) = fixture('bang_member_typed')
+    assert(status != 0)
+    assert(err.match?(/^CompileError: field `pack!` does not exist on this type; to unwrap `pack`, write `\(….pack\)!`/), err)
+
+    let (status, err) = fixture('bang_member_dynamic')
+    assert(status != 0)
+    assert("non-existent member 'pack!'" in err, err)
+    assert('; to unwrap `pack`, write `(….pack)!`' in err, err)
+}

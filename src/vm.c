@@ -711,8 +711,6 @@ MarkGroupRoots(Ty *ty)
                 }
                 LOG_REACHED(" => globals reached %llu", TotalReached);
 
-                class_mark_refs(ty);
-
                 RESET_TOTAL_REACHED();
                 GCRootSet *immortal = GCImmortalSet(ty);
                 for (int i = 0; i < vN(*immortal); ++i) {
@@ -3726,30 +3724,51 @@ GetDeferTry(Ty *ty)
         zP("no active defer group");
 }
 
+inline static bool
+HasMember(Ty *ty, Value const *val, i32 id)
+{
+        switch (val->type & ~VALUE_TAGGED) {
+        case VALUE_TUPLE:
+                return tuple_get_i(val, id) != NULL;
+
+        case VALUE_OBJECT:
+                if (ObjectMember(*val, id) != NULL) {
+                        return true;
+                }
+                break;
+        }
+
+        return (class_lookup_getter_i(ty, ClassOf(val), id) != NULL)
+            || (class_lookup_method_i(ty, ClassOf(val), id) != NULL);
+}
+
 inline static noreturn void
 BadFieldAccess(Ty *ty, Value const *val, i32 z)
 {
-        if (val->type == VALUE_TUPLE) {
-                zP(
-                        "attempt to access non-existent field %s'%s'%s of %s%s%s",
-                        TERM(34),
-                        KebabName(ty, M_NAME(z)),
-                        TERM(39),
-                        TERM(97),
-                        VSC(val),
-                        TERM(39)
-                );
-        } else {
-                zP(
-                        "attempt to access non-existent member %s'%s'%s of %s%s%s",
-                        TERM(34),
-                        KebabName(ty, M_NAME(z)),
-                        TERM(39),
-                        TERM(97),
-                        VSC(val),
-                        TERM(39)
-                );
+        char const *name  = M_NAME(z);
+        char const *kebab = KebabName(ty, name);
+        usize n = strlen(name);
+        int   w = (int)strlen(kebab) - 1;
+        char hint[512] = "";
+
+        if (n > 1 && name[n - 1] == '!') {
+                InternEntry *alt = intern_get_n(&xD.members, name, n - 1);
+                if (alt->id >= 0 && HasMember(ty, val, alt->id)) {
+                        snprintf(hint, sizeof hint, "; to unwrap `%.*s`, write `(….%.*s)!`", w, kebab, w, kebab);
+                }
         }
+
+        zP(
+                "attempt to access non-existent %s %s'%s'%s of %s%s%s%s",
+                (val->type == VALUE_TUPLE) ? "field" : "member",
+                TERM(34),
+                kebab,
+                TERM(39),
+                TERM(97),
+                VSC(val),
+                TERM(39),
+                hint
+        );
 }
 
 static struct try *
@@ -13172,7 +13191,7 @@ vm_jit_declaration(Ty *ty, char *ip)
                 memcpy(&s, IP, sizeof s);
                 IP += sizeof s;
                 Class *class = class_get(ty, id);
-                        InstallMethods(ty, id, &class->s_methods, s_m);
+                InstallMethods(ty, id, &class->s_methods, s_m);
                 InstallMethods(ty, id, &class->s_getters, s_g);
                 InstallMethods(ty, id, &class->s_setters, s_s);
                 InstallMethods(ty, id, &class->methods, m);

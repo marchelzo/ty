@@ -1698,19 +1698,6 @@ Allocate0(Ty *ty, usize n)
         return memset(Allocate(ty, n), 0, n);
 }
 
-static u64
-jb_hash(jmp_buf const *jb)
-{
-        u64 hash = 2166136261UL;
-        u8 const *p = (u8 const *)jb;
-
-        for (usize i = 0; i < sizeof (*jb); ++i) {
-                hash = (hash ^ p[i]) * 16777619UL;
-        }
-
-        return hash;
-}
-
 #define S(x)  (s->x)
 #define SS(i) (&S(arenas.items)[i])
 #define SSS   SS(S(i) - 1)

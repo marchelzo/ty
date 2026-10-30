@@ -6,6 +6,7 @@ import os
 import ty
 
 import sched (inherit-elevation)
+import counters (Counters)
 
 pub use BenchRecord = {
     name: String,
@@ -19,6 +20,12 @@ pub use BenchRecord = {
 }
 
 pub use SuiteRecord = Array[BenchRecord]
+
+pub use Build = {
+    exe:  String,
+    lib:  String | nil,
+    tree: String | nil,
+}
 
 pub use Benchmark = {
     name: String,
@@ -35,6 +42,8 @@ use BenchmarkOutput = {
     name: String,
     iters: Int,
     times: Array[Float],
+    metrics: Dict[String, Array[Float]],
+    coverage: Dict[String, Float],
 }
 
 use CalibrationOutput = Int
@@ -43,7 +52,7 @@ use CalibrationOutput = Int
 //  Statistics helpers
 // ---------------------------------------------------------------------------
 
-fn median(xs: [Float]) {
+pub fn median(xs: [Float]) {
     let sorted = xs.sort()
     let nn = #sorted
     if nn % 2 == 0 {
@@ -73,18 +82,37 @@ fn percentile(xs: [Float], p: Float) {
 // ---------------------------------------------------------------------------
 
 pub class Result {
-    name:   String
-    times:  [Float]
-    iters:  Int
+    name:     String
+    times:    [Float]
+    metrics:  Dict[String, [Float]]
+    coverage: Dict[String, Float]
+    iters:    Int
 
-    init(name: String, times: [Float], iters: Int = 1) {
-        self.name  = name
-        self.times = times
-        self.iters = iters
+    init(
+        name:     String,
+        times:    [Float],
+        metrics:  Dict[String, [Float]] = %{},
+        coverage: Dict[String, Float] = %{},
+        iters:    Int = 1
+    ) {
+        self.name     = name
+        self.times    = times
+        self.metrics  = metrics
+        self.coverage = coverage
+        self.iters    = iters
     }
 
     // Per-iteration times (the meaningful metric)
     per-iter-times { times.map(t -> t / iters) }
+
+    per-iter(metric: String) -> [Float] | nil {
+        metrics[metric].?map(x -> x / iters)
+    }
+
+    metric(name: String) -> Float | nil {
+        let $xs = per-iter(name) or return nil
+        median(xs)
+    }
 
     mean   { (times.mean() ?? 0.0) / iters  }
     med    { median(per-iter-times) }
@@ -142,13 +170,28 @@ fn benchmark-program(name: String, categories: String, f) {
             let warmup = Int(argv[3])
             let rounds = Int(argv[4])
             for ..warmup { f(1) }
+            let counters = Counters.open()
             let times: [Float] = []
+            let metrics: Dict[String, [(Float, Float)]] = %{}
             for ..rounds {
+                let s0 = counters.snapshot()
                 let t0 = now()
                 f(iters)
-                times.push(now() - t0)
+                let t1 = now()
+                let s1 = counters.snapshot()
+                times.push(t1 - t0)
+                for k, x in Counters.delta(s0, s1) {
+                    (metrics[k] ?= []).push(x)
+                }
             }
-            print(json.encode(%{'name': name, 'iters': iters, 'times': times}))
+            let full = %{k: xs for k, xs in metrics if #xs == rounds}
+            print(json.encode(%{
+                'name':     name,
+                'iters':    iters,
+                'times':    times,
+                'metrics':  %{k: xs.map(&0) for k, xs in full},
+                'coverage': %{k: xs.map(&1).min() ?? 0.0 for k, xs in full}
+            }))
             os.exit(0)
         },
         /^\d+$/ => {
@@ -182,13 +225,23 @@ pub fn matches-filter(entry: Benchmark, query: String) -> Bool {
     query.words().all?(term -> term in entry.name || term in entry.tags)
 }
 
-fn benchmark-command(program: String, *args: String) -> [String] {
-    [ty.executable, '-j' if !ty.jit, program, *args]
+const LIB_ENV = 'TY_LIBRARY_PATH'
+
+fn this-build() -> Build {
+    {exe: ty.executable, lib: nil, tree: nil}
 }
 
-fn start-benchmark(program: String, *args: String) {
-    let command = benchmark-command(program, *args)
-    os.spawn(command, stdout=os.SPAWN_PIPE)
+fn start-benchmark(build: Build, program: String, *args: String) {
+    let saved = getenv(LIB_ENV)
+    if let $lib = build.lib {
+        setenv(LIB_ENV, lib)
+    }
+    let child = os.spawn([build.exe, '-j' if !ty.jit, program, *args], stdout=os.SPAWN_PIPE)
+    match saved {
+        $lib => setenv(LIB_ENV, lib),
+        _    => unsetenv(LIB_ENV)
+    }
+    child
 }
 
 fn finish-benchmark(program: String, child) -> String {
@@ -205,14 +258,14 @@ fn finish-benchmark(program: String, child) -> String {
     output.str!().trim()
 }
 
-fn invoke-benchmark(program: String, *args: String) -> String {
-    finish-benchmark(program, start-benchmark(program, *args))
+fn invoke-benchmark(build: Build, program: String, *args: String) -> String {
+    finish-benchmark(program, start-benchmark(build, program, *args))
 }
 
 pub fn load-benchmarks(dir: String | Path) -> Array[Benchmark] {
     let pending = [do {
         let program = "{path}"
-        (program, start-benchmark(program, INFO_MODE))
+        (program, start-benchmark(this-build(), program, INFO_MODE))
     } for path in Path(dir).glob('*.ty').sort(by: \_.name)]
     return [do {
         let info = json.parse(BenchmarkInfo, finish-benchmark(program, child))
@@ -243,6 +296,26 @@ pub fn calibrate(f, target: Float = 0.5) {
     iters
 }
 
+pub fn calibrate-on(build: Build, benchmark: Benchmark, target: Float) -> Int {
+    json.parse(
+        CalibrationOutput,
+        invoke-benchmark(build, benchmark.program, CALIBRATE_MODE, "{target}")
+    )
+}
+
+pub fn measure(build: Build, benchmark: Benchmark, iters: Int, warmup: Int, rounds: Int) -> Result {
+    let output = json.parse(
+        BenchmarkOutput,
+        invoke-benchmark(
+            build, benchmark.program, BENCH_MODE, "{iters}", "{warmup}", "{rounds}"
+        )
+    )
+    if output.name != benchmark.name || output.iters != iters || #output.times != rounds {
+        throw RuntimeError("invalid result from benchmark program '{benchmark.program}'")
+    }
+    Result(benchmark.name, output.times, output.metrics, output.coverage, iters)
+}
+
 pub fn run-one(
     benchmark: Benchmark,
     warmup:  Int = 3,
@@ -252,20 +325,9 @@ pub fn run-one(
     // Calibration and measurement deliberately happen in separate child
     // processes. Measurement gets its own warmup, then all timed rounds run in
     // that benchmark's otherwise-pristine process.
-    let iters = json.parse(
-        CalibrationOutput,
-        invoke-benchmark(benchmark.program, CALIBRATE_MODE, "{target}")
-    )
-    let output = json.parse(
-        BenchmarkOutput,
-        invoke-benchmark(
-            benchmark.program, BENCH_MODE, "{iters}", "{warmup}", "{rounds}"
-        )
-    )
-    if output.name != benchmark.name || output.iters != iters || #output.times != rounds {
-        throw RuntimeError("invalid result from benchmark program '{benchmark.program}'")
-    }
-    Result(benchmark.name, output.times, iters)
+    let build = this-build()
+    let iters = calibrate-on(build, benchmark, target)
+    measure(build, benchmark, iters, warmup, rounds)
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +342,13 @@ pub fn fmt-time(secs) {
     } else {
         "{secs * 1_000_000:.1}us"
     }
+}
+
+pub fn fmt-count(n: Float | Int) -> String {
+    n >= 1.0e9 ? "{n / 1.0e9:.2}G"
+  : n >= 1.0e6 ? "{n / 1.0e6:.2}M"
+  : n >= 1.0e3 ? "{n / 1.0e3:.1}K"
+  :              "{Int(n)}"
 }
 
 pub fn fmt-delta(ratio: Float) -> String {
