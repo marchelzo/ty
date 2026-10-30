@@ -219,6 +219,7 @@ unfold_rmw(Lir *L, LirInst *in)
         LirOpnd  k    = in->args[1];
         LirReg   v    = lir_reg(L, cls);
         LirReg   w    = lir_reg(L, cls);
+        LirOp    op   = LIR_ADD;
 
         if (k.kind == LO_IMM && (k.imm < -4095 || k.imm > 4095)) {
                 LirReg t = lir_reg(L, cls);
@@ -228,9 +229,14 @@ unfold_rmw(Lir *L, LirInst *in)
                 k = lir_r(t);
         }
 
+        if (k.kind == LO_IMM && k.imm < 0) {
+                op    = LIR_SUB;
+                k.imm = -k.imm;
+        }
+
         if (
                 !put(L, wide ? LIR_LD_I64 : LIR_LD_I32, v, in->args[0])
-             || !put(L, LIR_ADD, w, lir_r(v), k)
+             || !put(L, op, w, lir_r(v), k)
         ) {
                 return false;
         }
@@ -769,7 +775,7 @@ quiet(LirInst const *in)
 }
 
 static bool
-poll(Lir *L, LirSpan span)
+addpoll(Lir *L, LirSpan span)
 {
         LirLabel next = lir_label(L);
 
@@ -785,7 +791,7 @@ rewrite(Lir *L, LirInst *src, bool before, LirError *err)
         u8       use = 0;
         LirClass cls[LIR_MAX_OPERANDS];
 
-        if (before && !poll(L, in.span)) {
+        if (before && !addpoll(L, in.span)) {
                 return false;
         }
 
@@ -873,7 +879,7 @@ lir_normalize(Ty *ty, Lir *L, LirError *err)
                 armed  = polled || (armed && calm);
 
                 if (ok && (back[pc] & POLL_AFTER) && !armed) {
-                        ok    = poll(L, old[pc].span);
+                        ok    = addpoll(L, old[pc].span);
                         armed = true;
                 }
         }

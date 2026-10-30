@@ -9,6 +9,8 @@
 #include <sys/syscall.h>
 #include <linux/fs.h>
 #include <linux/userfaultfd.h>
+#elif defined(__APPLE__)
+#include <signal.h>
 #endif
 
 #include <libco.h>
@@ -73,15 +75,30 @@ static struct {
 
 #if defined(__linux__) && defined(UFFD_FEATURE_WP_ASYNC) && defined(PAGEMAP_SCAN)
  #define TY_GC_DIRTY 1
+ #define TY_GC_UFFD  1
+#elif defined(__APPLE__)
+ #define TY_GC_DIRTY 1
+ #define TY_GC_MPROT 1
 #endif
 
+typedef struct {
+        uptr start;
+        uptr end;
+        uptr a;
+} DirtyRange;
+
 static struct {
-        int                     uffd;
-        int                     pagemap;
-        bool                    ok;
-        bool                    taint;
-        vec(struct page_region) seen;
-        vec(struct page_region) old;
+        int              uffd;
+        int              pagemap;
+        bool             ok;
+        bool             taint;
+        vec(DirtyRange)  seen;
+        vec(DirtyRange)  old;
+#if defined(TY_GC_MPROT)
+        u8              *wp;
+        u8               shift;
+        struct sigaction prev[2];
+#endif
 } Dirty = { .uffd = -1, .pagemap = -1 };
 
 static u32 const GCBlockCells[GC_BLOCK_CLASSES] = {
@@ -772,6 +789,7 @@ retraced(Alloc const *a)
 }
 
 #if defined(TY_GC_DIRTY)
+#if defined(TY_GC_UFFD)
 static void
 dirty_fork(void)
 {
@@ -828,27 +846,21 @@ dirty_mode(uptr at, usize n, u64 mode)
 }
 
 static void
+dirty_protect(uptr at, usize n)
+{
+        dirty_mode(at, n, UFFDIO_WRITEPROTECT_MODE_WP);
+}
+
+static void
 dirty_unprotect(uptr at, usize n)
 {
         dirty_mode(at, n, 0);
 }
 
-static void
-rescan_range(Ty *ty, char *lo, char *hi);
-
 static bool
-dirty_scan(Ty *ty, bool rescan)
+dirty_collect(uptr at, uptr end)
 {
         struct page_region regs[256];
-
-        uptr at = GCBlockBase;
-        uptr end;
-
-        TySpinLockLock(&BlockPool.lock);
-        end = BlockPool.next;
-        TySpinLockUnlock(&BlockPool.lock);
-
-        v0(Dirty.seen);
 
         while (at < end) {
                 struct pm_scan_arg arg = {
@@ -870,19 +882,129 @@ dirty_scan(Ty *ty, bool rescan)
                 }
 
                 for (long i = 0; i < n; ++i) {
-                        xvP(Dirty.seen, regs[i]);
-                }
-
-                for (long i = 0; rescan && i < n; ++i) {
-                        rescan_range(ty, (char *)regs[i].start, (char *)regs[i].end);
+                        xvP(Dirty.seen, ((DirtyRange) { .start = regs[i].start, .end = regs[i].end }));
                 }
 
                 at = arg.walk_end;
         }
 
+        return true;
+}
+#else
+static void
+dirty_fault(int sig, siginfo_t *si, void *ctx)
+{
+        struct sigaction const *old = &Dirty.prev[sig == SIGBUS];
+        uptr                    pg  = (uptr)1 << Dirty.shift;
+        uptr                    at  = (uptr)si->si_addr & ~(pg - 1);
+
+        if (at - GCBlockBase < GCBlockSpan) {
+                Dirty.wp[(at - GCBlockBase) >> Dirty.shift] = 0;
+                if (mprotect((void *)at, pg, PROT_READ | PROT_WRITE) == 0) {
+                        return;
+                }
+        }
+
+        if (old->sa_flags & SA_SIGINFO) {
+                old->sa_sigaction(sig, si, ctx);
+        } else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) {
+                old->sa_handler(sig);
+        } else {
+                sigaction(sig, old, NULL);
+        }
+}
+
+static bool
+dirty_init(uptr base, usize span)
+{
+        struct sigaction sa = {
+                .sa_sigaction = dirty_fault,
+                .sa_flags     = SA_SIGINFO | SA_RESTART | SA_ONSTACK
+        };
+
+        Dirty.shift = __builtin_ctzll(VPage());
+        Dirty.wp    = VMap(span >> Dirty.shift);
+
+        sigemptyset(&sa.sa_mask);
+
+        return (Dirty.wp != NULL)
+            && (sigaction(SIGSEGV, &sa, &Dirty.prev[0]) == 0)
+            && (sigaction(SIGBUS,  &sa, &Dirty.prev[1]) == 0);
+}
+
+static void
+dirty_mode(uptr at, usize n, bool wp)
+{
+        if (!Dirty.ok || n == 0) {
+                return;
+        }
+
+        memset(Dirty.wp + ((at - GCBlockBase) >> Dirty.shift), wp, n >> Dirty.shift);
+
+        if (mprotect((void *)at, n, wp ? PROT_READ : (PROT_READ | PROT_WRITE)) != 0) {
+                Dirty.ok = false;
+        }
+}
+
+static void
+dirty_protect(uptr at, usize n)
+{
+        dirty_mode(at, n, true);
+}
+
+static void
+dirty_unprotect(uptr at, usize n)
+{
+        dirty_mode(at, n, false);
+}
+
+static bool
+dirty_collect(uptr at, uptr end)
+{
+        u8 const *wp = Dirty.wp;
+        u8 const *p  = wp + ((at  - GCBlockBase) >> Dirty.shift);
+        u8 const *z  = wp + ((end - GCBlockBase) >> Dirty.shift);
+
+        while (p < z && (p = memchr(p, 0, z - p)) != NULL) {
+                u8 const *q = memchr(p, 1, z - p);
+                q = (q != NULL) ? q : z;
+                xvP(Dirty.seen, ((DirtyRange) {
+                        .start = GCBlockBase + ((uptr)(p - wp) << Dirty.shift),
+                        .end   = GCBlockBase + ((uptr)(q - wp) << Dirty.shift)
+                }));
+                p = q;
+        }
+
+        return true;
+}
+#endif
+
+static void
+rescan_range(Ty *ty, char *lo, char *hi);
+
+static bool
+dirty_scan(Ty *ty, bool rescan)
+{
+        uptr end;
+
+        TySpinLockLock(&BlockPool.lock);
+        end = BlockPool.next;
+        TySpinLockUnlock(&BlockPool.lock);
+
+        v0(Dirty.seen);
+
+        if (!dirty_collect(GCBlockBase, end)) {
+                return false;
+        }
+
+        for (usize i = 0; rescan && i < vN(Dirty.seen); ++i) {
+                DirtyRange const *r = v_(Dirty.seen, i);
+                rescan_range(ty, (char *)r->start, (char *)r->end);
+        }
+
         for (usize i = 0; i < vN(Dirty.old); ++i) {
-                struct page_region const *r = v_(Dirty.old, i);
-                Alloc                    *a = (Alloc *)r->categories;
+                DirtyRange const *r = v_(Dirty.old, i);
+                Alloc            *a = (Alloc *)r->a;
                 if (a->type == GC_OBJECT || a->type == GC_TUPLE) {
                         xvP(ty->marking, ((GCWork) { .p = (uptr)a->data | 1 }));
                 } else {
@@ -942,7 +1064,7 @@ GCProtect(Ty *ty)
                                 continue;
                         }
                         if (x != hi) {
-                                dirty_mode(lo, hi - lo, UFFDIO_WRITEPROTECT_MODE_WP);
+                                dirty_protect(lo, hi - lo);
                                 lo = x;
                         }
                         hi = y;
@@ -950,7 +1072,7 @@ GCProtect(Ty *ty)
                 }
         }
 
-        dirty_mode(lo, hi - lo, UFFDIO_WRITEPROTECT_MODE_WP);
+        dirty_protect(lo, hi - lo);
 
         v0(Dirty.seen);
 }
@@ -1661,6 +1783,7 @@ GCBufferOwner(Ty *ty, Alloc const *buf)
         return o;
 }
 
+#if defined(TY_GC_DIRTY)
 static void
 rescan_range(Ty *ty, char *lo, char *hi)
 {
@@ -1683,15 +1806,16 @@ rescan_range(Ty *ty, char *lo, char *hi)
                 for (u32 i = GCCellOf(b, s); i < j; ++i) {
                         Alloc const *a = (Alloc const *)(b->cells + (usize)i * b->cell);
                         if (b->marks[i] != 0 && retraced(a)) {
-                                xvP(Dirty.old, ((struct page_region) {
-                                        .start      = (uptr)s,
-                                        .end        = (uptr)e,
-                                        .categories = (uptr)a
+                                xvP(Dirty.old, ((DirtyRange) {
+                                        .start = (uptr)s,
+                                        .end   = (uptr)e,
+                                        .a     = (uptr)a
                                 }));
                         }
                 }
         }
 }
+#endif
 
 static void
 clear_cache(GCBlockCache const *bc)
