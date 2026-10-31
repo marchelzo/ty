@@ -8,7 +8,6 @@ import lib (Build)
 
 let PERF_DIR = Path(__file__).parent
 let STORE    = PERF_DIR / 'builds.git'
-let CACHE    = PERF_DIR / 'builds'
 let REFS     = 'refs/builds/'
 
 fn store() -> Repository {
@@ -80,18 +79,16 @@ pub fn find(prefix: String) -> String | nil {
     }
 }
 
-pub fn checkout(tree: String) -> Build {
-    let dir = CACHE / tree
+pub fn checkout(tree: String, root: Path) -> Build {
+    let dir = root / tree
     if !(dir / 'ty').file? {
         let ^repo = store()
-        let tmp = CACHE / ".{tree}.{os.getpid()}"
         for entry in repo.tree-at("{REFS}{tree}").walk() {
-            let file = tmp / entry.path
+            let file = dir / entry.path
             file.parent.mkdir(parents=true, exist-ok=true)
             file.write(entry.bytes)
             file.chmod(entry.executable? ? 0o755 : 0o644)
         }
-        tmp.rename(dir)
     }
     let libs = os.listdir("{dir}").filter(\_.starts?('lib')).sort()
     {exe: "{dir / 'ty'}", lib: libs.map(\"{dir / _}").join(':'), tree: tree}

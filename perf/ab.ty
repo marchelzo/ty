@@ -20,19 +20,19 @@ let T95 = [
      2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
 ]
 
-fn stored(label: String, tree: String) -> Contender {
-    {label: label, build: checkout(tree), tree: tree}
+fn stored(label: String, tree: String, root: Path) -> Contender {
+    {label: label, build: checkout(tree, root), tree: tree}
 }
 
-fn recorded(database: String, id: Int) -> Contender {
+fn recorded(database: String, id: Int, root: Path) -> Contender {
     let $tree = run-build(database, id)
         or throw ValueError("run #{id} was recorded before builds were snapshotted")
-    stored("#{id}", tree)
+    stored("#{id}", tree, root)
 }
 
-fn unrecorded(spec: String) -> Contender {
+fn unrecorded(spec: String, root: Path) -> Contender {
     if let $tree = find(spec) {
-        return stored(tree[;12], tree)
+        return stored(tree[;12], tree, root)
     }
     if !Path(spec).file? {
         throw ValueError("'{spec}' is not a run number, a stored build, or a ty binary")
@@ -41,10 +41,10 @@ fn unrecorded(spec: String) -> Contender {
     {label: spec, build: {exe: spec, lib: nil, tree: tree}, tree: tree}
 }
 
-pub fn resolve(spec: String, database: String) -> Contender {
+pub fn resolve(spec: String, database: String, root: Path) -> Contender {
     match spec {
-        /^#?(\d{1,6})$/ => recorded(database, Int($1)),
-        _               => unrecorded(spec)
+        /^#?(\d{1,6})$/ => recorded(database, Int($1), root),
+        _               => unrecorded(spec, root)
     }
 }
 

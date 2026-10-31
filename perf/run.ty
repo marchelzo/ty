@@ -13,6 +13,7 @@ import lib (
     matches-filter,
     Result,
     BenchRecord,
+    Benchmark,
 )
 import sched (elevate, SCHED_ENV)
 import builds (snapshot-self)
@@ -345,6 +346,19 @@ fn run-suite(opts: RunOptions, database: String) {
     print-run(database, run-id)
 }
 
+fn ab-in(scratch: Path, opts: AbOptions, database: String, running: [Benchmark]) -> Bool {
+    let (a, b) = try {
+        (resolve(opts.base, database, scratch), resolve(opts.new, database, scratch))
+    } catch e: ValueError {
+        print(chalk"[red bold]{e.what}[/]")
+        return false
+    }
+    unsetenv(SCHED_ENV)
+    let settings = opts.noPin ? [] : elevate(opts.cpu)
+    ab(a, b, running, opts.pairs, opts.warmup, opts.rounds, opts.target, settings)
+    true
+}
+
 fn run-ab(opts: AbOptions, database: String) {
     let running = opts.filter
         ? benchmarks().filter(entry -> matches-filter(entry, opts.filter))
@@ -353,15 +367,12 @@ fn run-ab(opts: AbOptions, database: String) {
         print(chalk"[red bold]No benchmarks matched[/] '{opts.filter}'.")
         os.exit(1)
     }
-    let (a, b) = try {
-        (resolve(opts.base, database), resolve(opts.new, database))
-    } catch e: ValueError {
-        print(chalk"[red bold]{e.what}[/]")
+    let raced = with scratch = Path.tempdir('ty-ab') {
+        ab-in(scratch, opts, database, running)
+    }
+    if !raced {
         os.exit(1)
     }
-    unsetenv(SCHED_ENV)
-    let settings = opts.noPin ? [] : elevate(opts.cpu)
-    ab(a, b, running, opts.pairs, opts.warmup, opts.rounds, opts.target, settings)
 }
 
 fn selected-metrics(selection: [String] | nil) -> [String] {
