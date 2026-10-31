@@ -89,7 +89,10 @@ int
 trait_new(Ty *ty, Stmt *s);
 
 void
-class_mark(Ty *ty, int c);
+class_mark_statics(Ty *ty);
+
+void
+class_root_statics(Ty *ty, Class *c);
 
 char const *
 class_name(Ty *ty, int class);

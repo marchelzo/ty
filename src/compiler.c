@@ -18067,6 +18067,27 @@ cexpr(Ty *ty, Value *v)
                 break;
         }
 
+        case TyFrozen:
+        {
+                Value *value = xmA(sizeof *value);
+                Value  bad;
+
+                *value = *v;
+                PopTag(value);
+                value->src = 0;
+
+                if (!GCFreeze(ty, value, value, &bad)) {
+                        zP("ty.Frozen(): can't freeze a value of type %s", ValueTypeName(ty, &bad));
+                }
+
+                e->type = EXPRESSION_VALUE;
+                e->v = value;
+
+                gc_immortalize(ty, value);
+
+                break;
+        }
+
         case TyInt:
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->z;
@@ -21099,6 +21120,7 @@ compiler_template_pattern(Ty *ty, Expr *e)
 
         Value value = compiler_render_template(ty, e);
 
+        GCFreeze(ty, &value, &value, NULL);
         gc_immortalize(ty, &value);
         xvP(TemplatePatterns, ((TemplatePattern) { .template = e, .value = value }));
 

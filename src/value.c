@@ -2463,7 +2463,6 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_THREAD:           mark_thread(ty, v);                                               break;
         case VALUE_STRING:           mark_string(ty, v);                                               break;
         case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
-        case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
         case VALUE_REF:              MARK(v->ref); MarkNext(ty, v->ref);                               break;
         case VALUE_BLOB:             MARK(v->blob); GCMarkOwned(ty, v->blob, v->blob->items);          break;
         case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;

@@ -5,7 +5,7 @@
 #include "table.h"
 #include "ast.h"
 
-struct statement **
+Stmt **
 parse(Ty *ty, char const *source, char const *file);
 
 bool
@@ -45,7 +45,7 @@ void
 parse_sync_lex(Ty *ty);
 
 void
-make_with(Ty *ty, struct expression *e, StmtVec defs, struct statement *body);
+make_with(Ty *ty, Expr *e, StmtVec defs, Stmt *body);
 
 char *
 gensym(Ty *ty);

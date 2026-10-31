@@ -168,7 +168,7 @@ inert(Alloc const *a)
 
         return (a->type == GC_OBJECT)
             && (obj->dynamic == NULL)
-            && (obj->finalized || obj->class->finalizer.type == VALUE_NONE);
+            && (obj->finalized || IsNone(obj->class->finalizer));
 }
 
 inline static void
@@ -342,7 +342,7 @@ GCForget(Ty *ty, AllocList *allocs)
 }
 
 static isize
-sweep_list(Ty *ty, AllocList *list, AllocList *old)
+sweep_list(Ty *ty, AllocList *restrict list, AllocList *restrict old)
 {
         usize n    = 0;
         isize live = 0;
@@ -474,8 +474,8 @@ QueueFinalizers(Ty *ty, AllocList *list, ValueVector *queue)
         usize n = 0;
 
         for (usize i = 0; i < vN(*list); ++i) {
-                Alloc *a   = v__(*list, i);
-                TyObject     *obj = (TyObject *)a->data;
+                Alloc *a = v__(*list, i);
+                TyObject *obj = (TyObject *)a->data;
 
                 if (doomed(ty, a) && obj->finalized) {
                         continue;
@@ -668,7 +668,7 @@ GCDropFFIAutos(AllocList *list)
 isize
 GCHeap(ThreadGroup const *group)
 {
-        isize heap = group->GCLive;
+        isize heap = group->GCLive + group->DeadUsed;
 
         for (usize i = 0; i < vN(group->TyList); ++i) {
                 heap += v__(group->TyList, i)->memory_used;
@@ -698,6 +698,9 @@ GCSettle(Ty *ty)
         isize budget = (GCMinorOK(ty) && (live >= GC_MINOR_MIN))
                      ? max(GC_INITIAL_LIMIT, min(live / 2, GC_NURSERY_MAX))
                      : max(GC_INITIAL_LIMIT, live);
+
+        group->GCBudget = budget;
+        atomic_store_explicit(&group->DeadUsed, 0, memory_order_relaxed);
 
         for (usize i = 0; i < vN(group->TyList); ++i) {
                 v__(group->TyList, i)->memory_used  = 0;
@@ -739,6 +742,33 @@ GCDefer(Ty *ty)
 {
         ty->gc_deferred  = true;
         JitInterruptFlag = 1;
+}
+
+enum : u64 {
+        GC_RETRACED = (1ULL << GC_TUPLE)
+                    | (1ULL << GC_VALUE)
+                    | (1ULL << GC_OBJECT)
+                    | (1ULL << GC_ARRAY)
+                    | (1ULL << GC_HEAP)
+                    | (1ULL << GC_DICT)
+                    | (1ULL << GC_SET)
+                    | (1ULL << GC_QUEUE)
+                    | (1ULL << GC_SHARED_QUEUE)
+                    | (1ULL << GC_GENERATOR)
+                    | (1ULL << GC_THREAD)
+                    | (1ULL << GC_JIT_CODE)
+                    | (1ULL << GC_LIR)
+                    | (1ULL << GC_FFI_AUTO)
+                    | (1ULL << GC_BUF_VALUES)
+                    | (1ULL << GC_BUF_DICT)
+                    | (1ULL << GC_BUF_SET)
+                    | (1ULL << GC_ENV)
+};
+
+inline static bool
+retraced(Alloc const *a)
+{
+        return (GC_RETRACED >> a->type) & 1;
 }
 
 #if defined(TY_GC_DIRTY)
@@ -852,7 +882,12 @@ dirty_scan(Ty *ty, bool rescan)
 
         for (usize i = 0; i < vN(Dirty.old); ++i) {
                 struct page_region const *r = v_(Dirty.old, i);
-                GCRetrace(ty, (Alloc *)r->categories, (char *)r->start, (char *)r->end);
+                Alloc                    *a = (Alloc *)r->categories;
+                if (a->type == GC_OBJECT || a->type == GC_TUPLE) {
+                        xvP(ty->marking, ((GCWork) { .p = (uptr)a->data | 1 }));
+                } else {
+                        GCRetrace(ty, a, (char *)r->start, (char *)r->end);
+                }
         }
 
         v0(Dirty.old);
@@ -861,17 +896,27 @@ dirty_scan(Ty *ty, bool rescan)
 }
 
 inline static bool
-dense(GCBlock const *b)
+hashed(Alloc const *a)
 {
-        return (b->age >= 2)
-            && (b->cls == GC_BLOCK_LARGE || 4 * b->used > 3 * b->ncells);
+        return (a->type == GC_BUF_DICT) || (a->type == GC_BUF_SET);
+}
+
+inline static bool
+dense(GCBlock const *b, u8 young)
+{
+        Alloc const *a = (Alloc const *)b->cells;
+
+        return (b->cls == GC_BLOCK_LARGE)    ? (b->age >= 1 + hashed(a)) && retraced(a)
+             : (4 * b->used > 3 * b->ncells) ? (b->age >= young)
+             :                                 (b->age >= 2) && (4 * b->used > b->ncells);
 }
 
 void
 GCProtect(Ty *ty)
 {
-        uptr lo = 0;
-        uptr hi = 0;
+        uptr lo    = 0;
+        uptr hi    = 0;
+        u8   young = (ty->group->GCPromoted >= GC_PAR_MIN) ? 1 : 2;
 
         if (Dirty.taint || !Dirty.ok || atomic_load(&GCIsolatedGroups) != 0) {
                 v0(Dirty.seen);
@@ -883,9 +928,17 @@ GCProtect(Ty *ty)
                 uptr end = v_(Dirty.seen, i)->end;
                 for (uptr at = s & ~(uptr)(GC_BLOCK_SIZE - 1); at < end; at += GC_BLOCK_SIZE) {
                         GCBlock *b = GCBlockOf((void *)at);
+                        GCBlock *u = GCBlockAt((void *)at);
                         uptr     x = max(s, at);
                         uptr     y = min(end, at + GC_BLOCK_SIZE);
-                        if (b->ncells == 0 || b->owner != ty->gc_owner || !dense(b)) {
+                        if (b->ncells == 0 || b->owner != ty->gc_owner) {
+                                continue;
+                        }
+                        if (u->wp) {
+                                u->wp   = 0;
+                                b->cool = 3;
+                        }
+                        if (b->cool != 0 || !dense(b, young)) {
                                 continue;
                         }
                         if (x != hi) {
@@ -1018,9 +1071,9 @@ pool_take(usize units)
                 for (usize i = 0; i < vN(BlockPool.runs); ++i) {
                         BlockRun *r = v_(BlockPool.runs, i);
                         if (r->units >= units) {
-                                at                = r->at;
-                                r->at            += units << GC_BLOCK_SHIFT;
-                                r->units         -= units;
+                                at = r->at;
+                                r->at += units << GC_BLOCK_SHIFT;
+                                r->units -= units;
                                 BlockPool.cached -= min(BlockPool.cached, units);
                                 if (r->units == 0) {
                                         *r = vXx(BlockPool.runs);
@@ -1029,7 +1082,7 @@ pool_take(usize units)
                         }
                 }
                 if (at == 0 && BlockPool.next + (units << GC_BLOCK_SHIFT) <= BlockPool.end) {
-                        at              = BlockPool.next;
+                        at = BlockPool.next;
                         BlockPool.next += units << GC_BLOCK_SHIFT;
                 }
         }
@@ -1134,7 +1187,11 @@ GCBlockAlloc(Ty *ty, usize n, char type)
                         }
                 }
 
-                b = (vN(bc->partial[cls]) > 0) ? vXx(bc->partial[cls]) : block_new(ty, cls);
+                if (vN(bc->partial[cls]) > 0) {
+                        b = vXx(bc->partial[cls]);
+                } else {
+                        b = block_new(ty, cls);
+                }
 
                 if (b == NULL) {
                         return NULL;
@@ -1166,12 +1223,19 @@ GCLargeAlloc(Ty *ty, usize n, char type)
         }
 
         uptr at = pool_take(units);
+        u8   wp = 0;
 
         if (at == 0) {
                 return NULL;
         }
 
-        dirty_unprotect(at, units << GC_BLOCK_SHIFT);
+        for (usize i = 0; i < units; ++i) {
+                wp |= GCBlockAt((void *)(at + (i << GC_BLOCK_SHIFT)))->wp;
+        }
+
+        if (wp) {
+                dirty_unprotect(at, units << GC_BLOCK_SHIFT);
+        }
 
         GCBlock *b    = GCBlockAt((void *)at);
         u8      *maps = block_maps(at);
@@ -1295,6 +1359,8 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, AllocList *cleanup)
 {
         usize n    = 0;
         isize used = 0;
+        uptr  lo   = 0;
+        uptr  hi   = 0;
 
         sweep_cleanup(ty, cleanup);
 
@@ -1309,16 +1375,26 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, AllocList *cleanup)
 
                 used += (isize)live * b->cell;
 
-                b->used = live;
-                b->old  = live;
-                b->age += (b->age < 255);
-                b->cursor = 0;
+                b->used    = live;
+                b->old     = live;
+                b->age    += (b->age < 255);
+                b->cool   -= (b->cool > 0);
+                b->cursor  = 0;
 
                 if (GCGen) {
                         memcpy(b->taken, b->marks, b->ncells);
                 } else {
                         SWAP(u8 *, b->taken, b->marks);
                         memset(b->marks, 0, b->ncells);
+                }
+
+                if (live == 0 && b->wp) {
+                        if ((uptr)b->cells != hi) {
+                                dirty_unprotect(lo, hi - lo);
+                                lo = (uptr)b->cells;
+                        }
+                        hi    = (uptr)b->cells + GC_BLOCK_SIZE;
+                        b->wp = 0;
                 }
 
                 if (live == 0) {
@@ -1333,6 +1409,8 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, AllocList *cleanup)
                 }
         }
 
+        dirty_unprotect(lo, hi - lo);
+
         vN(bc->all) = n;
         n = 0;
 
@@ -1344,9 +1422,10 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, AllocList *cleanup)
                         continue;
                 }
 
-                b->age += (b->age < 255);
-                b->old = 1;
-                b->marks[0] = GCGen;
+                b->age      += (b->age < 255);
+                b->cool     -= (b->cool > 0);
+                b->old       = 1;
+                b->marks[0]  = GCGen;
                 *v_(bc->large, n++) = b;
                 used += (isize)large_charge(b);
         }
@@ -1423,6 +1502,7 @@ GCBlockDrop(Ty *ty, Alloc *a)
                 for (usize i = vN(ty->blocks.large); i > 0; --i) {
                         if (v__(ty->blocks.large, i - 1) == b) {
                                 *v_(ty->blocks.large, i - 1) = vXx(ty->blocks.large);
+                                MemoryUsed = max(MemoryUsed - (isize)large_charge(b), 0);
                                 PROF_FREE(a);
                                 pool_give((uptr)b->cells, b->units);
                                 return;
@@ -1439,9 +1519,10 @@ GCBlockDrop(Ty *ty, Alloc *a)
 
         PROF_FREE(a);
 
-        b->taken[i] = 0;
-        b->marks[i] = 0;
-        b->used -= 1;
+        MemoryUsed   = max(MemoryUsed - (isize)b->cell, 0);
+        b->taken[i]  = 0;
+        b->marks[i]  = 0;
+        b->used     -= 1;
 
         if (ty->blocks.cur[b->cls] == b && i < b->cursor) {
                 b->cursor = i;
@@ -1600,11 +1681,12 @@ rescan_range(Ty *ty, char *lo, char *hi)
                 u32 j = (b->cls == GC_BLOCK_LARGE) ? 1 : min(GCCellOf(b, e - 1) + 1, b->ncells);
 
                 for (u32 i = GCCellOf(b, s); i < j; ++i) {
-                        if (b->marks[i] != 0) {
+                        Alloc const *a = (Alloc const *)(b->cells + (usize)i * b->cell);
+                        if (b->marks[i] != 0 && retraced(a)) {
                                 xvP(Dirty.old, ((struct page_region) {
                                         .start      = (uptr)s,
                                         .end        = (uptr)e,
-                                        .categories = (uptr)(b->cells + (usize)i * b->cell)
+                                        .categories = (uptr)a
                                 }));
                         }
                 }
@@ -1704,8 +1786,6 @@ GCPrepare(Ty *ty, bool minor)
         retrace_list(ty, &group->DeadAllocs);
         retrace_cells(ty, &group->DeadCleanup);
         TySpinLockUnlock(&group->DLock);
-
-        GCDrain(ty);
 
         return true;
 }
@@ -2054,18 +2134,14 @@ gc_register(Ty *ty, void *p)
 void
 gc_immortalize(Ty *ty, Value const *v)
 {
-        enum : u64 {
-                INERT = GC_INERT_VALUES
-                      | (1ULL << VALUE_BUILTIN_FUNCTION)
-        };
-
         u32 t = v->type & 63;
 
         if (
                 (v->src == 0)
              && (
-                        ((INERT >> t) & 1)
+                        ((GC_INERT_VALUES >> t) & 1)
                      || ((t == VALUE_PTR) && (v->gcptr == NULL))
+                     || GCFrozen(v)
                 )
         ) {
                 return;
@@ -2107,3 +2183,423 @@ GCImmortalSet(Ty *ty)
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
+
+typedef struct {
+        Ty           *ty;
+        void const  **from;
+        void        **to;
+        usize         mask;
+        usize         n;
+        Value         bad;
+        bool          failed;
+} Freezer;
+
+static vec(void const *) FrozenArenas;
+
+inline static usize
+freeze_slot(void const *p, usize mask)
+{
+        return ((uptr)p >> 4) * 0x9E3779B97F4A7C15ULL >> 32 & mask;
+}
+
+static void *
+freeze_find(Freezer const *f, void const *p)
+{
+        for (usize i = freeze_slot(p, f->mask);; i = (i + 1) & f->mask) {
+                if (f->from[i] == p) {
+                        return f->to[i];
+                }
+                if (f->from[i] == NULL) {
+                        return NULL;
+                }
+        }
+}
+
+static void
+freeze_link(Freezer *f, void const *p, void *q)
+{
+        if (2 * (f->n + 1) > f->mask) {
+                usize        mask = 2 * f->mask + 1;
+                void const **from = xmA((mask + 1) * sizeof *from);
+                void       **to   = xmA((mask + 1) * sizeof *to);
+                memset(from, 0, (mask + 1) * sizeof *from);
+                for (usize i = 0; i <= f->mask; ++i) {
+                        if (f->from[i] != NULL) {
+                                usize j = freeze_slot(f->from[i], mask);
+                                while (from[j] != NULL) {
+                                        j = (j + 1) & mask;
+                                }
+                                from[j] = f->from[i];
+                                to[j]   = f->to[i];
+                        }
+                }
+                xmF(f->from);
+                xmF(f->to);
+                f->from = from;
+                f->to   = to;
+                f->mask = mask;
+        }
+
+        usize i = freeze_slot(p, f->mask);
+
+        while (f->from[i] != NULL) {
+                i = (i + 1) & f->mask;
+        }
+
+        f->from[i] = p;
+        f->to[i]   = q;
+        f->n      += 1;
+}
+
+static void *
+frozen_alloc(usize n, char type)
+{
+        Alloc *a = ty_malloc(sizeof *a + max(n, 1));
+
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->size = n;
+        a->type = type;
+        atomic_init(&a->mark, GC_FROZEN);
+        atomic_init(&a->hard, 0);
+
+        return a->data;
+}
+
+inline static bool
+frozen_ptr(void const *p)
+{
+        return (p != NULL)
+            && !InGCBlocks(ALLOC_OF(p))
+            && (atomic_load_explicit(&ALLOC_OF(p)->mark, memory_order_relaxed) == GC_FROZEN);
+}
+
+static void *
+frozen_copy(Freezer *f, void const *p, char type)
+{
+        void *q = freeze_find(f, p);
+
+        if (q == NULL) {
+                usize n = ALLOC_OF(p)->size;
+                q = frozen_alloc(n, type);
+                memcpy(q, p, n);
+                freeze_link(f, p, q);
+        }
+
+        return q;
+}
+
+static void
+freeze_src(Ty *ty, u32 src)
+{
+        void const *arena = source_arena(ty, src);
+        Expr const *e     = source_lookup(ty, src);
+        void const *key   = (e != NULL && e->mod != NULL) ? (void const *)e->mod : arena;
+
+        for (usize i = 0; i < vN(FrozenArenas); ++i) {
+                if (v__(FrozenArenas, i) == key) {
+                        return;
+                }
+        }
+
+        xvP(FrozenArenas, key);
+
+        Value v = NIL;
+        v.src   = src;
+        gc_immortalize(ty, &v);
+}
+
+static Value
+freeze(Freezer *f, Value v);
+
+static void
+freeze_values(Freezer *f, Value *xs, usize n)
+{
+        for (usize i = 0; i < n && !f->failed; ++i) {
+                xs[i] = freeze(f, xs[i]);
+        }
+}
+
+static Dict *
+freeze_dict(Freezer *f, Dict *d)
+{
+        Ty   *ty  = f->ty;
+        Dict *out = freeze_find(f, d);
+
+        if (out != NULL) {
+                return out;
+        }
+
+        out = frozen_alloc(sizeof (Dict), GC_DICT);
+        memset(out, 0, sizeof *out);
+        freeze_link(f, d, out);
+
+        Dict *tmp = dict_new(ty);
+        Value root = DICT(tmp);
+
+        gP(&root);
+
+        for (DictItem *it = d->first; it != NULL && !f->failed; it = it->next) {
+                Value k = freeze(f, it->k);
+                Value x = freeze(f, it->v);
+                dict_put_value(ty, tmp, k, x);
+        }
+
+        out->dflt = freeze(f, d->dflt);
+
+        if (tmp->items != NULL) {
+                usize     n     = tmp->size * sizeof (DictItem);
+                DictItem *items = frozen_alloc(n, GC_BUF_DICT);
+                isize     delta = (char *)items - (char *)tmp->items;
+                memcpy(items, tmp->items, n);
+                for (usize i = 0; i < tmp->size; ++i) {
+                        DictItem *it = &items[i];
+                        it->prev = (it->prev != NULL) ? (DictItem *)((char *)it->prev + delta) : NULL;
+                        it->next = (it->next != NULL) ? (DictItem *)((char *)it->next + delta) : NULL;
+                }
+                out->items = items;
+                out->first = (tmp->first != NULL) ? (DictItem *)((char *)tmp->first + delta) : NULL;
+                out->last  = (tmp->last  != NULL) ? (DictItem *)((char *)tmp->last  + delta) : NULL;
+        }
+
+        out->size  = tmp->size;
+        out->count = tmp->count;
+        out->tombs = tmp->tombs;
+
+        gX();
+
+        return out;
+}
+
+static Set *
+freeze_set(Freezer *f, Set *s)
+{
+        Ty  *ty  = f->ty;
+        Set *out = freeze_find(f, s);
+
+        if (out != NULL) {
+                return out;
+        }
+
+        out = frozen_alloc(sizeof (Set), GC_SET);
+        memset(out, 0, sizeof *out);
+        freeze_link(f, s, out);
+
+        Set  *tmp  = set_new(ty);
+        Value root = SET(tmp);
+
+        gP(&root);
+
+        for (SetItem *it = s->first; it != NULL && !f->failed; it = it->next) {
+                set_add(ty, tmp, freeze(f, it->k));
+        }
+
+        if (tmp->items != NULL) {
+                usize    n     = tmp->size * sizeof (SetItem);
+                SetItem *items = frozen_alloc(n, GC_BUF_SET);
+                isize    delta = (char *)items - (char *)tmp->items;
+                memcpy(items, tmp->items, n);
+                for (usize i = 0; i < tmp->size; ++i) {
+                        SetItem *it = &items[i];
+                        it->prev = (it->prev != NULL) ? (SetItem *)((char *)it->prev + delta) : NULL;
+                        it->next = (it->next != NULL) ? (SetItem *)((char *)it->next + delta) : NULL;
+                }
+                out->items = items;
+                out->first = (tmp->first != NULL) ? (SetItem *)((char *)tmp->first + delta) : NULL;
+                out->last  = (tmp->last  != NULL) ? (SetItem *)((char *)tmp->last  + delta) : NULL;
+        }
+
+        out->size  = tmp->size;
+        out->count = tmp->count;
+        out->tombs = tmp->tombs;
+
+        gX();
+
+        return out;
+}
+
+static Value
+freeze_fail(Freezer *f, Value v)
+{
+        if (!f->failed) {
+                f->failed = true;
+                f->bad    = v;
+        }
+
+        return v;
+}
+
+static Value
+freeze(Freezer *f, Value v)
+{
+        u32 t = v.type & ~VALUE_TAGGED;
+
+        if (f->failed) {
+                return v;
+        }
+
+        if (v.src != 0) {
+                freeze_src(f->ty, v.src);
+        }
+
+        if ((GC_INERT_VALUES >> (t & 63)) & 1) {
+                return v;
+        }
+
+        switch (t) {
+        case VALUE_STRING:
+                if (!v.ro && v.str0 != NULL && !frozen_ptr(v.str0)) {
+                        u8 *str0 = frozen_copy(f, v.str0, GC_STRING);
+                        v.str    = str0 + (v.str - v.str0);
+                        v.str0   = str0;
+                }
+                return v;
+
+        case VALUE_TUPLE:
+                if (v.items != NULL && !frozen_ptr(v.items)) {
+                        bool   seen  = (freeze_find(f, v.items) != NULL);
+                        Value *items = frozen_copy(f, v.items, GC_TUPLE);
+                        if (!seen) {
+                                freeze_values(f, items, ALLOC_OF(items)->size / sizeof (Value));
+                        }
+                        v.items = items;
+                }
+                if (v.ids != NULL && !frozen_ptr(v.ids)) {
+                        v.ids = frozen_copy(f, v.ids, GC_IDS);
+                }
+                return v;
+
+        case VALUE_ARRAY:
+                if (!frozen_ptr(v.array)) {
+                        Array *a = freeze_find(f, v.array);
+                        if (a == NULL) {
+                                a = frozen_alloc(sizeof (Array), GC_ARRAY);
+                                freeze_link(f, v.array, a);
+                                a->count    = v.array->count;
+                                a->capacity = v.array->count;
+                                a->items    = NULL;
+                                if (a->count > 0) {
+                                        a->items = frozen_alloc(a->count * sizeof (Value), GC_BUF_VALUES);
+                                        memcpy(a->items, v.array->items, a->count * sizeof (Value));
+                                        freeze_values(f, a->items, a->count);
+                                }
+                        }
+                        v.array = a;
+                }
+                return v;
+
+        case VALUE_BLOB:
+                if (!frozen_ptr(v.blob)) {
+                        Blob *b = freeze_find(f, v.blob);
+                        if (b == NULL) {
+                                b = frozen_alloc(sizeof (Blob), GC_BLOB);
+                                freeze_link(f, v.blob, b);
+                                b->count    = v.blob->count;
+                                b->capacity = v.blob->count;
+                                b->items    = NULL;
+                                if (b->count > 0) {
+                                        b->items = frozen_alloc(b->count, GC_BUF_BYTES);
+                                        memcpy(b->items, v.blob->items, b->count);
+                                }
+                        }
+                        v.blob = b;
+                }
+                return v;
+
+        case VALUE_DICT:
+                if (!frozen_ptr(v.dict)) {
+                        v.dict = freeze_dict(f, v.dict);
+                }
+                return v;
+
+        case VALUE_SET:
+                if (!frozen_ptr(v.set)) {
+                        v.set = freeze_set(f, v.set);
+                }
+                return v;
+
+        case VALUE_OBJECT:
+                if (frozen_ptr(v.object)) {
+                        return v;
+                }
+                if (
+                        (v.object->dynamic != NULL)
+                     || !IsNone(v.object->class->finalizer)
+                ) {
+                        return freeze_fail(f, v);
+                }
+                if (freeze_find(f, v.object) == NULL) {
+                        TyObject *o = frozen_copy(f, v.object, GC_OBJECT);
+                        freeze_values(f, o->slots, o->nslot);
+                }
+                v.object = freeze_find(f, v.object);
+                return v;
+
+        case VALUE_FUNCTION:
+        case VALUE_NATIVE_FUNCTION:
+                if (
+                        (v.info[FUN_INFO_CAPTURES] != 0)
+                     || from_eval(&v)
+                     || has_meta(&v)
+                     || (v.xinfo != NULL)
+                ) {
+                        return freeze_fail(f, v);
+                }
+                return v;
+
+        case VALUE_REGEX:
+                return v.regex->gc ? freeze_fail(f, v) : v;
+
+        case VALUE_PTR:
+                return (v.gcptr != NULL) ? freeze_fail(f, v) : v;
+
+        default:
+                return freeze_fail(f, v);
+        }
+}
+
+bool
+GCFreeze(Ty *ty, Value const *v, Value *out, Value *bad)
+{
+        Freezer f = {
+                .ty   = ty,
+                .mask = 63,
+                .from = xmA(64 * sizeof (void const *)),
+                .to   = xmA(64 * sizeof (void *))
+        };
+
+        memset(f.from, 0, 64 * sizeof (void const *));
+
+        Value x = freeze(&f, *v);
+
+        xmF(f.from);
+        xmF(f.to);
+
+        if (f.failed) {
+                if (bad != NULL) {
+                        *bad = f.bad;
+                }
+                return false;
+        }
+
+        *out = x;
+
+        return true;
+}
+
+bool
+GCFrozen(Value const *v)
+{
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_STRING: return !v->ro && frozen_ptr(v->str0);
+        case VALUE_TUPLE:  return frozen_ptr(v->items);
+        case VALUE_ARRAY:  return frozen_ptr(v->array);
+        case VALUE_BLOB:   return frozen_ptr(v->blob);
+        case VALUE_DICT:   return frozen_ptr(v->dict);
+        case VALUE_SET:    return frozen_ptr(v->set);
+        case VALUE_OBJECT: return frozen_ptr(v->object);
+        default:           return false;
+        }
+}

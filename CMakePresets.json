@@ -39,7 +39,7 @@
             "displayName": "Development (-g -O1)",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-                "CMAKE_C_FLAGS_RELWITHDEBINFO": "-g -O1 -fno-omit-frame-pointer"
+                "CMAKE_C_FLAGS_RELWITHDEBINFO": "-g3 -Og -fno-omit-frame-pointer"
             }
         },
         {
@@ -63,10 +63,10 @@
         {
             "name": "release",
             "inherits": "local",
-            "displayName": "Release (-O3, LTO)",
+            "displayName": "Release (-O2, LTO)",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS_RELEASE": "-O3 -DNDEBUG"
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -fno-omit-frame-pointer -DNDEBUG"
             }
         },
         {

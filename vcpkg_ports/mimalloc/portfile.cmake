@@ -2,7 +2,7 @@ vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO microsoft/mimalloc
     REF "v${VERSION}"
-    SHA512 5218fcd3ad285687ed3f78b4651d7d3aee92b6f28e6c563a884975e654a43c94c4e5c02c5ed0322c3d3627d83d4843df2d2d8441f09aa18d00674ca9fd657345
+    SHA512 03090fbcfe16aff6b640ef64f8d26551f0347c9e49fbca4efc48d6874ec87c109227fa05157e21e2031d58fe9374a8af9a5e34cf67a2255806f32e39ce4ca3ed
     HEAD_REF master
     PATCHES
         pkgconfig-cxx.diff
@@ -27,9 +27,9 @@ vcpkg_cmake_configure(
         -DMI_BUILD_SHARED=${MI_BUILD_SHARED}
         -DMI_INSTALL_TOPLEVEL=ON
     OPTIONS_DEBUG
-        -DMI_DEBUG_FULL=ON
+        -DMI_DEBUG=FULL
     OPTIONS_RELEASE
-        -DMI_DEBUG_FULL=OFF
+        -DMI_DEBUG=OFF
 )
 
 vcpkg_cmake_install()

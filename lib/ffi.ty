@@ -233,7 +233,7 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
        |void
     )$/x
 
-    const map = static!(%{
+    const map = static!(ty.freeze(%{
         'bool':                   c.u8,
         '_Bool':                  c.u8,
         'char':                   c.char,
@@ -283,7 +283,7 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
         'ptrdiff_t':              c.i64,
         'enum':                   c.int,
         'void':                   c.void
-    })
+    }))
 
     let allow-name? = (has-name? != false)
     let need-name?  = (has-name? == true)

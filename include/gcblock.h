@@ -25,6 +25,7 @@ typedef struct gc_block {
         u32   old;
         u32   cursor;
         u32   units;
+        u8    cool;
         u64   magic;
         u8   *marks;
         u8   *taken;

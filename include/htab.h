@@ -66,12 +66,11 @@ ht_eq(Ty *ty, Value const *a, Value const *b)
 {
         switch (PACK_TYPES(a->type, b->type)) {
         case PAIR_OF(VALUE_STRING):
-                return (a->tags == b->tags)
-                    && (sN(*a) == sN(*b))
+                return (sN(*a) == sN(*b))
                     && ((ss(*a) == ss(*b)) || memcmp(ss(*a), ss(*b), sN(*a)) == 0);
 
         case PAIR_OF(VALUE_INTEGER):
-                return (a->tags == b->tags) && (a->z == b->z);
+                return (a->z == b->z);
 
         default:
                 return v_eq(a, b);

@@ -10343,6 +10343,59 @@ TY_BUILTIN_RAW(ty_gc)
         return NIL;
 }
 
+// ty.freeze[T](x: T) -> T
+TY_BUILTIN_RAW(ty_freeze)
+{
+        ASSERT_ARGC("ty.freeze()", 1);
+
+        Value out;
+        Value bad;
+
+        if (!GCFreeze(ty, &ARG(0), &out, &bad)) {
+                zP("ty.freeze(): can't freeze a value of type %s", ValueTypeName(ty, &bad));
+        }
+
+        return out;
+}
+
+// ty.frozen?[T](x: T) -> prelude.Bool
+TY_BUILTIN_RAW(ty_frozen_p)
+{
+        ASSERT_ARGC("ty.frozen?()", 1);
+        return BOOLEAN(GCFrozen(&ARG(0)));
+}
+
+// ty.gc-stats() -> {runs: prelude.Int, minors: prelude.Int, parallel: prelude.Int, allocated: prelude.Int, pause: prelude.Float, pause-max: prelude.Float, prep: prelude.Float, mark: prelude.Float, sweep: prelude.Float, heap: prelude.Int, heap-max: prelude.Int, live: prelude.Int, live-max: prelude.Int, limit: prelude.Int}
+TY_BUILTIN_RAW(ty_gc_stats)
+{
+        ASSERT_ARGC("ty.gc-stats()", 0);
+
+/* ========================================================================= */
+#define xS(f) atomic_load_explicit(&GCStats.f, memory_order_relaxed)
+/* ------------------------------------------------------------------------- */
+        Value stats = vTn(
+                "runs",      INTEGER(xS(runs)),
+                "minors",    INTEGER(xS(minors)),
+                "parallel",  INTEGER(xS(parallel)),
+                "allocated", INTEGER(xS(allocated) + max(0, MemoryUsed)),
+                "pause",     REAL(xS(pause)     / 1.0e9),
+                "pauseMax",  REAL(xS(pause_max) / 1.0e9),
+                "prep",      REAL(xS(prep)      / 1.0e9),
+                "mark",      REAL(xS(mark)      / 1.0e9),
+                "sweep",     REAL(xS(sweep)     / 1.0e9),
+                "heap",      INTEGER(GCHeap(ty->group)),
+                "heapMax",   INTEGER(xS(heap_max)),
+                "live",      INTEGER(ty->group->GCLive),
+                "liveMax",   INTEGER(xS(live_max)),
+                "limit",     INTEGER(MemoryLimit)
+        );
+/* ------------------------------------------------------------------------- */
+#undef xS
+/* ========================================================================= */
+
+        return stats;
+}
+
 // ty/coro.close(g: _) -> nil
 TY_BUILTIN_RAW(ty_coro_close)
 {

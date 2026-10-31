@@ -1,0 +1,92 @@
+import ty
+
+class Point {
+    x: Int
+    label: String
+    init(x: Int, label: String) { self.x = x; self.label = label }
+}
+
+class Registry {
+    static entries: Array[String] = []
+}
+
+macro frozen-table! {
+    ty.Frozen(%{"key-{i}": ["value-{i}" * 4] for i in ..64})
+}
+
+fn churn() -> Int {
+    let t = 0
+    for i in ..300000 {
+        let xs = [i, "churn-{i}", %{i: [i]}]
+        t += #xs
+    }
+    t
+}
+
+fn counter*() {
+    yield 1
+}
+
+pub fn freeze-copies-deep-structure() {
+    let shared = ["shared-{1}" * 8, "x" * 40]
+    let table  = ty.freeze(%{
+        "alpha-{1}": {name: "a" * 40, xs: shared, ys: shared},
+        "beta-{2}":  {name: "b" * 40, xs: ["b" * 30], ys: []}
+    })
+
+    churn()
+
+    let alpha = table["alpha-1"]!
+    assert(ty.frozen?(table))
+    assert(alpha.name == "a" * 40)
+    assert(alpha.xs == shared)
+    assert(ident(alpha.xs) == ident(alpha.ys))
+    assert(table.keys() == ["alpha-1", "beta-2"])
+    assert(table["beta-2"]!.xs == ["b" * 30])
+}
+
+pub fn freeze-handles-sets-tuples-blobs-and-objects() {
+    let set  = ty.freeze(%{"one-{1}", "two-{2}", "three-{3}"})
+    let tup  = ty.freeze((1, "two" * 20, [3.0, 4.0]))
+    let blob = ty.freeze(Blob().push("frozen bytes"))
+    let obj  = ty.freeze(Point(7, "seven" * 10))
+
+    churn()
+
+    assert("two-2" in set && !("four" in set))
+    assert(tup == (1, "two" * 20, [3.0, 4.0]))
+    assert(blob.str() == "frozen bytes")
+    assert(obj.x == 7 && obj.label == "seven" * 10)
+    assert(ty.frozen?(set) && ty.frozen?(tup) && ty.frozen?(blob) && ty.frozen?(obj))
+    assert(!ty.frozen?(%{"x": 1}) && !ty.frozen?([1]))
+}
+
+pub fn freeze-rejects-values-the-gc-must-trace() {
+    let ys = [1]
+    ys.push(2)
+    let f = () -> #ys
+
+    assert(try { ty.freeze([counter()]); false } catch _: RuntimeError { true })
+    assert(try { ty.freeze(%{"f": f}); false } catch _: RuntimeError { true })
+}
+
+pub fn frozen-compile-time-values-survive-collections() {
+    let table = frozen-table!
+
+    churn()
+
+    assert(ty.frozen?(table))
+    assert(#table == 64)
+    assert(table["key-63"] == ["value-63" * 4])
+}
+
+pub fn static-fields-are-roots-without-the-class-value() {
+    for i in ..100 {
+        Registry.entries.push("entry-{i}" * 4)
+    }
+
+    churn()
+
+    assert(#Registry.entries == 100)
+    assert(Registry.entries[99] == "entry-99" * 4)
+}

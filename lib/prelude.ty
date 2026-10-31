@@ -1006,7 +1006,7 @@ macro _ComprPart = {
 
 macro __type! {
     let t0: _ = parse::type(0)
-    ty.Value(t0)
+    ty.Frozen(t0)
 }
 
 macro _Param = ty.Param[{name: String, ?constraint: AST, ?default: AST}]
@@ -1152,6 +1152,7 @@ macro __define_ast! {
        | ty.Stop[AST]
        | ty.Nil
        | ty.Value[_]
+       | ty.Frozen[_]
        | ty.Expr[_]
        | ty.Stmt[_]
        | nil
@@ -1649,8 +1650,12 @@ class Int : IntoPtr[_] {
 
     init(x: Any);
 
-    **(x: Float | Int) -> Float | Int {
-        type(x)(math.pow(self, x))
+    **(n: Int) -> Int {
+        iround(math.pow(self, n))
+    }
+
+    **(x: Float) -> Float {
+        math.pow(self, x)
     }
 
     ~() -> Int {
@@ -1826,7 +1831,7 @@ class Float {
     }
 
     **(b: Int | Float) -> Float {
-        return math.pow(self, b)
+        math.pow(self, b)
     }
 
     negate() {

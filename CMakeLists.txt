@@ -23,12 +23,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
   option(TY_USDT "Compile USDT (SystemTap/bpftrace) probes into the executables" OFF)
 endif()
-find_program(TY_MOLD NAMES ld64.mold mold)
-if(TY_MOLD)
-  option(TY_USE_MOLD "Link with mold" ON)
-else()
-  option(TY_USE_MOLD "Link with mold" OFF)
-endif()
 
 include(CTest)
 
@@ -149,20 +143,6 @@ if(TY_ASAN)
     add_compile_options("SHELL:-mllvm -asan-stack=0")
   endif()
   add_link_options(-fsanitize=address)
-endif()
-
-if(TY_USE_MOLD AND TY_BOLT)
-  message(STATUS "TY_BOLT: not linking with mold (llvm-bolt misparses its PLT header)")
-  set(TY_USE_MOLD OFF)
-endif()
-
-if(TY_USE_MOLD)
-  include(CheckLinkerFlag)
-  check_linker_flag(C "-fuse-ld=mold" _mold_supported)
-  if(NOT _mold_supported)
-    message(FATAL_ERROR "TY_USE_MOLD: ${CMAKE_C_COMPILER} cannot link with -fuse-ld=mold")
-  endif()
-  add_link_options(-fuse-ld=mold)
 endif()
 
 # ---
@@ -806,9 +786,9 @@ target_compile_definitions(${_tgt_ty_interface}
     $<$<NOT:$<BOOL:${TY_LOG}>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8
-    XXH_INLINE_ALL
     XXH_STATIC_LINKING_ONLY
-    $<$<CONFIG:Debug>:XXH_NO_INLINE_HINTS=1>
+    $<$<NOT:$<CONFIG:Debug>>:XXH_INLINE_ALL>
+    $<$<NOT:$<CONFIG:Release>>:XXH_NO_INLINE_HINTS=1>
 )
 
 # ---

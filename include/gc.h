@@ -331,7 +331,7 @@ GCMarkOwned(Ty *ty, void const *owner, void const *buf)
                 u32      i = GCCellOf(b, ALLOC_OF(buf));
                 if (b->owner == ty->gc_owner) {
                         b->marks[i] = 1;
-                        b->refs[i]  = GCBlockRef(ALLOC_OF(owner));
+                        b->refs [i] = GCBlockRef(ALLOC_OF(owner));
                 }
         } else if (InGCBlocks(ALLOC_OF(owner))) {
                 GCTrackCleanup(ty, ALLOC_OF(owner));
@@ -494,6 +494,14 @@ gc_register(Ty *ty, void *p);
 void
 gc_immortalize(Ty *ty, Value const *v);
 
+enum { GC_FROZEN = 0xFF };
+
+bool
+GCFreeze(Ty *ty, Value const *v, Value *out, Value *bad);
+
+bool
+GCFrozen(Value const *v);
+
 void
 gc_clear_root_set(Ty *ty);
 
@@ -620,6 +628,22 @@ GCSweepDeadBlocks(Ty *ty);
 
 isize
 GCHeap(ThreadGroup const *group);
+
+typedef struct {
+        _Atomic u64 runs;
+        _Atomic u64 minors;
+        _Atomic u64 parallel;
+        _Atomic u64 allocated;
+        _Atomic u64 pause;
+        _Atomic u64 pause_max;
+        _Atomic u64 prep;
+        _Atomic u64 mark;
+        _Atomic u64 sweep;
+        _Atomic u64 heap_max;
+        _Atomic u64 live_max;
+} GCStatCounters;
+
+extern GCStatCounters GCStats;
 
 void
 GCSettle(Ty *ty);

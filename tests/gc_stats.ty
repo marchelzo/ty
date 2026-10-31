@@ -1,0 +1,44 @@
+import ty
+
+fn churn(n: Int) -> Int {
+    let t = 0
+    for i in ..n {
+        t += #[i, i + 1, "s{i}"]
+    }
+    t
+}
+
+pub fn allocation-advances-gc-stats() {
+    let s0 = ty.gc-stats()
+    churn(400000)
+    let s1 = ty.gc-stats()
+
+    assert(s1.runs > s0.runs)
+    assert(s1.allocated > s0.allocated)
+    assert(s1.pause >= s0.pause)
+    assert(s1.pause-max >= 0.0)
+    assert(s1.minors <= s1.runs)
+    assert(s1.parallel <= s1.runs)
+    assert(s1.prep + s1.mark + s1.sweep <= s1.pause + 1e-6)
+    assert(s1.heap-max >= s1.live)
+    assert(s1.live-max >= s1.live)
+    assert(s1.limit > 0)
+}
+
+fn garbage(n: Int) -> Int {
+    let t = 0
+    for i in ..n {
+        t += #(i, "g{i & 0xf}", [i])
+    }
+    t
+}
+
+pub fn exited-threads-charge-the-group-budget() {
+    let s0 = ty.gc-stats()
+    for k in ..200 {
+        Thread(garbage, 5000).join()
+    }
+    let s1 = ty.gc-stats()
+
+    assert(s1.runs - s0.runs >= 5)
+}

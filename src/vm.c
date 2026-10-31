@@ -231,14 +231,7 @@ Value LOTS_OF_NILS[2048];
 #define GC_IS_WAITING \
         atomic_load_explicit(&ty->group->WantGC, memory_order_relaxed)
 
-#if defined(TY_GC_STATS)
-static u64 GCTimeTotal  = 0;
-static u64 GCTimeWait   = 0;
-static u64 GCTimeMark   = 0;
-static u64 GCTimeSweep  = 0;
-static u64 GCMaxHeap    = 0;
-static u64 GCRunCount   = 0;
-#endif
+GCStatCounters GCStats;
 
 
 #if !defined(TY_RELEASE)
@@ -522,6 +515,7 @@ BequeathAllocs(ThreadGroup *group)
         xvPv(heir->DeadCleanup, group->DeadCleanup);
         GCAdoptBlocks(&heir->DeadBlocks, &group->DeadBlocks, bits);
         heir->DeadBuf += group->DeadBuf;
+        atomic_fetch_add_explicit(&heir->DeadUsed, group->DeadUsed, memory_order_relaxed);
 
         TySpinLockUnlock(&heir->DLock);
         TySpinLockUnlock(&heir->GCLock);
@@ -692,6 +686,79 @@ WaitGC(Ty *ty)
         dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
 }
 
+static vec(u32) GlobalScan;
+static usize    GlobalSeen;
+
+inline static bool
+GlobalFixed(Ty *ty, usize i)
+{
+        if (InteractiveSession || LangServer || i >= compiler_global_count(ty)) {
+                return false;
+        }
+
+        Symbol const *sym = compiler_global_sym(ty, i);
+
+        return SymbolIsConst(sym)
+            || SymbolIsFunction(sym)
+            || SymbolIsClass(sym)
+            || SymbolIsTag(sym)
+            || SymbolIsBuiltin(sym)
+            || SymbolIsMember(sym)
+            || SymbolIsMacro(sym)
+            || SymbolIsFunMacro(sym);
+}
+
+inline static bool
+GlobalSettled(Value const *v)
+{
+        u32 t = v->type & ~VALUE_TAGGED;
+
+        if (v->src != 0 || t == VALUE_UNINITIALIZED) {
+                return false;
+        }
+
+        switch (t) {
+        case VALUE_FUNCTION:
+                return (v->info[FUN_INFO_CAPTURES] == 0)
+                    && !from_eval(v)
+                    && !has_meta(v)
+                    && (v->xinfo == NULL);
+
+        case VALUE_PTR:
+                return v->gcptr == NULL;
+
+        case VALUE_REGEX:
+                return !v->regex->gc;
+
+        default:
+                return ((GC_INERT_VALUES >> (v->type & 63)) & 1) || GCFrozen(v);
+        }
+}
+
+static void
+MarkGlobals(Ty *ty)
+{
+        usize n = 0;
+
+        while (GlobalSeen < vN(Globals)) {
+                xvP(GlobalScan, (u32)GlobalSeen | ((u32)GlobalFixed(ty, GlobalSeen) << 31));
+                GlobalSeen += 1;
+        }
+
+        for (usize i = 0; i < vN(GlobalScan); ++i) {
+                u32    e = v__(GlobalScan, i);
+                Value *v = v_(Globals, e & INT32_MAX);
+                GCMarkPush(ty, v);
+                if (!(e >> 31) || !GlobalSettled(v)) {
+                        *v_(GlobalScan, n++) = e;
+                }
+        }
+
+        vN(GlobalScan) = n;
+
+        GCDrain(ty);
+}
+
 static void
 MarkGroupRoots(Ty *ty)
 {
@@ -703,12 +770,13 @@ MarkGroupRoots(Ty *ty)
         }
         TySpinLockUnlock(&ty->group->DLock);
 
+        class_mark_statics(ty);
+        GCDrain(ty);
+
         if (ty->group == &MainGroup) {
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
                 RESET_TOTAL_REACHED();
-                for (int i = 0; i < vN(Globals); ++i) {
-                        value_mark(ty, v_(Globals, i));
-                }
+                MarkGlobals(ty);
                 LOG_REACHED(" => globals reached %llu", TotalReached);
 
                 RESET_TOTAL_REACHED();
@@ -753,6 +821,25 @@ DoGC(Ty *ty)
         DoGCKind(ty, false);
 }
 
+inline static void
+StatMax(_Atomic u64 *m, u64 x)
+{
+        u64 old = atomic_load_explicit(m, memory_order_relaxed);
+
+        while (
+                (x > old)
+             && !atomic_compare_exchange_weak_explicit(
+                        m,
+                        &old,
+                        x,
+                        memory_order_relaxed,
+                        memory_order_relaxed
+                )
+        ) {
+                continue;
+        }
+}
+
 void
 DoGCKind(Ty *ty, bool minor)
 {
@@ -769,10 +856,8 @@ DoGCKind(Ty *ty, bool minor)
 
         PROF_ENTER(PS_GC);
 
-#if defined(TY_GC_STATS)
         u64 start = TyMonotonicTime();
         u64 heap  = GCHeap(ty->group);
-#endif
 
         TY_PROBE_IF(gc__start, (unsigned long)GCHeap(ty->group));
 
@@ -823,24 +908,26 @@ DoGCKind(Ty *ty, bool minor)
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
+        u64 charged = atomic_load_explicit(&ty->group->DeadUsed, memory_order_relaxed);
+        for (usize i = 0; i < vN(ty->group->TyList); ++i) {
+                charged += max(0, v__(ty->group->TyList, i)->memory_used);
+        }
+
         StartGC(ty, GCGen ? GC_PHASE_PREP : GC_PHASE_MARK);
 
         bool parallel = GCParallelBegin(ty, minor && GCGen);
+        u64  mark;
 
         if (GCGen) {
                 AwaitReady(ty->group, nRunning);
                 ty->group->GCMinor = GCPrepare(ty, minor);
+                mark = TyMonotonicTime();
+                GCDrain(ty);
                 NextGCPhase(ty, GC_PHASE_MARK, nRunning);
         } else {
                 ty->group->GCMinor = false;
+                mark = TyMonotonicTime();
         }
-
-#if defined(TY_GC_STATS)
-        if (heap > GCMaxHeap) {
-                GCMaxHeap = heap;
-        }
-        u64 mark = TyMonotonicTime();
-#endif
 
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
@@ -878,9 +965,7 @@ DoGCKind(Ty *ty, bool minor)
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
-#if defined(TY_GC_STATS)
         u64 sweep = TyMonotonicTime();
-#endif
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
         ty->group->WantGC = false;
@@ -921,6 +1006,28 @@ DoGCKind(Ty *ty, bool minor)
 
         TySpinLockUnlock(&ty->group->GCLock);
 
+        u64 end  = TyMonotonicTime();
+        u64 live = ty->group->GCLive;
+
+/* ========================================================================= */
+#define xS(f, n) atomic_fetch_add_explicit(&GCStats.f, (n), memory_order_relaxed)
+/* ------------------------------------------------------------------------- */
+        xS(runs,      1);
+        xS(minors,    ty->group->GCMinor);
+        xS(parallel,  parallel);
+        xS(allocated, charged);
+        xS(pause,     end   - start);
+        xS(prep,      mark  - start);
+        xS(mark,      sweep - mark);
+        xS(sweep,     end   - sweep);
+/* ------------------------------------------------------------------------- */
+#undef xS
+/* ========================================================================= */
+
+        StatMax(&GCStats.pause_max, end - start);
+        StatMax(&GCStats.heap_max,  heap);
+        StatMax(&GCStats.live_max,  live);
+
         UnlockThreads(ty, blockedThreads, nBlocked);
         GCLOG("Unlocking ThreadsLock and GCLock. Live = %lld, DeadBuf = %lld", ty->group->GCLive, ty->group->DeadBuf);
 
@@ -929,15 +1036,6 @@ DoGCKind(Ty *ty, bool minor)
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
         RunFinalizers(ty);
-
-#if defined(TY_GC_STATS)
-        u64 end = TyMonotonicTime();
-        GCTimeTotal += end - start;
-        GCTimeWait += mark - start;
-        GCTimeMark += sweep - mark;
-        GCTimeSweep += end - sweep;
-        GCRunCount += 1;
-#endif
 
 #ifdef TY_HAVE_SAMPLER
         prof_gc_done(probe_heap, ty->group->GCLive, TyMonotonicTime() - probe_t0);
@@ -3216,6 +3314,7 @@ AddThread(Ty *ty, TyThread self)
         GCLOG("AddThread(): %llu: taking lock", TID);
         TySpinLockLock(&ty->group->Lock);
         GCLOG("AddThread(): %llu: took lock", TID);
+        ty->memory_limit = max(GC_INITIAL_LIMIT, ty->group->GCBudget);
         xvP(ty->group->TyList, ty);
         xvP(ty->group->ThreadList, self);
         xvP(ty->group->ThreadLocks, ty->lock);
@@ -3242,12 +3341,14 @@ CleanupThread(void *ctx)
 
         DebugThreadExit(ty);
 
-        TySpinLockLock(&ty->group->DLock);
-        if (MemoryUsed >= MemoryLimit) {
-                TySpinLockUnlock(&ty->group->DLock);
-                DoGC(ty);
-                TySpinLockLock(&ty->group->DLock);
+        isize used = max(0, MemoryUsed);
+        isize dead = atomic_fetch_add_explicit(&ty->group->DeadUsed, used, memory_order_relaxed);
+
+        if (dead + used >= MemoryLimit) {
+                GCCollect(ty);
         }
+
+        TySpinLockLock(&ty->group->DLock);
         xvPv(ty->group->DeadAllocs, ty->allocs);
         xvPv(ty->group->DeadAllocs, ty->old);
         xvPv(ty->group->DeadAllocs, ty->special);
@@ -7493,7 +7594,7 @@ Top:
         dont_printf("GET_NEXT: i = %d\n", i);
         print_stack(ty, 10);
 
-        switch (v.type) {
+        switch (top()[-1].type) {
         case VALUE_HEAP:
                 v = HEAP_VIEW(v.heap);
         case VALUE_ARRAY:
@@ -10225,6 +10326,7 @@ BinaryOp:
                                 *vp->ref = v;
                         }
                         *vp = v;
+                        class_root_statics(ty, class);
                         break;
                 }
 
@@ -11519,14 +11621,14 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
 #if defined(TY_GC_STATS)
         printf("--------------------------------------\n");
-        printf("GC stats (ran %llu times):\n", GCRunCount);
+        printf("GC stats (ran %llu times):\n", (unsigned long long)GCStats.runs);
         printf("--------------------------------------\n");
         printf("  Allocated: %.2f MB\n", TotalBytesAllocated / 1.0e6);
-        printf("  Peak RSS:  %.2f MB\n", GCMaxHeap / 1.0e6);
-        printf("  Total time: %.4fs\n", GCTimeTotal / 1.0e9);
-        printf("       Wait time:  %.4fs\n", GCTimeWait / 1.0e9);
-        printf("       Mark time:  %.4fs\n", GCTimeMark / 1.0e9);
-        printf("       Sweep time: %.4fs\n", GCTimeSweep / 1.0e9);
+        printf("  Peak heap: %.2f MB\n", GCStats.heap_max / 1.0e6);
+        printf("  Total time: %.4fs\n", GCStats.pause / 1.0e9);
+        printf("       Prep time:  %.4fs\n", GCStats.prep / 1.0e9);
+        printf("       Mark time:  %.4fs\n", GCStats.mark / 1.0e9);
+        printf("       Sweep time: %.4fs\n", GCStats.sweep / 1.0e9);
         printf("--------------------------------------\n");
 #endif
 
@@ -13214,11 +13316,13 @@ vm_jit_declaration(Ty *ty, char *ip)
                 memcpy(&member, IP, sizeof member);
                 IP += sizeof member;
                 Value value = pop();
-                Value *slot = itable_get(ty, &class_get(ty, id)->s_fields, member);
+                Class *class = class_get(ty, id);
+                Value *slot  = itable_get(ty, &class->s_fields, member);
                 if (slot->type == VALUE_REF) {
                         *slot->ref = value;
                 }
                 *slot = value;
+                class_root_statics(ty, class);
         }
         IP = saved;
 }

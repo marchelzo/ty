@@ -514,6 +514,7 @@ struct class {
         bool final;
         bool really_final;
         bool extended;
+        bool rooted;
 
         Class *super;
 
@@ -621,6 +622,7 @@ typedef struct thread_group {
         AllocList   DeadCleanup;
         GCBlockCache DeadBlocks;
         isize       DeadBuf;
+        _Atomic isize DeadUsed;
         ValueVector Finalize;
 
         TySpinLock GCLock;
@@ -637,6 +639,7 @@ typedef struct thread_group {
         _Atomic isize GCSwept;
         isize       GCPromoted;
         isize       GCFullAt;
+        isize       GCBudget;
         AllocList   PinYoung;
 
         TySpinLock    RefLock;

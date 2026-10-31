@@ -5432,12 +5432,12 @@ infix_user_op(Ty *ty, Expr *left)
 
         int prec = 8;
 
-        struct value *p = table_look(ty, &uops, e->op_name);
+        Value *p = table_look(ty, &uops, e->op_name);
         if (p != NULL) {
                 prec = (p->z > 0) ? p->z : llabs(p->z) - 1;
         }
 
-        struct value *sc = table_look(ty, &uopcs, e->op_name);
+        Value *sc = table_look(ty, &uopcs, e->op_name);
         if (sc != NULL) {
                 e->sc = sc->ptr;
         } else {
@@ -9049,7 +9049,7 @@ parse_next(Ty *ty)
         next();
 }
 
-struct value
+Value
 parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;

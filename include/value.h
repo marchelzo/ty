@@ -224,7 +224,8 @@ enum {
         X(Scheme)               \
         X(Bound)                \
         X(TypeValue)            \
-        X(Overload)
+        X(Overload)             \
+        X(Frozen)
 
 
 enum {
@@ -952,14 +953,23 @@ void
 _value_mark(Ty *ty, Value const *v);
 
 enum : u64 {
-        GC_INERT_VALUES = (1ULL << VALUE_INTEGER)
+        GC_INERT_VALUES = (1ULL << VALUE_ZERO)
+                        | (1ULL << VALUE_INTEGER)
                         | (1ULL << VALUE_REAL)
                         | (1ULL << VALUE_BOOLEAN)
                         | (1ULL << VALUE_NIL)
                         | (1ULL << VALUE_NONE)
                         | (1ULL << VALUE_TAG)
                         | (1ULL << VALUE_SENTINEL)
-                        | (1ULL << VALUE_INDEX),
+                        | (1ULL << VALUE_INDEX)
+                        | (1ULL << VALUE_CLASS)
+                        | (1ULL << VALUE_BUILTIN_FUNCTION)
+                        | (1ULL << VALUE_OPERATOR)
+                        | (1ULL << VALUE_TYPE)
+                        | (1ULL << VALUE_UNINITIALIZED)
+                        | (1ULL << VALUE_NAMESPACE)
+                        | (1ULL << VALUE_BREAK)
+                        | (1ULL << VALUE_TOMBSTONE),
 
         GC_GREY_VALUES  = (1ULL << VALUE_ARRAY)
                         | (1ULL << VALUE_DICT)

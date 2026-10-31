@@ -225,6 +225,7 @@ class_add_s_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
         (void)type;
         (void)dflt;
         itable_add(ty, &c->s_fields, id, REF(NewZero(ty)));
+        class_root_statics(ty, c);
 }
 
 inline static usize
@@ -385,15 +386,35 @@ class_ctor(Ty *ty, int class)
         return &c->init;
 }
 
-void
-class_mark(Ty *ty, int c)
-{
-        Class *class = C(c);
+static vec(Class *) StaticRoots;
+static TySpinLock   StaticLock = TY_MUTEX_INIT;
 
-        for (usize i = 0; i < vN(class->s_fields.values); ++i) {
-                Value *v = v_(class->s_fields.values, i);
-                GCMarkPush(ty, v);
+void
+class_root_statics(Ty *ty, Class *c)
+{
+        if (c->rooted || vN(c->s_fields.values) == 0) {
+                return;
         }
+
+        TySpinLockLock(&StaticLock);
+        if (!c->rooted) {
+                c->rooted = true;
+                xvP(StaticRoots, c);
+        }
+        TySpinLockUnlock(&StaticLock);
+}
+
+void
+class_mark_statics(Ty *ty)
+{
+        TySpinLockLock(&StaticLock);
+        for (usize i = 0; i < vN(StaticRoots); ++i) {
+                Class *c = v__(StaticRoots, i);
+                for (usize j = 0; j < vN(c->s_fields.values); ++j) {
+                        GCMarkPush(ty, v_(c->s_fields.values, j));
+                }
+        }
+        TySpinLockUnlock(&StaticLock);
 }
 
 char const *
@@ -693,6 +714,7 @@ class_resolve_all(Ty *ty, int class)
                         itable_copy_weak(ty, &c0->s_getters, &c->s_getters);
                         itable_copy_weak(ty, &c0->s_setters, &c->s_setters);
                         itable_copy_weak(ty, &c0->s_fields,  &c->s_fields);
+                        class_root_statics(ty, c);
                 }
         } while ((c = qget(ty, &sq, &i, j)) != NULL);
 

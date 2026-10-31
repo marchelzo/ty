@@ -187,20 +187,20 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 Value *
 dict_put_member_if_not_exists(Ty *ty, Dict *d, char const *member)
 {
-        return dict_put_key_if_not_exists(ty, d, STRING_NOGC(member, strlen(member)));
+        return dict_put_key_if_not_exists(ty, d, xSz(member));
 }
 
 Value *
 dict_get_member(Ty *ty, Dict *d, char const *key)
 {
-        Value string = STRING_NOGC(key, strlen(key));
+        Value string = xSz(key);
         return dict_get_value(ty, d, &string);
 }
 
 void
 dict_put_member(Ty *ty, Dict *d, char const *key, Value value)
 {
-        Value string = STRING_NOGC(key, strlen(key));
+        Value string = xSz(key);
         dict_put_value(ty, d, string, value);
 }
 
@@ -229,9 +229,12 @@ dict_trace(Ty *ty, Dict *d)
         }
 #endif
 
-        htfor(it, d) {
-                GCMarkPush(ty, &it->k);
-                GCMarkPush(ty, &it->v);
+        for (usize i = 0; i < d->size; ++i) {
+                DictItem *it = &d->items[i];
+                if (!HT_EMPTY(it) &&  !HT_TOMB(it)) {
+                        GCMarkPush(ty, &it->k);
+                        GCMarkPush(ty, &it->v);
+                }
         }
 }
 

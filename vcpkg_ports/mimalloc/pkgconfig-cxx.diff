@@ -1,8 +1,6 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5cc7ec5..578d235 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -680,8 +680,13 @@ endif()
+@@ -1190,8 +1190,13 @@
  
  
  # pkg-config file support
