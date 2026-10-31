@@ -316,7 +316,9 @@ GCForgetObject(Ty *ty, void const *o)
         for (usize k = 0; k < countof(lists); ++k) {
                 for (usize i = vN(*lists[k]); i > 0; --i) {
                         if (v__(*lists[k], i - 1)->data == o) {
-                                MemoryUsed -= v__(*lists[k], i - 1)->size;
+                                if (lists[k] == &ty->old) {
+                                        ty->old_used -= v__(*lists[k], i - 1)->size;
+                                }
                                 vvXi(*lists[k], i - 1);
                                 return;
                         }
@@ -325,14 +327,13 @@ GCForgetObject(Ty *ty, void const *o)
 }
 
 void
-GCForget(Ty *ty, AllocList *allocs, isize *used)
+GCForget(Ty *ty, AllocList *allocs)
 {
         for (usize i = 0; i < vN(*allocs); ++i) {
                 if (
                         (A_LOAD(&v__(*allocs, i)->mark) & 1)
                      || (A_LOAD(&v__(*allocs, i)->hard) != 0)
                 ) {
-                        *used -= min(v__(*allocs, i)->size, *used);
                         A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);
                         SWAP(Alloc *, v__(*allocs, i), v_L(*allocs));
                         vvX(*allocs);
@@ -340,10 +341,11 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
         }
 }
 
-static void
+static isize
 sweep_list(Ty *ty, AllocList *list, AllocList *old)
 {
-        usize n = 0;
+        usize n    = 0;
+        isize live = 0;
 
         GC_STOP();
         for (usize i = 0; i < vN(*list); ++i) {
@@ -355,7 +357,6 @@ sweep_list(Ty *ty, AllocList *list, AllocList *old)
                         !(A_LOAD(&a->mark) & 1)
                      && (A_LOAD(&a->hard) == 0)
                 ) {
-                        ty->memory_used -= min(a->size, ty->memory_used);
                         PROF_FREE(a);
                         if (!inert(a)) {
                                 collect(ty, a);
@@ -364,15 +365,20 @@ sweep_list(Ty *ty, AllocList *list, AllocList *old)
                 } else if (!GCGen) {
                         A_STORE(&a->mark, A_LOAD(&a->mark) & ~1);
                         *v_(*list, n++) = a;
+                        live += a->size;
                 } else if (old != NULL && (A_LOAD(&a->mark) & 1)) {
                         xvP(*old, a);
+                        ty->old_used += a->size;
                 } else {
                         *v_(*list, n++) = a;
+                        live += a->size;
                 }
         }
         GC_RESUME();
 
         vN(*list) = n;
+
+        return live;
 }
 
 void
@@ -381,20 +387,24 @@ GCSweepTy(Ty *ty)
         GCDropRefIndex(ty->group);
         GCDropFFIAutos(&ty->ffi_autos);
 
-        sweep_list(ty, &ty->special, NULL);
+        isize live = sweep_list(ty, &ty->special, NULL);
 
         if (!ty->group->GCMinor) {
-                sweep_list(ty, &ty->old, NULL);
+                ty->old_used = sweep_list(ty, &ty->old, NULL);
         }
 
-        sweep_list(ty, &ty->allocs, &ty->old);
-        GCSweepBlocks(ty);
+        live += sweep_list(ty, &ty->allocs, &ty->old);
+        live += ty->old_used;
+        live += GCSweepBlocks(ty);
+
+        atomic_fetch_add_explicit(&ty->group->GCSwept, live, memory_order_relaxed);
 }
 
-void
-GCSweep(Ty *ty, AllocList *allocs, isize *used)
+isize
+GCSweep(Ty *ty, AllocList *allocs)
 {
-        usize n = 0;
+        usize n    = 0;
+        isize live = 0;
 
         GCDropRefIndex(ty->group);
 
@@ -412,7 +422,6 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                         !(A_LOAD(&v__(*allocs, i)->mark) & 1)
                      && (A_LOAD(&v__(*allocs, i)->hard) == 0)
                 ) {
-                        *used -= min(v__(*allocs, i)->size, *used);
                         PROF_FREE(v__(*allocs, i));
                         if (v__(*allocs, i)->type != GC_FFI_AUTO) {
                                 collect(ty, v__(*allocs, i));
@@ -422,12 +431,15 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                         if (!GCGen) {
                                 A_STORE(&v__(*allocs, i)->mark, A_LOAD(&v__(*allocs, i)->mark) & ~1);
                         }
+                        live += v__(*allocs, i)->size;
                         *v_(*allocs, n++) = v__(*allocs, i);
                 }
         }
         GC_RESUME();
 
         vN(*allocs) = n;
+
+        return live;
 }
 
 void
@@ -653,16 +665,44 @@ GCDropFFIAutos(AllocList *list)
         vN(*list) = n;
 }
 
-static isize
-group_live(ThreadGroup const *group)
+isize
+GCHeap(ThreadGroup const *group)
 {
-        isize live = group->DeadUsed;
+        isize heap = group->GCLive;
 
         for (usize i = 0; i < vN(group->TyList); ++i) {
-                live += v__(group->TyList, i)->memory_used;
+                heap += v__(group->TyList, i)->memory_used;
         }
 
-        return live;
+        return heap;
+}
+
+void
+GCSettle(Ty *ty)
+{
+        ThreadGroup *group = ty->group;
+        isize        live  = group->DeadBuf
+                           + atomic_exchange_explicit(&group->GCSwept, 0, memory_order_relaxed);
+
+        for (usize i = 0; i < vN(group->TyList); ++i) {
+                live += v__(group->TyList, i)->buf_used;
+        }
+
+        group->GCPromoted = group->GCMinor ? live - group->GCLive : live;
+        group->GCLive     = live;
+
+        if (!group->GCMinor) {
+                group->GCFullAt = max(GC_INITIAL_LIMIT, 2 * live);
+        }
+
+        isize budget = (GCMinorOK(ty) && (live >= GC_MINOR_MIN))
+                     ? max(GC_INITIAL_LIMIT, min(live / 2, GC_NURSERY_MAX))
+                     : max(GC_INITIAL_LIMIT, live);
+
+        for (usize i = 0; i < vN(group->TyList); ++i) {
+                v__(group->TyList, i)->memory_used  = 0;
+                v__(group->TyList, i)->memory_limit = budget;
+        }
 }
 
 void
@@ -676,20 +716,6 @@ GCCollect(Ty *ty)
         bool gen = GCMinorOK(ty) && (group->GCLive >= GC_MINOR_MIN);
 
         DoGCKind(ty, gen && (group->GCLive < group->GCFullAt));
-
-        isize live = group_live(group);
-
-        group->GCPromoted = group->GCMinor ? live - group->GCLive : live;
-        group->GCLive     = live;
-
-        if (!group->GCMinor) {
-                group->GCFullAt = max(GC_INITIAL_LIMIT, 2 * live);
-        }
-
-        gen = GCMinorOK(ty) && (live >= GC_MINOR_MIN);
-
-        MemoryLimit = gen ? MemoryUsed + max(GC_INITIAL_LIMIT, min(live / 2, GC_NURSERY_MAX))
-                    :       max(GC_INITIAL_LIMIT, max(2 * MemoryUsed, MemoryUsed + live / 2));
 
         GCLOG("Memory limit is now %zu MB", MemoryLimit / 1000000);
 }
@@ -761,7 +787,10 @@ dirty_init(uptr base, usize span)
 static void
 dirty_mode(uptr at, usize n, u64 mode)
 {
-        struct uffdio_writeprotect wp = { .range = { .start = at, .len = n }, .mode = mode };
+        struct uffdio_writeprotect wp = {
+                .range = {.start = at, .len = n},
+                .mode  = mode
+        };
 
         if (Dirty.ok && n > 0 && ioctl(Dirty.uffd, UFFDIO_WRITEPROTECT, &wp) != 0) {
                 Dirty.ok = false;
@@ -781,8 +810,9 @@ static bool
 dirty_scan(Ty *ty, bool rescan)
 {
         struct page_region regs[256];
-        uptr               at = GCBlockBase;
-        uptr               end;
+
+        uptr at = GCBlockBase;
+        uptr end;
 
         TySpinLockLock(&BlockPool.lock);
         end = BlockPool.next;
@@ -829,10 +859,12 @@ dirty_scan(Ty *ty, bool rescan)
 
         return true;
 }
+
 inline static bool
 dense(GCBlock const *b)
 {
-        return (b->age >= 2) && ((b->cls == GC_BLOCK_LARGE) || (4 * b->used > 3 * b->ncells));
+        return (b->age >= 2)
+            && (b->cls == GC_BLOCK_LARGE || 4 * b->used > 3 * b->ncells);
 }
 
 void
@@ -1258,10 +1290,11 @@ GCOwnedResize(Ty *ty, void *p, usize n, usize used, char type, bool check)
         return q;
 }
 
-static void
-sweep_blocks(Ty *ty, GCBlockCache *bc, isize *used, AllocList *cleanup)
+static isize
+sweep_blocks(Ty *ty, GCBlockCache *bc, AllocList *cleanup)
 {
-        usize n = 0;
+        usize n    = 0;
+        isize used = 0;
 
         sweep_cleanup(ty, cleanup);
 
@@ -1271,13 +1304,14 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, isize *used, AllocList *cleanup)
         }
 
         for (usize i = 0; i < vN(bc->all); ++i) {
-                GCBlock *b    = v__(bc->all, i);
-                u32      live = block_live(b);
+                GCBlock *b = v__(bc->all, i);
+                u32 live = block_live(b);
 
-                *used     = max(0, *used + ((isize)live - (isize)b->used) * b->cell);
-                b->used   = live;
-                b->old    = live;
-                b->age   += (b->age < 255);
+                used += (isize)live * b->cell;
+
+                b->used = live;
+                b->old  = live;
+                b->age += (b->age < 255);
                 b->cursor = 0;
 
                 if (GCGen) {
@@ -1300,43 +1334,48 @@ sweep_blocks(Ty *ty, GCBlockCache *bc, isize *used, AllocList *cleanup)
         }
 
         vN(bc->all) = n;
-        n           = 0;
+        n = 0;
 
         for (usize i = 0; i < vN(bc->large); ++i) {
                 GCBlock *b = v__(bc->large, i);
 
                 if (b->marks[0] == 0) {
-                        *used = max(0, *used - (isize)large_charge(b));
                         pool_give((uptr)b->cells, b->units);
                         continue;
                 }
 
-                b->marks[0]         = GCGen;
-                b->old              = 1;
-                b->age             += (b->age < 255);
+                b->age += (b->age < 255);
+                b->old = 1;
+                b->marks[0] = GCGen;
                 *v_(bc->large, n++) = b;
+                used += (isize)large_charge(b);
         }
 
         vN(bc->large) = n;
+
+        return used;
 }
 
-void
+isize
 GCSweepBlocks(Ty *ty)
 {
-        sweep_blocks(ty, &ty->blocks, &ty->memory_used, &ty->cleanup);
+        return sweep_blocks(ty, &ty->blocks, &ty->cleanup);
 }
 
-void
+isize
 GCSweepDeadBlocks(Ty *ty)
 {
         ThreadGroup *group = ty->group;
-        sweep_blocks(ty, &group->DeadBlocks, &group->DeadUsed, &group->DeadCleanup);
+        return sweep_blocks(ty, &group->DeadBlocks, &group->DeadCleanup);
 }
 
 void
 GCAdoptBlocks(GCBlockCache *to, GCBlockCache *from, u8 owner)
 {
-        GCBlockList *lists[][2] = { { &to->all, &from->all }, { &to->large, &from->large } };
+        GCBlockList *lists[][2] = {
+                { &to->all,   &from->all   },
+                { &to->large, &from->large }
+        };
 
         for (usize k = 0; k < countof(lists); ++k) {
                 for (usize i = 0; i < vN(*lists[k][1]); ++i) {
@@ -1385,7 +1424,6 @@ GCBlockDrop(Ty *ty, Alloc *a)
                         if (v__(ty->blocks.large, i - 1) == b) {
                                 *v_(ty->blocks.large, i - 1) = vXx(ty->blocks.large);
                                 PROF_FREE(a);
-                                MemoryUsed -= min((isize)large_charge(b), MemoryUsed);
                                 pool_give((uptr)b->cells, b->units);
                                 return;
                         }
@@ -1401,10 +1439,9 @@ GCBlockDrop(Ty *ty, Alloc *a)
 
         PROF_FREE(a);
 
-        b->taken[i]  = 0;
-        b->marks[i]  = 0;
-        b->used     -= 1;
-        MemoryUsed  -= min((isize)b->cell, MemoryUsed);
+        b->taken[i] = 0;
+        b->marks[i] = 0;
+        b->used -= 1;
 
         if (ty->blocks.cur[b->cls] == b && i < b->cursor) {
                 b->cursor = i;
@@ -1530,13 +1567,17 @@ Alloc *
 GCBufferOwner(Ty *ty, Alloc const *buf)
 {
         GCBlock const *b = GCBlockOf(buf);
-        Alloc  *o = (Alloc *)(GCBlockBase + ((uptr)b->refs[GCCellOf(b, buf)] << 4));
+        Alloc *o = (Alloc *)(GCBlockBase + ((uptr)b->refs[GCCellOf(b, buf)] << 4));
 
-        return block_registered(ty, o)
-            && (*cell_mark(o) != 0)
-            && (owned_buffer(o) == buf->data)
-             ? o
-             : NULL;
+        if (
+                !block_registered(ty, o)
+             || (*cell_mark(o) == 0)
+             || (owned_buffer(o) != buf->data)
+        ) {
+                return NULL;
+        }
+
+        return o;
 }
 
 static void
@@ -1874,7 +1915,7 @@ GCParallelBegin(Ty *ty, bool minor)
 
         if (
                 (Pool.want == 0)
-             || ((minor ? ty->group->GCPromoted : group_live(ty->group)) < GC_PAR_MIN)
+             || ((minor ? ty->group->GCPromoted : GCHeap(ty->group)) < GC_PAR_MIN)
              || !atomic_compare_exchange_strong(&Pool.busy, &idle, true)
         ) {
                 return false;

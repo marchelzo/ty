@@ -2794,6 +2794,22 @@ AttachLifetimes(void)
         pthread_mutex_unlock(&LiveLock);
 }
 
+static bool
+GroupSeen(u32 n, ThreadGroup const *g)
+{
+        for (u32 i = 0; i < n; ++i) {
+                if (
+                        (Threads[i] != NULL)
+                     && atomic_load(&Threads[i]->live)
+                     && (Threads[i]->ty->group == g)
+                ) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static void
 AttachRetained(void)
 {
@@ -2841,6 +2857,9 @@ AttachRetained(void)
         for (u32 i = 0; i < nt && i < MAX_THREADS; ++i) {
                 if (Threads[i] != NULL && atomic_load(&Threads[i]->live)) {
                         heap += Threads[i]->ty->memory_used;
+                        if (!GroupSeen(i, Threads[i]->ty->group)) {
+                                heap += Threads[i]->ty->group->GCLive;
+                        }
                 }
         }
 

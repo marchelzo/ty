@@ -755,7 +755,7 @@ DumpArenaStats(Ty *ty)
                 a = NextArena(a);
         }
 
-        fprintf(stderr, "In use by GC: %.1f MB\n", ty->memory_used / 1.0e6);
+        fprintf(stderr, "In use by GC: %.1f MB\n", GCHeap(ty->group) / 1.0e6);
         fprintf(stderr, "Current GC threshold: %.1f MB\n", ty->memory_limit / 1.0e6);
 }
 

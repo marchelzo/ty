@@ -432,7 +432,7 @@ Forget(Ty *ty, Value *v, AllocList *allocs)
         isize n = vN(ty->allocs);
 
         value_mark(ty, v);
-        GCForget(ty, &ty->allocs, &ty->memory_used);
+        GCForget(ty, &ty->allocs);
 
         for (usize i = vN(ty->allocs); i < n; ++i) {
                 xvP(*allocs, v__(ty->allocs, i));
@@ -521,7 +521,7 @@ BequeathAllocs(ThreadGroup *group)
         xvPv(heir->DeadPinned, group->DeadPinned);
         xvPv(heir->DeadCleanup, group->DeadCleanup);
         GCAdoptBlocks(&heir->DeadBlocks, &group->DeadBlocks, bits);
-        heir->DeadUsed += group->DeadUsed;
+        heir->DeadBuf += group->DeadBuf;
 
         TySpinLockUnlock(&heir->DLock);
         TySpinLockUnlock(&heir->GCLock);
@@ -756,7 +756,7 @@ DoGC(Ty *ty)
 void
 DoGCKind(Ty *ty, bool minor)
 {
-        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
+        GCLOG("Trying to do GC. Used = %zu, DeadBuf = %zu", MemoryUsed, ty->group->DeadBuf);
 
         if (!TySpinLockTryLock(&ty->group->GCLock)) {
                 GCLOG("Waiting for GC lock on thread %llu", TID);
@@ -771,14 +771,14 @@ DoGCKind(Ty *ty, bool minor)
 
 #if defined(TY_GC_STATS)
         u64 start = TyMonotonicTime();
-        u64 heap  = MemoryUsed;
+        u64 heap  = GCHeap(ty->group);
 #endif
 
-        TY_PROBE_IF(gc__start, (unsigned long)MemoryUsed);
+        TY_PROBE_IF(gc__start, (unsigned long)GCHeap(ty->group));
 
 #if defined(TY_HAVE_USDT) || defined(TY_HAVE_SAMPLER)
         u64 probe_t0 = TyMonotonicTime();
-        u64 probe_heap = MemoryUsed;
+        u64 probe_heap = GCHeap(ty->group);
 #endif
 
         CO_LOG("GC", TERM(91), "========== Starting GC on thread %llu ============", TID);
@@ -811,9 +811,6 @@ DoGCKind(Ty *ty, bool minor)
                 }
                 GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)ty->group->ThreadList.items[i], (void *)ty->group->ThreadLocks.items[i]);
                 TySpinLockLock(v__(ty->group->ThreadLocks, i));
-#if defined(TY_GC_STATS)
-                heap += v__(ty->group->TyList, i)->memory_used;
-#endif
                 if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
                         GCLOG("Thread %llu is running", ty->group->TyList.items[i]->id);
                         nRunning += 1;
@@ -902,12 +899,14 @@ DoGCKind(Ty *ty, bool minor)
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
         TySpinLockLock(&ty->group->DLock);
         GCDropFFIAutos(&ty->group->DeadFFIAutos);
-        GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
-        GCSweepDeadBlocks(ty);
+        isize dead = GCSweep(ty, &ty->group->DeadAllocs);
+        dead += GCSweepDeadBlocks(ty);
+        atomic_fetch_add_explicit(&ty->group->GCSwept, dead, memory_order_relaxed);
         TySpinLockUnlock(&ty->group->DLock);
 
         AwaitReady(ty->group, nRunning);
         GCUnpinYoung(&ty->group->PinYoung);
+        GCSettle(ty);
 
 #ifdef TY_HAVE_SAMPLER
         prof_gc_swept(ty, ty->group->GCMinor);
@@ -923,7 +922,7 @@ DoGCKind(Ty *ty, bool minor)
         TySpinLockUnlock(&ty->group->GCLock);
 
         UnlockThreads(ty, blockedThreads, nBlocked);
-        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, ty->group->DeadUsed);
+        GCLOG("Unlocking ThreadsLock and GCLock. Live = %lld, DeadBuf = %lld", ty->group->GCLive, ty->group->DeadBuf);
 
         TySpinLockUnlock(&ty->group->Lock);
 
@@ -941,7 +940,7 @@ DoGCKind(Ty *ty, bool minor)
 #endif
 
 #ifdef TY_HAVE_SAMPLER
-        prof_gc_done(probe_heap, MemoryUsed, TyMonotonicTime() - probe_t0);
+        prof_gc_done(probe_heap, ty->group->GCLive, TyMonotonicTime() - probe_t0);
 #endif
 
 #ifdef TY_HAVE_USDT
@@ -949,7 +948,7 @@ DoGCKind(Ty *ty, bool minor)
                 TY_PROBE(
                         gc__done,
                         (unsigned long)probe_heap,
-                        (unsigned long)MemoryUsed,
+                        (unsigned long)ty->group->GCLive,
                         (unsigned long)(TyMonotonicTime() - probe_t0)
                 );
         }
@@ -3233,7 +3232,7 @@ CleanupThread(void *ctx)
 {
         Ty *ty = ctx;
 
-        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
+        GCLOG("Cleaning up thread: %zu bytes in use. DeadBuf = %zu", MemoryUsed, ty->group->DeadBuf);
 
 #ifdef TY_HAVE_SAMPLER
         prof_thread_stop(ty);
@@ -3244,7 +3243,7 @@ CleanupThread(void *ctx)
         DebugThreadExit(ty);
 
         TySpinLockLock(&ty->group->DLock);
-        if (ty->group->DeadUsed + MemoryUsed > MemoryLimit) {
+        if (MemoryUsed >= MemoryLimit) {
                 TySpinLockUnlock(&ty->group->DLock);
                 DoGC(ty);
                 TySpinLockLock(&ty->group->DLock);
@@ -3257,7 +3256,9 @@ CleanupThread(void *ctx)
         GCAdoptBlocks(&ty->group->DeadBlocks, &ty->blocks, ty->gc_owner);
         xvPv(ty->group->DeadFinalizable, ty->finalizable);
         xvPv(ty->group->DeadFFIAutos, ty->ffi_autos);
-        ty->group->DeadUsed += MemoryUsed;
+        ty->group->DeadBuf += ty->buf_used;
+        ty->buf_used = 0;
+        ty->old_used = 0;
         v0(ty->allocs);
         v0(ty->old);
         v0(ty->special);
@@ -3301,7 +3302,7 @@ CleanupThread(void *ctx)
                 }
                 GCDropFinalizable(ty);
                 GCDropFFIAutos(&ty->group->DeadFFIAutos);
-                GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+                GCSweep(ty, &ty->group->DeadAllocs);
                 GCSweepDeadBlocks(ty);
                 GCUnpinYoung(&ty->group->PinYoung);
                 UnlockTy();

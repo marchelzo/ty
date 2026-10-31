@@ -620,7 +620,7 @@ typedef struct thread_group {
         AllocList   DeadPinned;
         AllocList   DeadCleanup;
         GCBlockCache DeadBlocks;
-        isize       DeadUsed;
+        isize       DeadBuf;
         ValueVector Finalize;
 
         TySpinLock GCLock;
@@ -634,6 +634,7 @@ typedef struct thread_group {
         int         GCPhase;
         bool        GCMinor;
         isize       GCLive;
+        _Atomic isize GCSwept;
         isize       GCPromoted;
         isize       GCFullAt;
         AllocList   PinYoung;
@@ -840,33 +841,39 @@ typedef struct ty {
         co_state *st;
         cothread_t co_top;
 
+        isize memory_used;
+        isize memory_limit;
+        isize buf_used;
+        isize old_used;
+
+        int  GC_OFF_COUNT;
+        bool gc_deferred;
+        u8   gc_owner;
+
+        bool locked;
+
+        ThreadGroup   *group;
+        TyThreadState *blocked;
+        TySpinLock    *lock;
+
         ValueVector tls;
 
         vec(DispatchCache) _2op_cache;
 
-        int GC_OFF_COUNT;
-
-        GCWorkStack  marking;
+        GCWorkStack marking;
         GCWorkStack *gc_helper;
-
-        isize memory_used;
-        isize memory_limit;
 
         AllocList allocs;
         AllocList old;
         AllocList special;
         AllocList pinned;
         AllocList cleanup;
-        GCBlockCache blocks;
         AllocList finalizable;
         AllocList ffi_autos;
-        ThreadGroup *group;
-        u8           gc_owner;
-        bool         gc_deferred;
-        Value       *result;
-        TyThreadState *blocked;
-        TySpinLock *lock;
-        bool locked;
+
+        GCBlockCache blocks;
+
+        Value *result;
 
         CoThreadVector cothreads;
         vec(co_state *) co_states;

@@ -38,8 +38,7 @@ block_new(Ty *ty)
 {
         struct queue_block *b = queue_cache_take();
         if (b == NULL) {
-                b = uAo(sizeof *b, GC_ANY);
-                NOGC(b);
+                b = uA(sizeof *b);
         }
         atomic_init(&b->next, NULL);
         atomic_init(&b->used, 0);
@@ -51,7 +50,7 @@ static void
 block_free(Ty *ty, struct queue_block *b)
 {
         if (!queue_cache_put(b)) {
-                OKGC(b);
+                mF(b);
         }
 }
 

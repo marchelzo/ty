@@ -135,6 +135,13 @@ GCBlockDrop(Ty *ty, Alloc *a);
 bool
 GCBlockLive(Ty *ty, Alloc const *a);
 
+inline static void
+gc_charge(Ty *ty, isize n)
+{
+        MemoryUsed   += max(n, 0);
+        ty->buf_used += n;
+}
+
 inline static void *
 gc_resize_unchecked(Ty *ty, void *p, usize n) {
         Alloc *a;
@@ -146,14 +153,9 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
                 return q;
         }
 
-        if (p != NULL) {
-                a = ALLOC_OF(p);
-                MemoryUsed -= a->size;
-        } else {
-                a = NULL;
-        }
+        a = (p != NULL) ? ALLOC_OF(p) : NULL;
 
-        MemoryUsed += n;
+        gc_charge(ty, (isize)n - ((a != NULL) ? (isize)a->size : 0));
         NoteAlloc(
                 (a != NULL && a->size < n) ? (n - a->size)
               : (a == NULL)                ? n
@@ -183,7 +185,6 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
 
 void
 GCCollect(Ty *ty);
-
 
 void
 GCDefer(Ty *ty);
@@ -218,7 +219,7 @@ CheckDeferredGC(Ty *ty)
 inline static void *
 gc_alloc(Ty *ty, usize n)
 {
-        MemoryUsed += n;
+        gc_charge(ty, n);
         NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
@@ -238,7 +239,7 @@ gc_alloc(Ty *ty, usize n)
 inline static void *
 gc_alloc0(Ty *ty, usize n)
 {
-        MemoryUsed += n;
+        gc_charge(ty, n);
         NoteAlloc(n, GC_ANY);
         CheckUsed(ty);
 
@@ -257,7 +258,7 @@ gc_alloc0(Ty *ty, usize n)
 inline static void *
 gc_alloc_unchecked(Ty *ty, usize n)
 {
-        MemoryUsed += n;
+        gc_charge(ty, n);
         NoteAlloc(n, GC_ANY);
 
         Alloc *a = ty_malloc(sizeof *a + n);
@@ -276,7 +277,7 @@ gc_alloc_unchecked(Ty *ty, usize n)
 inline static void *
 gc_alloc0_unchecked(Ty *ty, usize n)
 {
-        MemoryUsed += n;
+        gc_charge(ty, n);
         NoteAlloc(n, GC_ANY);
 
         Alloc *a = ty_calloc(1, sizeof *a + n);
@@ -508,21 +509,22 @@ gc_notify(Ty *ty, usize n);
 inline static void
 gc_free(Ty *ty, void *p)
 {
-        if (p != NULL && InGCBlocks(ALLOC_OF(p))) {
-                GCBlockDrop(ty, ALLOC_OF(p));
-        } else if (p != NULL) {
-                Alloc *a = ALLOC_OF(p);
-                if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
-                        GCRepin(ty, a, NULL);
-                }
-                PROF_FREE(a);
-                if (a->size >= MemoryUsed) {
-                        MemoryUsed = 0;
-                } else {
-                        MemoryUsed -= a->size;
-                }
-                ty_free(a);
+        if (p == NULL) {
+                return;
         }
+
+        if (InGCBlocks(ALLOC_OF(p))) {
+                GCBlockDrop(ty, ALLOC_OF(p));
+                return;
+        }
+
+        Alloc *a = ALLOC_OF(p);
+        if (UNLIKELY(atomic_load_explicit(&a->hard, memory_order_relaxed) != 0)) {
+                GCRepin(ty, a, NULL);
+        }
+        PROF_FREE(a);
+        gc_charge(ty, -(isize)a->size);
+        ty_free(a);
 }
 
 inline static void *
@@ -536,18 +538,9 @@ gc_resize(Ty *ty, void *p, usize n) {
                 return q;
         }
 
-        if (p != NULL) {
-                a = ALLOC_OF(p);
-                if (a->size >= MemoryUsed) {
-                        MemoryUsed = 0;
-                } else {
-                        MemoryUsed -= a->size;
-                }
-        } else {
-                a = NULL;
-        }
+        a = (p != NULL) ? ALLOC_OF(p) : NULL;
 
-        MemoryUsed += n;
+        gc_charge(ty, (isize)n - ((a != NULL) ? (isize)a->size : 0));
         NoteAlloc((a != NULL && a->size < n) ? n - a->size : (a == NULL) ? n : 0, (a != NULL) ? a->type : GC_ANY);
 
         CheckUsed(ty);
@@ -586,11 +579,11 @@ GCMark(Ty *ty);
 void
 GCSweepTy(Ty *ty);
 
-void
-GCSweep(Ty *ty, AllocList *allocs, isize *used);
+isize
+GCSweep(Ty *ty, AllocList *allocs);
 
 void
-GCForget(Ty *ty, AllocList *allocs, isize *used);
+GCForget(Ty *ty, AllocList *allocs);
 
 void
 GCForgetObject(Ty *ty, void const *o);
@@ -619,11 +612,17 @@ GCDropRefIndex(ThreadGroup *group);
 void
 GCBlockInit(void);
 
-void
+isize
 GCSweepBlocks(Ty *ty);
 
-void
+isize
 GCSweepDeadBlocks(Ty *ty);
+
+isize
+GCHeap(ThreadGroup const *group);
+
+void
+GCSettle(Ty *ty);
 
 void
 GCAdoptBlocks(GCBlockCache *to, GCBlockCache *from, u8 owner);
