@@ -36,7 +36,7 @@ fn wait-up(port: Int) {
         if ok {
             return
         }
-        os.sleep(0.01)
+        os.sleep(10ms)
     }
 }
 
@@ -61,7 +61,7 @@ pub fn send(fd: Int, data: String | Blob) {
     os.write(fd, data, all=true)
 }
 
-pub fn read-all(fd: Int, limit: Float = 5.0) -> String {
+pub fn read-all(fd: Int, limit: Duration = 5s) -> String {
     let buf = Blob()
     let deadline = time.now() + limit
     while time.now() < deadline {
@@ -73,7 +73,7 @@ pub fn read-all(fd: Int, limit: Float = 5.0) -> String {
     buf.str!()
 }
 
-pub fn fd-closed?(fd: Int, limit: Float = 5.0) -> Bool {
+pub fn fd-closed?(fd: Int, limit: Duration = 5s) -> Bool {
     let buf = Blob()
     let deadline = time.now() + limit
     while time.now() < deadline {
@@ -204,7 +204,7 @@ pub class Client {
         response()
     }
 
-    closed?(limit: Float = 5.0) -> Bool {
+    closed?(limit: Duration = 5s) -> Bool {
         if #buf > 0 {
             return false
         }
@@ -340,14 +340,14 @@ pub class WsClient {
 }
 
 pub fn curl?() -> Bool {
-    match sh.run(['curl', '--version'], timeout: 5) {
+    match sh.run(['curl', '--version'], timeout: 5s) {
         nil => false,
         r   => r.ok? && r.stdout.contains?('HTTP2')
     }
 }
 
 pub fn curl(*args: String) -> String {
-    match sh.run(['curl', '-s', '--max-time', '10', *args], timeout: 15) {
+    match sh.run(['curl', '-s', '--max-time', '10', *args], timeout: 15s) {
         nil => '',
         r   => r.stdout
     }

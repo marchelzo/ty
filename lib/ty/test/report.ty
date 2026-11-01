@@ -8,6 +8,7 @@ pub import ty.test.events as events (
     get-str,
     get-int,
     get-float,
+    get-duration,
     get-bool,
     get-event,
     get-events
@@ -46,7 +47,7 @@ pub class FileRow {
     path:     String
     counts:   Dict[String, Int]
     tests:    Int
-    dur:      ?Float
+    dur:      ?Duration
     skip:     ?String
     error:    ?String
     stdout:   String
@@ -95,8 +96,8 @@ pub class Tally {
     counts:   Dict[String, Int]
     rows:     Array[FileRow]
     warnings: Array[Event]
-    user:     Float
-    sys:      Float
+    user:     Duration
+    sys:      Duration
     rusage?:  Bool
     __index:  Dict[String, FileRow]
     __seen:   Dict[String, Bool]
@@ -113,8 +114,8 @@ pub class Tally {
         self.counts   = %{}
         self.rows     = []
         self.warnings = []
-        self.user     = 0.0
-        self.sys      = 0.0
+        self.user     = 0s
+        self.sys      = 0s
         self.rusage?  = false
         __index       = %{}
         __seen        = %{}
@@ -246,12 +247,12 @@ pub class Tally {
     on-file-done(ev: Event) {
         let r = row(get-str(ev, 'file') ?? '?')
         r.done?  = true
-        r.dur    = get-float(ev, 'dur')
+        r.dur    = get-duration(ev, 'dur')
         r.stdout = get-str(ev, 'stdout_tail') ?? ''
         r.stderr = get-str(ev, 'stderr_tail') ?? ''
         if let $ru = get-event(ev, 'rusage') {
-            self.user    += get-float(ru, 'utime') ?? 0.0
-            self.sys     += get-float(ru, 'stime') ?? 0.0
+            self.user    += get-duration(ru, 'utime') ?? 0s
+            self.sys     += get-duration(ru, 'stime') ?? 0s
             self.rusage?  = true
         }
         let st = get-event(ev, 'status') ?? %{}
@@ -312,10 +313,10 @@ pub class Tally {
         ws
     }
 
-    slowest(n: Int = 5) -> Array[(String, Float)] {
-        let ran: Array[(String, Float)] = []
+    slowest(n: Int = 5) -> Array[(String, Duration)] {
+        let ran: Array[(String, Duration)] = []
         for self.results {
-            let $dur = get-float(it, 'dur') or continue
+            let $dur = get-duration(it, 'dur') or continue
             if render.outcome-of(it) not in ['skip', 'todo'] {
                 ran.push((id-of(it), dur))
             }
@@ -333,18 +334,18 @@ pub class Tally {
         }
     }
 
-    wall -> ?Float {
-        if let $d = get-float(self.end, 'dur') {
+    wall -> ?Duration {
+        if let $d = get-duration(self.end, 'dur') {
             return d
         }
         let $a = self.first-t or return nil
         let $b = self.last-t or return nil
-        b - a
+        abs((b - a) * 1s)
     }
 
-    cpu -> (Float | nil, Float | nil) {
+    cpu -> (Duration | nil, Duration | nil) {
         if let $c = get-event(self.end, 'cpu') {
-            return (get-float(c, 'user'), get-float(c, 'sys'))
+            return (get-duration(c, 'user'), get-duration(c, 'sys'))
         }
         self.rusage? ? (self.user, self.sys) : (nil, nil)
     }
@@ -549,9 +550,9 @@ pub class Pretty < Reporter {
         let outcome = render.outcome-of(ev)
         let id = __tally.id-of(ev)
         let name = render.display-name(id)
-        let secs = get-float(ev, 'dur') ?? 0.0
-        let ran? = outcome not in ['skip', 'todo'] && (outcome != 'error' || secs > 0.0)
-        let dur = ran? ? paint("({render.fmt-dur(secs)})", 'dim') : ''
+        let took = get-duration(ev, 'dur') ?? 0s
+        let ran? = outcome not in ['skip', 'todo'] && (outcome != 'error' || took > 0s)
+        let dur = ran? ? paint("({render.fmt-dur(took)})", 'dim') : ''
         let detail = render.detail(ev, strict?: __tally.strict?(id))
         let tail = [dur if #dur > 0, detail if #detail > 0]
         let lbl = paint(render.pad(render.label(outcome), render.LABEL_WIDTH), outcome)

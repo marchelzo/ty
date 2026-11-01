@@ -1,5 +1,6 @@
 import ink
 import os
+import time
 import path (Path)
 import ink.form (Form, FormModel)
 import ink.form.codec as codec
@@ -433,7 +434,7 @@ pub fn reloads-when-file-changes() {
     let m = FormModel(file)
     assert(!m.stale?)
     Path(file).write(TOML.replace('8080', '7070'))
-    m.mtime = (m.mtime ?? 0.0) - 1.0
+    m.mtime = (m.mtime ?? time.time()) - 1s
     assert(m.stale?)
     m.load()
     assert(codec.dig(m.data, ['server', 'port']) == 7070)

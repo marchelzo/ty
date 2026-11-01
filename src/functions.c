@@ -33,6 +33,7 @@
 #include <md5.h>
 
 #include "ty/thread.h"
+#include "chrono.h"
 #include "polyfill_time.h"
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
@@ -872,16 +873,19 @@ TY_BUILTIN_RAW(random)
 
 // abs(k: Int) -> Int
 // abs(x: Float) -> Float
+// abs(dt: TimeDelta) -> Duration
 TY_BUILTIN_RAW(abs)
 {
         ASSERT_ARGC("abs()", 1);
 
-        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL, VALUE_DURATION, VALUE_TIMEDELTA);
 
         switch (x.type) {
-        case VALUE_INTEGER: return INTEGER(llabs(x.z));
-        case VALUE_REAL:    return REAL(fabs(x.real));
-        default:            UNREACHABLE();
+        case VALUE_INTEGER:   return INTEGER(llabs(x.z));
+        case VALUE_REAL:      return REAL(fabs(x.real));
+        case VALUE_DURATION:  return x;
+        case VALUE_TIMEDELTA: return DURATION((x.ns < 0) ? ChronoSub(ty, 0, x.ns) : x.ns);
+        default:              UNREACHABLE();
         }
 }
 
@@ -1140,16 +1144,19 @@ TY_BUILTIN_RAW(int)
         if (argc == 1) {
                 switch (x.type) {
                 case VALUE_STRING:  break;
-                case VALUE_INTEGER: return x;
-                case VALUE_REAL:    return INTEGER(x.real);
-                case VALUE_BOOLEAN: return INTEGER(x.boolean);
-                case VALUE_ARRAY:   return INTEGER(x.array->count);
-                case VALUE_DICT:    return INTEGER(x.dict->count);
-                case VALUE_SET:     return INTEGER(x.set->count);
-                case VALUE_HEAP:    return INTEGER(vN(x.heap->xs));
-                case VALUE_BLOB:    return INTEGER(x.blob->count);
-                case VALUE_PTR:     return INTEGER((uptr)x.ptr);
-                default:            return NIL;
+                case VALUE_INTEGER:   return x;
+                case VALUE_REAL:      return INTEGER(x.real);
+                case VALUE_BOOLEAN:   return INTEGER(x.boolean);
+                case VALUE_TIME:      return INTEGER(x.ns);
+                case VALUE_DURATION:  return INTEGER(x.ns);
+                case VALUE_TIMEDELTA: return INTEGER(x.ns);
+                case VALUE_ARRAY:     return INTEGER(x.array->count);
+                case VALUE_DICT:      return INTEGER(x.dict->count);
+                case VALUE_SET:       return INTEGER(x.set->count);
+                case VALUE_HEAP:      return INTEGER(vN(x.heap->xs));
+                case VALUE_BLOB:      return INTEGER(x.blob->count);
+                case VALUE_PTR:       return INTEGER((uptr)x.ptr);
+                default:              return NIL;
                 }
         }
 
@@ -3519,8 +3526,19 @@ TY_BUILTIN(os_readlink)
         return vSs(buf, n);
 }
 
+static struct timeval
+EpochTimeval(Ty *ty, char const *_name__, int argc, int i)
+{
+        struct timespec ts = ChronoTimespec(INSTANT_ARG(i, CLOCK_REALTIME));
+
+        return (struct timeval) {
+                .tv_sec  = ts.tv_sec,
+                .tv_usec = ts.tv_nsec / 1000
+        };
+}
+
 // os.utimes(path: Int | PathLike) -> Int
-// os.utimes(path: Int | PathLike, atime: Int | Float, mtime: Int | Float) -> Int
+// os.utimes(path: Int | PathLike, atime: Time[time::CLOCK_REALTIME], mtime: Time[time::CLOCK_REALTIME]) -> Int
 TY_BUILTIN_RAW(os_utimes)
 {
         ASSERT_ARGC("os.utimes()", 1, 3);
@@ -3529,25 +3547,9 @@ TY_BUILTIN_RAW(os_utimes)
         struct timeval *ptimes = NULL;
 
         if (argc == 3) {
-                double atime = (ARG(1).type == VALUE_INTEGER)
-                             ? ARG(1).z
-                             : FLOAT_ARG(1);
-
-                double mtime = (ARG(2).type == VALUE_INTEGER)
-                             ? ARG(2).z
-                             : FLOAT_ARG(2);
-
-                times[0] = (struct timeval) {
-                        .tv_sec = (time_t)atime,
-                        .tv_usec = (suseconds_t)((atime - (time_t)atime) * 1e6)
-                };
-
-                times[1] = (struct timeval) {
-                        .tv_sec = (time_t)mtime,
-                        .tv_usec = (suseconds_t)((mtime - (time_t)mtime) * 1e6)
-                };
-
-                ptimes = times;
+                times[0] = EpochTimeval(ty, "os.utimes()", argc, 1);
+                times[1] = EpochTimeval(ty, "os.utimes()", argc, 2);
+                ptimes   = times;
         }
 
 #ifndef _WIN32
@@ -3560,7 +3562,7 @@ TY_BUILTIN_RAW(os_utimes)
 }
 
 // os.futimes(fd: Int) -> Int
-// os.futimes(fd: Int, atime: Int | Float, mtime: Int | Float) -> Int
+// os.futimes(fd: Int, atime: Time[time::CLOCK_REALTIME], mtime: Time[time::CLOCK_REALTIME]) -> Int
 TY_BUILTIN_RAW(os_futimes)
 {
         ASSERT_ARGC("os.futimes()", 1, 3);
@@ -3571,23 +3573,9 @@ TY_BUILTIN_RAW(os_futimes)
                 return INTEGER(futimes(fd, NULL));
         }
 
-        double atime = (ARG(1).type == VALUE_INTEGER)
-                     ? ARG(1).z
-                     : FLOAT_ARG(1);
-
-        double mtime = (ARG(2).type == VALUE_INTEGER)
-                     ? ARG(2).z
-                     : FLOAT_ARG(2);
-
         struct timeval times[2] = {
-                {
-                        .tv_sec = (time_t)atime,
-                        .tv_usec = (suseconds_t)((atime - (time_t)atime) * 1e6)
-                },
-                {
-                        .tv_sec = (time_t)mtime,
-                        .tv_usec = (suseconds_t)((mtime - (time_t)mtime) * 1e6)
-                }
+                EpochTimeval(ty, "os.futimes()", argc, 1),
+                EpochTimeval(ty, "os.futimes()", argc, 2)
         };
 
         return INTEGER(futimes(fd, times));
@@ -4795,7 +4783,7 @@ Cleanup:
 #endif
 
 // thread.join(t: Any, timeout: nil = nil) -> _
-// thread.join(t: Any, timeout: Int | Float | time::Timespec) -> Some[_] | None
+// thread.join(t: Any, timeout: ?time::Timeout) -> Some[_] | None
 TY_BUILTIN_RAW(thread_join)
 {
         ASSERT_ARGC("thread.join()", 1, 2);
@@ -4815,7 +4803,7 @@ TY_BUILTIN_RAW(thread_join)
 
                 return t->v;
         } else {
-                i64 timeoutMs = MSEC_ARG(1);
+                i64 timeoutMs = TIMEOUT_MS_ARG(1);
 
                 UnlockTy();
                 TyMutexLock(&t->mutex);
@@ -4881,7 +4869,7 @@ TY_BUILTIN_RAW(thread_cond)
 // thread.waitCond(
 //     cond: Ptr[Any],
 //     mtx: Ptr[Any],
-//     timeout: Int | Float | time::Timespec | nil = nil
+//     timeout: ?time::Timeout = nil
 // ) -> Bool
 TY_BUILTIN_RAW(thread_cond_wait)
 {
@@ -4893,7 +4881,7 @@ TY_BUILTIN_RAW(thread_cond_wait)
         bool ok;
 
         if (argc == 3 && !IsNil(ARG(2))) {
-                i64 msec = max(MSEC_ARG(2), 0);
+                i64 msec = TIMEOUT_MS_ARG(2);
                 UnlockTy();
                 ok = TyCondVarTimedWaitRelative(cond, mtx, msec);
                 LockTy();
@@ -4946,13 +4934,13 @@ TY_BUILTIN_RAW(thread_is_notified)
         return BOOLEAN(TyNoteIsNotified(*np));
 }
 
-// thread.waitNote(note: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Bool
+// thread.waitNote(note: Ptr[Any], timeout: ?time::Timeout = nil) -> Bool
 TY_BUILTIN_RAW(thread_wait_note)
 {
         ASSERT_ARGC("thread.waitNote()", 1, 2);
 
         TyNote *np = PTR_ARG(0);
-        u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+        u64 ms = (argc == 2) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
 
         UnlockTy();
         bool ok = TyNoteWait(*np, ms);
@@ -4987,13 +4975,13 @@ TY_BUILTIN_RAW(thread_count_value)
         return INTEGER(TyCounterValue(*cp));
 }
 
-// thread.countWait(counter: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Int
+// thread.countWait(counter: Ptr[Any], timeout: ?time::Timeout = nil) -> Int
 TY_BUILTIN_RAW(thread_count_wait)
 {
         ASSERT_ARGC("thread.count-wait()", 1, 2);
 
         TyCounter *cp = PTR_ARG(0);
-        u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+        u64 ms = (argc == 2) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
 
         UnlockTy();
         u32 v = TyCounterWait(*cp, ms);
@@ -5004,7 +4992,7 @@ TY_BUILTIN_RAW(thread_count_wait)
 
 // thread.waitAny(
 //     objects: Array[Ptr[Any]],
-//     timeout: Int | Float | time::Timespec | nil = nil,
+//     timeout: ?time::Timeout = nil,
 //     lock: Any = nil
 // ) -> Int | nil
 TY_BUILTIN_RAW(thread_wait_any)
@@ -5012,7 +5000,7 @@ TY_BUILTIN_RAW(thread_wait_any)
         ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
 
         Value objects = ARGx(0, VALUE_ARRAY);
-        u64 timeout = MSEC_TIMEOUT_ARG(1);
+        u64 timeout = (argc > 1) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
 
         usize n = vN(*objects.array);
 
@@ -5212,7 +5200,7 @@ TY_BUILTIN_RAW(thread_send)
         return NIL;
 }
 
-// thread.recv(chan: Ptr[Any], timeout: Int | Float | time::Timespec | nil = nil) -> Some[_] | None
+// thread.recv(chan: Ptr[Any], timeout: ?time::Timeout = nil) -> Some[_] | None
 TY_BUILTIN_RAW(thread_recv)
 {
         ASSERT_ARGC("thread.recv()", 1, 2);
@@ -5222,7 +5210,7 @@ TY_BUILTIN_RAW(thread_recv)
 
         bool ok = (argc == 1)
                 ? chan_recv(ty, chan, &v)
-                : chan_try_recv(ty, chan, &v, MSEC_TIMEOUT_ARG(1));
+                : chan_try_recv(ty, chan, &v, TIMEOUT_MS_ARG(1));
 
         return ok ? Some(v) : None;
 }
@@ -6245,30 +6233,30 @@ TY_BUILTIN_RAW(os_sendto)
 
 // os.poll(
 //     pollfds: [Int | (Int, Int)],
-//     timeout: Float | Int | nil = nil
+//     timeout: ?time::Timeout = nil
 // ) -> Ok[[(Int, Int)]] | Err[Int]
 //
 // os.poll[T](
 //     pollfds: [Int | (Int, Int) | (Int, Int, T)],
-//     timeout: Float | Int | nil = nil
+//     timeout: ?time::Timeout = nil
 // ) -> Ok[[(Int, Int) | (Int, Int, T)]] | Err[Int]
 //
 // os.poll[T](
 //     pollfds-in: Iterable[(Int, Int, T)],
 //     pollfds-out: [(Int, Int, T)],
-//     timeout: Float | Int | nil
+//     timeout: ?time::Timeout
 // ) -> Int
 //
 // os.poll(
 //     pollfds-in: Iterable[Int | (Int, Int)],
 //     pollfds-out: [(Int, Int)],
-//     timeout: Float | Int | nil
+//     timeout: ?time::Timeout
 // ) -> Int
 //
 // os.poll[T](
 //     pollfds-in: Iterable[Int | (Int, Int) | (Int, Int, T)],
 //     pollfds-out: [(Int, Int) | (Int, Int, T)],
-//     timeout: Float | Int | nil
+//     timeout: ?time::Timeout
 // ) -> Int
 TY_BUILTIN_RAW(os_poll)
 {
@@ -6286,12 +6274,12 @@ TY_BUILTIN_RAW(os_poll)
 
         case 2:
                 fds_out = vA();
-                timeout = MSEC_TIMEOUT_ARG(1);
+                timeout = TIMEOUT_MS_ARG(1);
                 break;
 
         case 3:
                 fds_out = ARRAY_ARG(1);
-                timeout = MSEC_TIMEOUT_ARG(2);
+                timeout = TIMEOUT_MS_ARG(2);
                 break;
 
         default:
@@ -6483,24 +6471,29 @@ TY_BUILTIN_RAW(os_timerfd_create)
         return INTEGER(timerfd_create(clockid, flags));
 }
 
-// os.timerfd_settime(fd: Int, flags: Int, initial: Int | Float, interval: Int | Float = 0) -> Int
-TY_BUILTIN(os_timerfd_settime)
+// os.timerfd_settime[C](fd: Int, flags: Int, initial: Duration | Time[C], interval: ?Duration = nil) -> Int
+TY_BUILTIN_RAW(os_timerfd_settime)
 {
+        ASSERT_ARGC("os.timerfd_settime()", 3, 4);
+
+        int   fd       = INT_ARG(0);
+        int   flags    = INT_ARG(1);
+        Value initial  = ARGx(2, VALUE_DURATION, VALUE_TIME);
+        i64   interval = (argc == 4 && !IsNil(ARG(3))) ? DURATION_NS_ARG(3) : 0;
+
+        if (initial.type == VALUE_TIME) {
+                flags |= TFD_TIMER_ABSTIME;
+        }
+
         struct itimerspec its = {
-                .it_value = {
-                        .tv_sec  = (time_t)initial,
-                        .tv_nsec = (long)((initial - (time_t)initial) * 1e9)
-                },
-                .it_interval = {
-                        .tv_sec  = (time_t)interval,
-                        .tv_nsec = (long)((interval - (time_t)interval) * 1e9)
-                }
+                .it_value    = ChronoTimespec(initial.ns),
+                .it_interval = ChronoTimespec(interval)
         };
 
         return INTEGER(timerfd_settime(fd, flags, &its, NULL));
 }
 
-// os.timerfd_gettime(fd: Int) -> (Float, Float) | nil
+// os.timerfd_gettime(fd: Int) -> (Duration, Duration) | nil
 TY_BUILTIN_RAW(os_timerfd_gettime)
 {
         ASSERT_ARGC("os.timerfd_gettime()", 1);
@@ -6509,16 +6502,14 @@ TY_BUILTIN_RAW(os_timerfd_gettime)
 
         struct itimerspec its;
 
-        if (timerfd_gettime(fd, &its) == -1)
+        if (timerfd_gettime(fd, &its) == -1) {
                 return NIL;
+        }
 
         Value result = vT(2);
 
-        double initial = its.it_value.tv_sec + its.it_value.tv_nsec / 1e9;
-        double interval = its.it_interval.tv_sec + its.it_interval.tv_nsec / 1e9;
-
-        result.items[0] = REAL(initial);
-        result.items[1] = REAL(interval);
+        result.items[0] = DURATION(TY_S * its.it_value.tv_sec    + its.it_value.tv_nsec);
+        result.items[1] = DURATION(TY_S * its.it_interval.tv_sec + its.it_interval.tv_nsec);
 
         return result;
 }
@@ -6576,8 +6567,8 @@ static Value
 os_rusage_value(Ty *ty, struct rusage const *usage)
 {
         return vTn(
-                "utime",    REAL(usage->ru_utime.tv_sec + usage->ru_utime.tv_usec / 1.0e6),
-                "stime",    REAL(usage->ru_stime.tv_sec + usage->ru_stime.tv_usec / 1.0e6),
+                "utime",    DURATION(TY_S * usage->ru_utime.tv_sec + TY_US * usage->ru_utime.tv_usec),
+                "stime",    DURATION(TY_S * usage->ru_stime.tv_sec + TY_US * usage->ru_stime.tv_usec),
 #ifdef __APPLE__
                 "maxrss",   INTEGER(usage->ru_maxrss / 1024),
 #else
@@ -7007,18 +6998,18 @@ TY_BUILTIN(os_thread_get_timeshare)
 }
 
 // os.thread_set_time_constraint(
-//     period: Float,
-//     computation: Float,
-//     constraint: Float,
+//     period: Duration,
+//     computation: Duration,
+//     constraint: Duration,
 //     preemptible: Bool = true
 // ) -> nil
 TY_BUILTIN(os_thread_set_time_constraint)
 {
-        double k = mtscale();
+        double k = mtscale() / TY_S;
         thread_time_constraint_policy_data_t p = {
-                .period      = (u32)(period      * k),
-                .computation = (u32)(computation * k),
-                .constraint  = (u32)(constraint  * k),
+                .period      = (u32)(ChronoDuration(ty, _name__, &period)      * k),
+                .computation = (u32)(ChronoDuration(ty, _name__, &computation) * k),
+                .constraint  = (u32)(ChronoDuration(ty, _name__, &constraint)  * k),
                 .preemptible = preemptible
         };
         TSET(TIME_CONSTRAINT, p);
@@ -7026,20 +7017,20 @@ TY_BUILTIN(os_thread_set_time_constraint)
 }
 
 // os.thread_get_time_constraint() -> {
-//     period: Float,
-//     computation: Float,
-//     constraint: Float,
+//     period: Duration,
+//     computation: Duration,
+//     constraint: Duration,
 //     preemptible: Bool
 // }
 TY_BUILTIN(os_thread_get_time_constraint)
 {
-        double k = mtscale();
+        double k = mtscale() / TY_S;
         thread_time_constraint_policy_data_t p;
         TGET(TIME_CONSTRAINT, p);
         return vTn(
-                "period",      REAL(p.period      / k),
-                "computation", REAL(p.computation / k),
-                "constraint",  REAL(p.constraint  / k),
+                "period",      DURATION(llround(p.period      / k)),
+                "computation", DURATION(llround(p.computation / k)),
+                "constraint",  DURATION(llround(p.constraint  / k)),
                 "preemptible", BOOLEAN(p.preemptible)
         );
 }
@@ -7372,52 +7363,26 @@ TY_BUILTIN_RAW(os_sigsuspend)
 
 // os.sigwaitinfo(
 //     set: [Int] | Dict[Int, Any] | IntoPtr[Any] | nil,
-//     timeout: Int | Float | {sec: Int, nsec: Int} | nil = nil
-// ) -> {signo: Int, code: Int, errno: Int, pid: Int, uid: Int, status: Int, utime: Int, stime: Int, fd: Int, value: Int, addr: Int, band: Int} | nil
+//     timeout: ?time::Timeout = nil
+// ) -> {signo: Int, code: Int, errno: Int, pid: Int, uid: Int, status: Int, utime: Duration, stime: Duration, fd: Int, value: Int, addr: Int, band: Int} | nil
 TY_BUILTIN_RAW(os_sigwaitinfo)
 {
         ASSERT_ARGC("os.sigwaitinfo()", 1, 2);
 #if !defined(__linux__)
         bP("os.sigwaitinfo() is not supported on this platform");
 #else
-        Value timeout;
+        i64             ns = (argc == 2) ? TIMEOUT_NS_ARG(1) : -1;
+        struct timespec ts = ChronoTimespec(max(ns, 0));
+        sigset_t        set;
 
-        if (argc == 1) {
-                timeout = NIL;
-        } else {
-                timeout = ARGx(1, VALUE_TUPLE, VALUE_INTEGER, VALUE_REAL, VALUE_NIL);
-        }
-
-        sigset_t set;
         IntoSigSet(ty, "os.sigwaitinfo()", &ARG(0), &set);
-
-        struct timespec ts;
-        i64 nsec;
-
-        switch (timeout.type) {
-        case VALUE_TUPLE:
-                ts = tuple_timespec(ty, "os.sigtimedwait()", &timeout);
-                break;
-
-        case VALUE_INTEGER:
-        case VALUE_REAL:
-                nsec = NSEC_ARG(1);
-                ts.tv_sec = nsec / TY_1e9;
-                ts.tv_nsec = nsec % TY_1e9;
-                break;
-
-        case VALUE_NIL:
-                ts.tv_sec = 0;
-                ts.tv_nsec = 0;
-                break;
-        }
 
         siginfo_t info;
         int ret;
 
         errno = 0;
         UnlockTy();
-        if (argc == 1) {
+        if (ns < 0) {
                 ret = sigwaitinfo(&set, &info);
         } else {
                 ret = sigtimedwait(&set, &info, &ts);
@@ -7440,8 +7405,8 @@ TY_BUILTIN_RAW(os_sigwaitinfo)
                 "uid",     INTEGER(info.si_uid),
                 "status",  INTEGER(info.si_status),
 #if defined(__linux__)
-                "utime",   INTEGER(info.si_utime),
-                "stime",   INTEGER(info.si_stime),
+                "utime",   DURATION(info.si_utime * (TY_S / sysconf(_SC_CLK_TCK))),
+                "stime",   DURATION(info.si_stime * (TY_S / sysconf(_SC_CLK_TCK))),
                 "fd",      INTEGER(info.si_fd),
 #endif
                 "value",   INTEGER(info.si_value.sival_int),
@@ -7698,174 +7663,75 @@ TY_BUILTIN(os_raise)
         return INTEGER(raise(sig));
 }
 
-// os.alarm(secs: Int | Float) -> Float
-TY_BUILTIN(os_alarm)
+// os.alarm(t: Duration) -> Duration
+TY_BUILTIN_RAW(os_alarm)
 {
+        ASSERT_ARGC("os.alarm()", 1);
 #if defined(_WIN32)
         bP("not supported on this platform");
 #else
+        i64              us  = (DURATION_NS_ARG(0) + TY_US - 1) / TY_US;
         struct itimerval new = {0};
         struct itimerval old = {0};
 
-        if (!(secs >= 0.0)) {
-                bP("invalid duration: %g", secs);
-        }
-
-        double whole = floor(secs);
-
-        new.it_value.tv_sec  = (time_t)whole;
-        new.it_value.tv_usec = (suseconds_t)((secs - whole) * 1.0e6);
-
-        if (
-                (secs > 0.0)
-             && (new.it_value.tv_sec == 0)
-             && (new.it_value.tv_usec == 0)
-        ) {
-                new.it_value.tv_usec = 1;
-        }
+        new.it_value.tv_sec  = us / 1000000;
+        new.it_value.tv_usec = us % 1000000;
 
         if (setitimer(ITIMER_REAL, &new, &old) != 0) {
                 bP("setitimer(): %s", strerror(errno));
         }
 
-        return REAL(old.it_value.tv_sec + old.it_value.tv_usec / 1.0e6);
+        return DURATION(TY_S * old.it_value.tv_sec + TY_US * old.it_value.tv_usec);
 #endif
 }
 
-static Value
-timespec_tuple(Ty *ty, struct timespec const *ts)
+inline static Value
+timespec_time(struct timespec const *ts)
 {
-        return vTn(
-                "sec",  INTEGER(ts->tv_sec),
-                "nsec", INTEGER(ts->tv_nsec)
-        );
+        return TIME(TY_S * ts->tv_sec + ts->tv_nsec, CLOCK_REALTIME);
 }
 
-inline static double
-timespec_seconds(struct timespec const *ts)
-{
-        return (double)ts->tv_sec + (double)ts->tv_nsec / 1e9;
-}
-
-#if !defined(__APPLE__)
-// os.sleep(
-//     duration: Int | Float | {sec: Int, nsec: Int} | nil = nil,
-//     abs: Bool = false,
-//     clock: ?Int = nil
-// ) -> {sec: Int, nsec: Int} | nil
-TY_BUILTIN_RAW(os_sleep)
-{
-        ASSERT_ARGC("os.sleep()", 0, 1);
-
-        struct timespec dur;
-        struct timespec rem = {0};
-
-        u64 nsecs = NSEC_TIMEOUT_ARG(0);
-        int flags = 0;
-
-        clockid_t clk;
-        Value *abs = NAMED("abs");
-
-#ifndef _WIN32
-        if (abs != NULL && abs->type == VALUE_BOOLEAN && abs->boolean) {
-                flags = TIMER_ABSTIME;
-                clk = CLOCK_REALTIME;
-        } else {
-                clk = CLOCK_MONOTONIC;
-        }
-#endif
-
-        Value *clock = NAMED("clock");
-        if (clock != NULL && clock->type == VALUE_INTEGER) {
-                clk = clock->z;
-        }
-
-        dur.tv_sec = nsecs / TY_1e9;
-        dur.tv_nsec = nsecs % TY_1e9;
-
-        UnlockTy();
-#ifdef _WIN32
-        Sleep(dur.tv_sec * 1000 + dur.tv_nsec / 1000000);
-        int ret = 0;
-#else
-        errno = 0;
-        int ret = clock_nanosleep(clk, flags, &dur, &rem);
-#endif
-        LockTy();
-
-        switch (ret) {
-        case 0:
-                return NIL;
-        case EINTR:
-                return timespec_tuple(ty, &rem);
-        default:
-                bP("clock_nanosleep(): %s", strerror(errno));
-        }
-}
-#else
-// os.sleep(
-//     duration: Int | Float | {sec: Int, nsec: Int} | nil = nil,
-//     abs: Bool = false,
-//     clock: ?Int = nil
-// ) -> {sec: Int, nsec: Int} | nil
+// os.sleep[C](t: Duration | Time[C]) -> Duration | nil
 TY_BUILTIN_RAW(os_sleep)
 {
         ASSERT_ARGC("os.sleep()", 1);
 
-        i64 nsec = NSEC_ARG(0);
+        Value t = ARGx(0, VALUE_DURATION, VALUE_TIME);
 
-        struct timespec dur = {
-                .tv_sec = nsec / TY_1e9,
-                .tv_nsec = nsec % TY_1e9
-        };
+#if defined(__APPLE__) || defined(_WIN32)
+        struct timespec dur = ChronoTimespec(TIMEOUT_NS_ARG(0));
         struct timespec rem = {0};
 
         UnlockTy();
-        errno = 0;
-        int ret = nanosleep(&dur, &rem);
+#ifdef _WIN32
+        Sleep(ChronoMsCeil(TIMEOUT_NS_ARG(0)));
+        int ret = 0;
+#else
+        int ret = (nanosleep(&dur, &rem) == 0) ? 0 : errno;
+#endif
+        LockTy();
+#else
+        bool            abs = (t.type == VALUE_TIME);
+        clockid_t       clk = abs ? t.clk : CLOCK_MONOTONIC;
+        struct timespec dur = ChronoTimespec(t.ns);
+        struct timespec rem = {0};
+
+        UnlockTy();
+        int ret = clock_nanosleep(clk, abs ? TIMER_ABSTIME : 0, &dur, &rem);
         LockTy();
 
-        switch (ret) {
-        case -1:
-                if (errno == EINTR) {
-                        return timespec_tuple(ty, &rem);
-                } else {
-                        bP("nanosleep(): %s", strerror(errno));
-                }
+        if (abs && ret == EINTR) {
+                return DURATION(TIMEOUT_NS_ARG(0));
+        }
+#endif
 
-        default:
-                return NIL;
+        switch (ret) {
+        case 0:     return NIL;
+        case EINTR: return DURATION(TY_S * rem.tv_sec + rem.tv_nsec);
+        default:    bP("%s", strerror(ret));
         }
 }
-#endif
 
-static int
-microsleep(i64 usec)
-{
-#ifdef _WIN32
-        HANDLE timer;
-        LARGE_INTEGER ft;
-
-        ft.QuadPart = -(10*usec); // Convert to 100 nanosecond interval, negative value indicates relative time
-
-        timer = CreateWaitableTimer(NULL, TRUE, NULL);
-        SetWaitableTimer(timer, &ft, 0, NULL, NULL, 0);
-        WaitForSingleObject(timer, INFINITE);
-        CloseHandle(timer);
-        return 0;
-#else
-        return usleep(usec);
-#endif
-}
-
-// https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
-
-// os.usleep(usec: Int | Float | {sec: Int, nsec: Int} | nil) -> Int
-TY_BUILTIN_RAW(os_usleep)
-{
-        ASSERT_ARGC("os.usleep()", 1);
-        return INTEGER(microsleep(USEC_ARG(0)));
-}
 
 #ifdef _WIN32
 // os.listdir(path: PathLike) -> Array[String]
@@ -8029,23 +7895,19 @@ xstatv(Ty *ty, int ret, StatStruct const *st)
         Value mtime;
         Value ctime;
 
-        GC_STOP();
-
 #if defined(__APPLE__) || defined(__MACH__)
-        atime = REAL(timespec_seconds(&st->st_atimespec));
-        mtime = REAL(timespec_seconds(&st->st_mtimespec));
-        ctime = REAL(timespec_seconds(&st->st_ctimespec));
+        atime = timespec_time(&st->st_atimespec);
+        mtime = timespec_time(&st->st_mtimespec);
+        ctime = timespec_time(&st->st_ctimespec);
 #elif defined(_WIN32)
-        atime = REAL(((double)st->st_atime);
-        mtime = REAL(((double)st->st_mtime);
-        ctime = REAL(((double)st->st_ctime);
+        atime = TIME(TY_S * st->st_atime, CLOCK_REALTIME);
+        mtime = TIME(TY_S * st->st_mtime, CLOCK_REALTIME);
+        ctime = TIME(TY_S * st->st_ctime, CLOCK_REALTIME);
 #else
-        atime = REAL(timespec_seconds(&st->st_atim));
-        mtime = REAL(timespec_seconds(&st->st_mtim));
-        ctime = REAL(timespec_seconds(&st->st_ctim));
+        atime = timespec_time(&st->st_atim);
+        mtime = timespec_time(&st->st_mtim);
+        ctime = timespec_time(&st->st_ctim);
 #endif
-
-        GC_RESUME();
 
         return vTn(
                 "dev", INTEGER(st->st_dev),
@@ -8631,68 +8493,64 @@ TY_BUILTIN_RAW(errno_name)
         return NIL;
 }
 
-// time.gettime(clock: ?time::ClockID) -> time::Timespec
-TY_BUILTIN_RAW(time_gettime)
-{
-        ASSERT_ARGC("time.gettime()", 0, 1);
-
-        clockid_t clk = (argc == 0 || IsNil(ARG(0))) ? CLOCK_REALTIME : INT_ARG(0);
-
-        struct timespec t = {0};
-        clock_gettime(clk, &t);
-
-        return timespec_tuple(ty, &t);
-}
-
-// time.now(clock: ?time::ClockID) -> Float
+// time.now() -> Time[time::CLOCK_MONOTONIC]
+// time.now[C](clock: C) -> Time[C] where C: time::ClockID
 TY_BUILTIN_RAW(time_now)
 {
-        struct timespec t;
-#ifdef _WIN32
-        ASSERT_ARGC("time.now()", 0);
-        GetCurrentTimespec(&t);
-#else
         ASSERT_ARGC("time.now()", 0, 1);
 
-        clockid_t clk = (argc == 1) ? INT_ARG(0) : CLOCK_MONOTONIC;
+        i64 clk = (argc == 1) ? INT_ARG(0) : CLOCK_MONOTONIC;
 
-        if (clock_gettime(clk, &t) != 0) {
-                OSError(errno, "clock_gettime()");
+        return TIME(ChronoNow(ty, clk), clk);
+}
+
+// time.clock[C](t: Time[C]) -> C
+TY_BUILTIN_RAW(time_clock)
+{
+        ASSERT_ARGC("time.clock()", 1);
+        return INTEGER(ARGx(0, VALUE_TIME).clk);
+}
+
+// time.since[C](t: Time[C]) -> Duration
+TY_BUILTIN_RAW(time_since)
+{
+        ASSERT_ARGC("time.since()", 1);
+
+        Value t = ARGx(0, VALUE_TIME);
+
+        return DURATION(max(ChronoSub(ty, ChronoNow(ty, t.clk), t.ns), 0));
+}
+
+// time.until[C](t: Time[C]) -> Duration
+TY_BUILTIN_RAW(time_until)
+{
+        ASSERT_ARGC("time.until()", 1);
+
+        Value t = ARGx(0, VALUE_TIME);
+
+        return DURATION(max(ChronoSub(ty, t.ns, ChronoNow(ty, t.clk)), 0));
+}
+
+// time.diff[C](t: Time[C]) -> TimeDelta
+TY_BUILTIN_RAW(time_diff)
+{
+        ASSERT_ARGC("time.diff()", 1);
+
+        Value t = ARGx(0, VALUE_TIME);
+
+        return TIMEDELTA(ChronoSub(ty, t.ns, ChronoNow(ty, t.clk)));
+}
+
+static time_t
+EpochSeconds(Ty *ty, char const *_name__, int argc, int i)
+{
+        if (argc <= i || IsNil(ARG(i))) {
+                return time(NULL);
         }
-#endif
-        i64 nsec = TY_1e9*t.tv_sec + (i64)t.tv_nsec;
-        return REAL(nsec / 1.0e9);
-}
 
-// time.utc() -> Float
-TY_BUILTIN_RAW(time_utc)
-{
-        ASSERT_ARGC("time.utc()", 0);
+        i64 ns = INSTANT_ARG(i, CLOCK_REALTIME);
 
-        struct timespec t;
-        i64 nsec;
-
-        GetCurrentTimespec(&t);
-        nsec = TY_1e9*t.tv_sec + (i64)t.tv_nsec;
-
-        return REAL(nsec / 1.0e9);
-}
-
-// time.utime(clock: ?time::ClockID) -> Int
-TY_BUILTIN_RAW(time_utime)
-{
-        struct timespec t;
-#ifdef _WIN32
-        ASSERT_ARGC("time.utime()", 0);
-        GetCurrentTimespec(&t);
-#else
-        ASSERT_ARGC("time.utime()", 0, 1);
-
-        clockid_t clk = (argc == 0 || IsNil(ARG(0))) ? CLOCK_REALTIME : INT_ARG(0);
-
-        clock_gettime(clk, &t);
-#endif
-        return INTEGER((u64)t.tv_sec * 1000 * 1000 + (u64)t.tv_nsec / 1000);
+        return (time_t)(ns / TY_S - (ns % TY_S < 0));
 }
 
 static Value
@@ -8712,12 +8570,12 @@ tm_record(Ty *ty, struct tm const *r)
 }
 
 
-// time.localtime(time: ?Int) -> time::Tm
+// time.localtime(t: ?Time[time::CLOCK_REALTIME]) -> time::Tm
 TY_BUILTIN_RAW(time_localtime)
 {
         ASSERT_ARGC("time.localtime()", 0, 1);
 
-        time_t t = (argc == 0 || IsNil(ARG(0))) ? time(NULL) : INT_ARG(0);
+        time_t t = EpochSeconds(ty, "time.localtime()", argc, 0);
         struct tm r = {0};
 
         localtime_r(&t, &r);
@@ -9110,15 +8968,13 @@ tz_offset_at(
 #endif
 }
 
-// time.zonetime(time: Int, zone: String) -> time::Tm | nil
+// time.zonetime(t: Time[time::CLOCK_REALTIME], zone: String) -> time::Tm | nil
 TY_BUILTIN_RAW(time_zonetime)
 {
         ASSERT_ARGC("time.zonetime()", 2);
 
-        Value t_arg = ARGx(0, VALUE_INTEGER);
-        Value zone  = ARGx(1, VALUE_STRING);
-
-        i64 seconds = t_arg.z;
+        Value zone    = ARGx(1, VALUE_STRING);
+        i64   seconds = EpochSeconds(ty, "time.zonetime()", argc, 0);
         i32 offset;
         bool isdst;
         if (!tz_offset_at((char const *)ss(zone), sN(zone), seconds, &offset, &isdst))
@@ -9142,12 +8998,12 @@ TY_BUILTIN_RAW(time_zonetime)
         );
 }
 
-// time.gmtime(time: ?Int) -> time::Tm
+// time.gmtime(t: ?Time[time::CLOCK_REALTIME]) -> time::Tm
 TY_BUILTIN_RAW(time_gmtime)
 {
         ASSERT_ARGC("time.gmtime()", 0, 1);
 
-        time_t t = (argc == 0 || IsNil(ARG(0))) ? time(NULL) : INT_ARG(0);
+        time_t t = EpochSeconds(ty, "time.gmtime()", argc, 0);
         struct tm r = {0};
 
         gmtime_r(&t, &r);
@@ -9157,7 +9013,7 @@ TY_BUILTIN_RAW(time_gmtime)
 
 // time.strftime(
 //     fmt: String,
-//     t: Int | {?sec: Int, ?min: Int, ?hour: Int, ?mday: Int, ?mon: Int, ?year: Int, ?wday: Int, ?yday: Int, ?isdst: Int | Bool, ?gmtoff: Int, ?zone: ?String} | nil = nil
+//     t: Time[time::CLOCK_REALTIME] | {?sec: Int, ?min: Int, ?hour: Int, ?mday: Int, ?mon: Int, ?year: Int, ?wday: Int, ?yday: Int, ?isdst: Int | Bool, ?gmtoff: Int, ?zone: ?String} | nil = nil
 // ) -> String
 TY_BUILTIN_RAW(time_strftime)
 {
@@ -9169,8 +9025,8 @@ TY_BUILTIN_RAW(time_strftime)
 
         if (argc == 2) {
                 Value v = ARG(1);
-                if (v.type == VALUE_INTEGER) {
-                        time_t sec = v.z;
+                if (v.type == VALUE_TIME) {
+                        time_t sec = EpochSeconds(ty, "time.strftime()", argc, 1);
                         localtime_r(&sec, &t);
                 } else if (v.type == VALUE_TUPLE) {
                         Value *vp;
@@ -9194,7 +9050,7 @@ TY_BUILTIN_RAW(time_strftime)
                                 t.tm_isdst = vp->z;
 
                 } else {
-                        ARGx(1, VALUE_INTEGER, VALUE_TUPLE);
+                        ARGx(1, VALUE_TIME, VALUE_TUPLE);
                         UNREACHABLE();
                 }
         } else {
@@ -9229,13 +9085,14 @@ TY_BUILTIN(time_strptime)
 #endif
 }
 
-// time.time(tm: ?time::Tm, utc: Bool = false) -> Int
+// time.time() -> Time[time::CLOCK_REALTIME]
+// time.time(tm: time::Tm, utc: Bool = false) -> Time[time::CLOCK_REALTIME]
 TY_BUILTIN_RAW(time_time)
 {
         ASSERT_ARGC("time.time()", 0, 1);
 
         if (argc == 0 || IsNil(ARG(0))) {
-                return INTEGER(time(NULL));
+                return TIME(ChronoNow(ty, CLOCK_REALTIME), CLOCK_REALTIME);
         }
 
         struct tm t = {0};
@@ -9253,12 +9110,9 @@ TY_BUILTIN_RAW(time_time)
         if ((vp = tget_t(&v, "isdst", VALUE_BOOLEAN)) != NULL) { t.tm_isdst = vp->boolean; }
 
         Value *utc = NAMED("utc");
+        i64    sec = (utc != NULL && value_truthy(ty, utc)) ? timegm(&t) : mktime(&t);
 
-        return INTEGER(
-                utc != NULL && value_truthy(ty, utc)
-                ? timegm(&t)
-                : mktime(&t)
-        );
+        return TIME(ChronoSeconds(ty, sec), CLOCK_REALTIME);
 }
 
 // stdio.fileno(fp: ?Ptr[Any]) -> Int
@@ -10813,6 +10667,7 @@ token_type_name(Token const *t)
         case TOKEN_IDENTIFIER: return "id";
         case TOKEN_INTEGER:    return "int";
         case TOKEN_REAL:       return "float";
+        case TOKEN_DURATION:   return "duration";
         case TOKEN_STRING:     return "string";
         case TOKEN_COMMENT:    return "comment";
         case TOKEN_AND:             type = "&&";   break;
@@ -10961,6 +10816,15 @@ token_record(Ty *ty, Token const *t)
                         "start",  start,
                         "end",    end,
                         "float",  REAL(t->real)
+                );
+
+        case TOKEN_DURATION:
+                return vTn(
+                        "type",     T(duration),
+                        "meta",     meta,
+                        "start",    start,
+                        "end",      end,
+                        "duration", DURATION(t->integer)
                 );
 
         case TOKEN_STRING:

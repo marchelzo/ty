@@ -809,6 +809,7 @@ token_color(Token const *t, char const *source)
 
         case TOKEN_INTEGER:
         case TOKEN_REAL:
+        case TOKEN_DURATION:
                 return SC_LITERAL;
 
         case TOKEN_STRING:

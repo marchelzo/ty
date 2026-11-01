@@ -148,6 +148,7 @@ typedef small_vec(ComprPart) Comprehension;
         X(BOOLEAN),                                                                   \
         X(STRING),                                                                    \
         X(REAL),                                                                      \
+        X(DURATION),                                                                  \
         X(ARRAY),                                                                     \
         X(ARRAY_COMPR),                                                               \
         X(STATEMENT),                                                                 \

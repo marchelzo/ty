@@ -4,6 +4,7 @@ import ty.test.events (
     get-str,
     get-int,
     get-float,
+    get-duration,
     get-bool,
     get-event,
     get-events,
@@ -86,12 +87,12 @@ pub fn label(outcome: String) -> String {
     LABELS[outcome] ?? outcome.upper()
 }
 
-pub fn fmt-dur(dur: Float) -> String {
-    (dur < 1.0) ? "{dur * 1000.0:.2}ms" : "{dur:.2}s"
+pub fn fmt-dur(dur: Duration) -> String {
+    (dur < 1s) ? "{dur.ms:.2}ms" : "{dur.secs:.2}s"
 }
 
-pub fn fmt-secs(secs: Float) -> String {
-    "{secs:.2}s"
+pub fn fmt-secs(dur: Duration) -> String {
+    "{dur.secs:.2}s"
 }
 
 pub fn plural(n: Int, word: String) -> String {
@@ -254,7 +255,7 @@ fn check-lines(ev: Event, color?: Bool, max-lines: Int) -> Array[String] {
 fn step-line(s: Event) -> String {
     let outcome = pad(get-str(s, 'outcome') ?? '?', 4)
     let name = get-str(s, 'name') ?? '?'
-    let note = get-str(s, 'reason') ?? fmt-dur(get-float(s, 'dur') ?? 0.0)
+    let note = get-str(s, 'reason') ?? fmt-dur(get-duration(s, 'dur') ?? 0s)
     "{outcome}  {name} ({note})"
 }
 
@@ -303,14 +304,14 @@ pub fn failure(
     let id = get-str(ev, 'id') ?? '(unknown)'
     let f = get-event(ev, 'failure')
     let outcome = outcome-of(ev)
-    let dur = get-float(ev, 'dur') ?? 0.0
+    let dur = get-duration(ev, 'dur') ?? 0s
     let at-file = get-str(f, 'file') ?? file ?? file-of(id)
     let at-line = get-int(f, 'line') ?? line
     let loc = (at-line == nil) ? at-file : "{at-file}:{at-line}"
     let head = [
         paint(label(outcome), outcome, color?),
         paint(id, 'bold', color?),
-        paint("({fmt-dur(dur)})", 'dim', color?) if outcome != 'error' || dur > 0.0,
+        paint("({fmt-dur(dur)})", 'dim', color?) if outcome != 'error' || dur > 0s,
     ]
     let out = [head.join(' '), "  {loc}: {kind(ev, strict?: strict?)}"]
 
@@ -398,12 +399,12 @@ fn rerun-command(id: String) -> String {
 pub fn summary(
     counts: Dict[String, Int],
     files: ?Dict[String, Int] = nil,
-    wall: ?Float = nil,
-    user: ?Float = nil,
-    sys: ?Float = nil,
+    wall: ?Duration = nil,
+    user: ?Duration = nil,
+    sys: ?Duration = nil,
     seed: ?Int = nil,
     warnings: Int = 0,
-    slowest: Array[(String, Float)] = [],
+    slowest: Array[(String, Duration)] = [],
     rerun: Array[String] = [],
     flaky: Array[String] = [],
     interrupted?: Bool = false,

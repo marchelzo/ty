@@ -16,7 +16,7 @@
  *     let es = rsp.events()
  *     for i in ..10 {
  *         es.send("tick {i}")
- *         http.sleep(1)
+ *         http.sleep(1s)
  *     }
  * })
  *
@@ -46,9 +46,9 @@
  * ```
  * srv.use(fn (req, rsp, next) { ...; next(); ... })   // middleware
  * srv.sessions('a long random secret')                 // req.session['user'] = 'alice'
- * srv.static-files('/assets', './public', max-age: 3600, precompressed: true)
+ * srv.static-files('/assets', './public', max-age: 1h, precompressed: true)
  * srv.get('/report', (req, rsp) -> rsp.file('report.pdf', download: true))
- * rsp.set-cookie('theme', 'dark', max-age: 86400); req.cookie('theme')
+ * rsp.set-cookie('theme', 'dark', max-age: 1d); req.cookie('theme')
  * srv.health()                                        // GET /healthz
  * srv.metrics-endpoint()                              // GET /metrics (Prometheus)
  * http.Server(..., access-log: true | 'json' | 'log' | fn (entry) { ... })

@@ -12,7 +12,7 @@ fn probe(env: Dict[String, String] = %{}) -> [String] {
     let result = sh.run(
         [ty.executable, '-e', PROBE],
         env=%{**base, **env},
-        timeout=30
+        timeout=30s
     )
     assert(result.stderr == '', result.stderr)
     result.stdout.lines()

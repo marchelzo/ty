@@ -24,11 +24,11 @@ pub fn try_take_with_timeout() {
     let q = SharedQueue()
 
     // Should return None after timeout
-    assert(q.try-take(0.01) == None)
+    assert(q.try-take(10ms) == None)
 
     // Put something and try again
     q.put(99)
-    assert(q.try-take(1.0) == Some(99))
+    assert(q.try-take(1s) == Some(99))
 }
 
 pub fn try_take_timeout_receives_item() {
@@ -36,12 +36,12 @@ pub fn try_take_timeout_receives_item() {
 
     // Producer puts an item after a short delay
     let t = Thread(fn () {
-        sleep(0.05)
+        sleep(50ms)
         q.put(123)
     })
 
     // Should block until item arrives (within timeout)
-    let result = q.try-take(2.0)
+    let result = q.try-take(2s)
     assert(result == Some(123))
 
     t.join()

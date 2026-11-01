@@ -1,5 +1,6 @@
 import ffi as c (C!)
 import os
+import time
 
 pub const TFD_NONBLOCK      = 0x800
 pub const TFD_CLOEXEC       = 0x80000
@@ -18,36 +19,35 @@ C! fn {
     int timerfd_gettime(int fd, void *cv);
 }
 
+fn span(sec: Int, nsec: Int) -> Duration {
+    Duration(sec * 1000000000 + nsec)
+}
+
 pub class TimerFD {
     __fd: Int
     __spec: _
 
-    init(clockid: Int = 1, flags: Int = TFD_CLOEXEC) {
+    init(clockid: Int = time.CLOCK_MONOTONIC, flags: Int = TFD_CLOEXEC) {
         __fd = timerfd_create(clockid, flags)
         __spec = Itimerspec()
     }
 
     fd -> Int { __fd }
 
-    set(
-        sec:           Int = 0,
-        nsec:          Int = 0,
-        interval-sec:  Int = 0,
-        interval-nsec: Int = 0,
-        flags:         Int = 0
-    ) -> Int {
-        __spec.value_sec      = sec
-        __spec.value_nsec     = nsec
-        __spec.interval_sec   = interval-sec
-        __spec.interval_nsec  = interval-nsec
-        timerfd_settime(__fd, flags, __spec.get(), nil)
+    set(initial: Duration | Time[Any], interval: Duration = 0s, flags: Int = 0) -> Int {
+        let abs? = !(initial :: Duration)
+        __spec.value_sec     = int(initial)  / 1000000000
+        __spec.value_nsec    = int(initial)  % 1000000000
+        __spec.interval_sec  = int(interval) / 1000000000
+        __spec.interval_nsec = int(interval) % 1000000000
+        timerfd_settime(__fd, flags | (abs? ? TFD_TIMER_ABSTIME : 0), __spec.get(), nil)
     }
 
-    get() -> {expiry: {sec: Int, nsec: Int}, interval: {sec: Int, nsec: Int}} {
+    get() -> {expiry: Duration, interval: Duration} {
         timerfd_gettime(__fd, __spec.get())
         return {
-            expiry:   {sec: __spec.value_sec,    nsec: __spec.value_nsec},
-            interval: {sec: __spec.interval_sec, nsec: __spec.interval_nsec}
+            expiry:   span(__spec.value_sec,    __spec.value_nsec),
+            interval: span(__spec.interval_sec, __spec.interval_nsec)
         }
     }
 

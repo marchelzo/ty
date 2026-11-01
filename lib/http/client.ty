@@ -26,7 +26,7 @@
  *
  * with ws = c.websocket('wss://api.example.com/live') {
  *     ws.send('hello')
- *     print(ws.recv(timeout: 5))
+ *     print(ws.recv(timeout: 5s))
  * }
  * ```
  *
@@ -133,55 +133,63 @@ pub class StreamConsumed < RuntimeError {
     }
 }
 
-pub use Seconds = Int | Float | Bool | nil
+pub use Limit = Duration | Bool | nil
 
-fn seconds(x: Seconds) -> Float | nil {
+use Mono = Time[time::CLOCK_MONOTONIC]
+
+fn limit(x: Limit) -> ?Duration {
     match x {
-        nil, false => nil,
-        n: Int     => float(n),
-        f: Float   => f,
-        other      => throw ValueError("http: invalid timeout: {other}")
+        nil, false  => nil,
+        d: Duration => d,
+        other       => throw ValueError("http: invalid timeout: {other}")
     }
 }
 
-fn deadline(t: Float | nil) -> Float | nil {
+fn deadline(t: ?Duration) -> ?Mono {
     (t == nil) ? nil : time.now() + t
 }
 
-fn left(d: Float | nil) -> Float | nil {
-    (d == nil) ? nil : max(0.0, d - time.now())
+fn absolute(t: ?time::Timeout) -> ?time::Timeout {
+    match t {
+        d: Duration => time.now() + d,
+        other       => other
+    }
 }
 
-/// Timeouts in seconds; `nil`/`false` disables one. `read` and `write`
+fn expired?(until: ?Mono) -> Bool {
+    until != nil && time.now() >= until
+}
+
+/// Timeouts as Durations; `nil`/`false` disables one. `read` and `write`
 /// bound each wait for the network, not the whole transfer; `pool` bounds
 /// waiting for a free connection.
 pub class Timeout {
-    connect: Float | nil
-    read:    Float | nil
-    write:   Float | nil
-    pool:    Float | nil
+    connect: ?Duration
+    read:    ?Duration
+    write:   ?Duration
+    pool:    ?Duration
 
     init(
-        all: Seconds = 5.0,
-        connect: Seconds = nil,
-        read: Seconds = nil,
-        write: Seconds = nil,
-        pool: Seconds = nil
+        all: Limit = 5s,
+        connect: Limit = nil,
+        read: Limit = nil,
+        write: Limit = nil,
+        pool: Limit = nil
     ) {
-        let base = seconds(all)
-        self.connect = (connect == nil) ? base : seconds(connect)
-        self.read    = (read == nil) ? base : seconds(read)
-        self.write   = (write == nil) ? base : seconds(write)
-        self.pool    = (pool == nil) ? base : seconds(pool)
+        let base = limit(all)
+        self.connect = (connect == nil) ? base : limit(connect)
+        self.read    = (read    == nil) ? base : limit(read)
+        self.write   = (write   == nil) ? base : limit(write)
+        self.pool    = (pool    == nil) ? base : limit(pool)
     }
 
     static of(x: _, fallback: Timeout | nil = nil) -> Timeout {
         match x {
-            t: Timeout     => t,
-            nil            => fallback ?? Timeout(),
-            false          => Timeout(false),
-            n: Int | Float => Timeout(n),
-            r              => Timeout(
+            t: Timeout  => t,
+            nil         => fallback ?? Timeout(),
+            false       => Timeout(false),
+            d: Duration => Timeout(d),
+            r           => Timeout(
                 r.?all ?? (fallback ?? Timeout()).read,
                 connect: r.?connect,
                 read: r.?read,
@@ -196,14 +204,14 @@ pub class Timeout {
     }
 }
 
-/// Connection pool limits. `keepalive-expiry` closes idle connections after
-/// that many seconds; `http2-connections` lets requests to one origin spread
+/// Connection pool limits. `keepalive-expiry` closes connections idle for
+/// longer than that Duration; `http2-connections` lets requests to one origin spread
 /// over up to that many HTTP/2 connections (another is opened only while
 /// every existing one is busy).
 pub class Limits {
     max-connections:   Int = 100
     max-keepalive:     Int = 20
-    keepalive-expiry:  Int | Float = 5.0
+    keepalive-expiry:  Duration = 5s
     http2-connections: Int = 1
 }
 
@@ -212,8 +220,8 @@ pub class Limits {
 /// honored.
 pub class Retry {
     total:       Int = 3
-    backoff:     Int | Float = 0.5
-    max-backoff: Int | Float = 30.0
+    backoff:     Duration = 500ms
+    max-backoff: Duration = 30s
     statuses:    Array[Int] = [429, 502, 503, 504]
     methods:     Array[String] = IDEMPOTENT_METHODS
     retry-after: Bool = true
@@ -227,28 +235,27 @@ pub class Retry {
         }
     }
 
-    delay(attempt: Int, rsp: Response | nil = nil) -> Float {
-        let cap = float(max-backoff)
+    delay(attempt: Int, rsp: Response | nil = nil) -> Duration {
         if retry-after and let $r = rsp and let $ra = r.header('retry-after') {
             if ra.match?(/^\d+$/) {
-                return min(float(int(ra, 10)), cap)
+                return (#ra > 9) ? max-backoff : min(abs(int(ra, 10) * 1s), max-backoff)
             }
             if let $t = (try { time.time(time.strptime(ra, '%a, %d %b %Y %H:%M:%S GMT'), utc: true) }) {
-                return max(0.0, min(float(t) - time.utc(), cap))
+                return min(time.until(t), max-backoff)
             }
         }
-        min(float(backoff) * float(1 << min(attempt, 20)) * (0.5 + rand()), cap)
+        abs(min(backoff * (float(1 << min(attempt, 20)) * (0.5 + rand())), max-backoff))
     }
 }
 
-fn nap(secs: Float) {
-    if secs <= 0.0 {
+fn nap(d: Duration) {
+    if d <= 0s {
         return
     }
     if let $l = hl.loop() and hl.in-task?(l) {
-        l.sleep(secs)
+        l.sleep(d)
     } else {
-        os.sleep(secs)
+        os.sleep(d)
     }
 }
 
@@ -493,16 +500,16 @@ fn progress-bar(spec: Progress, total: Int | nil, label: String) -> (Int, Bool) 
         nil, false  => (_, _) -> nil,
         f: Function => (n, done) -> f(n, total),
         _ => do {
-            let last = [0.0]
             let started = time.now()
+            let last = [started - 1s]
             let tty? = os.isatty(2)
             return fn (n: Int, done: Bool) {
                 let now = time.now()
-                if !done && now - last[0] < 0.1 {
+                if !done && now - last[0] < 100ms {
                     return
                 }
                 last[0] = now
-                let rate = float(n) / max(now - started, 0.001)
+                let rate = float(n) / max((now - started).secs, 0.001)
                 let line = match total {
                     nil => "{label}  {human(float(n))}  {human(rate)}/s",
                     t   => do {
@@ -533,7 +540,7 @@ pub class Response {
     url:          URL | nil
     request:      Request | nil
     history:      Array[Response] = []
-    elapsed:      Float = 0.0
+    elapsed:      Duration = 0s
 
     __body:     Body | nil
     __content:  Blob | nil
@@ -1267,13 +1274,13 @@ pub class Sock {
     fd:   Int
     host: String
 
-    static tcp(host: String, port: Int, until: Float | nil, local: String | nil = nil) -> Sock {
+    static tcp(host: String, port: Int, until: ?Mono, local: String | nil = nil) -> Sock {
         let fd = connect-tcp(host, port, until, local)
         os.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, 1)
         Sock(c.client(fd), fd, host)
     }
 
-    static unix(path: String, until: Float | nil) -> Sock {
+    static unix(path: String, until: ?Mono) -> Sock {
         let fd = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
         if fd < 0 {
             throw ConnectError('http: socket() failed')
@@ -1288,7 +1295,7 @@ pub class Sock {
     }
 
     /// A TLS session over this socket (which it takes over).
-    tls(ctx: ssl.Context, name: String, until: Float | nil) -> Sock {
+    tls(ctx: ssl.Context, name: String, until: ?Mono) -> Sock {
         let s = Sock(c.client(fd, ctx.ptr, name, ptr), fd, name)
         s.io(until, ConnectTimeout, -> c.handshake(s.ptr), "the TLS handshake with {name}")
         s
@@ -1298,17 +1305,17 @@ pub class Sock {
         c.alpn(ptr)
     }
 
-    io(until: Float | nil, timeout: (String) -> TimeoutError, f: () -> _, what: String = 'the network') -> _ {
+    io(until: ?Mono, timeout: (String) -> TimeoutError, f: () -> _, what: String = 'the network') -> _ {
         while true {
             let r = f()
             match r {
                 WANT_READ => {
-                    if !hl.wait-fd(fd, os.POLLIN, left(until)) {
+                    if !hl.wait-fd(fd, os.POLLIN, until) {
                         throw timeout("http: timed out waiting for {what} from {host}")
                     }
                 },
                 WANT_WRITE => {
-                    if !hl.wait-fd(fd, os.POLLOUT, left(until)) {
+                    if !hl.wait-fd(fd, os.POLLOUT, until) {
                         throw timeout("http: timed out writing to {host}")
                     }
                 },
@@ -1330,13 +1337,13 @@ pub class Sock {
         }
     }
 
-    send(data: String | Blob, until: Float | nil) {
+    send(data: String | Blob, until: ?Mono) {
         io(until, WriteTimeout, -> c.send(ptr, data))
         io(until, WriteTimeout, -> c.flush(ptr))
     }
 
     /// The next raw chunk (after TLS); nil at end of stream.
-    recv(until: Float | nil) -> Blob | nil {
+    recv(until: ?Mono) -> Blob | nil {
         io(until, ReadTimeout, -> c.recv(ptr))
     }
 
@@ -1359,7 +1366,7 @@ fn resolve(host: String, port: Int) -> Array[_] {
     }
 }
 
-fn connect-tcp(host: String, port: Int, until: Float | nil, local: String | nil) -> Int {
+fn connect-tcp(host: String, port: Int, until: ?Mono, local: String | nil) -> Int {
     let addrs = resolve(host, port)
     let first = (#addrs > 0) ? addrs[0].family : os.AF_INET
     let ordered = [*addrs.filter(\_.family == first).interleave(addrs.filter(\_.family != first))]
@@ -1387,10 +1394,10 @@ fn connect-tcp(host: String, port: Int, until: Float | nil, local: String | nil)
             os.close(fd)
             continue
         }
-        let stagger = (a != ordered[-1]) ? min(left(until) ?? 0.25, 0.25) : left(until)
+        let stagger = (a != ordered[-1]) ? min(time.until(until ?? time.now() + 1s), 250ms) : until
         if !hl.wait-fd(fd, os.POLLOUT, stagger) {
             os.close(fd)
-            if until != nil && left(until) == 0.0 {
+            if expired?(until) {
                 throw ConnectTimeout("http: connection to {host}:{port} timed out")
             }
             last = 'timed out'
@@ -1483,7 +1490,7 @@ pub class H1Conn : Connection {
     origin:     String
     pool:       Pool | nil
     forward?:   Bool = false
-    idle-since: Float = time.now()
+    idle-since: Mono = time.now()
     closed?:    Bool = false
     timeout:    Timeout = Timeout()
 
@@ -1637,7 +1644,7 @@ pub class H2Conn : Connection {
     h2:         Ptr
     sock:       Sock
     pool:       Pool | nil
-    idle-since: Float = time.now()
+    idle-since: Mono = time.now()
 
     __key:      String
     __requests: Atomic = Atomic(0)
@@ -1694,9 +1701,9 @@ pub class H2Conn : Connection {
         c.h2-close(h2)
     }
 
-    __wait(sid: Int, what: Int, until: Float | nil) {
+    __wait(sid: Int, what: Int, until: ?Mono) {
         if let $l = hl.loop() and hl.in-task?(l) {
-            let tid = c.timer(l.core, left(until) ?? 3600.0, hl.task())
+            let tid = c.timer(l.core, until ?? 1h, hl.task())
             try {
                 if !c.h2-watch(h2, sid, what, l.core, tid) {
                     hl.suspend()
@@ -1706,7 +1713,7 @@ pub class H2Conn : Connection {
                 c.h2-unwatch(h2, sid)
             }
         } else {
-            c.h2-wait(h2, sid, what, left(until) ?? -1.0)
+            c.h2-wait(h2, sid, what, until)
         }
     }
 
@@ -1753,7 +1760,7 @@ pub class H2Conn : Connection {
                             break
                         }
                         n = c.h2-upload(h2, sid, nil)
-                        if n > UPLOAD_HIGH && until != nil && left(until) == 0.0 {
+                        if n > UPLOAD_HIGH && expired?(until) {
                             throw WriteTimeout("http: timed out waiting for flow-control credit from {sock.host}")
                         }
                     }
@@ -1774,12 +1781,12 @@ pub class H2Conn : Connection {
         }
     }
 
-    __head(sid: Int, until: Float | nil) -> Response {
+    __head(sid: Int, until: ?Mono) -> Response {
         while true {
             match c.h2-head(h2, sid) {
                 r: Response => return r,
                 WANT_READ   => do {
-                    if until != nil && left(until) == 0.0 {
+                    if expired?(until) {
                         throw ReadTimeout("http: timed out waiting for response headers from {sock.host}")
                     }
                     __wait(sid, W_HEAD, until)
@@ -1797,7 +1804,7 @@ pub class H2Conn : Connection {
                 b: Blob   => return b,
                 nil       => return nil,
                 WANT_READ => do {
-                    if until != nil && left(until) == 0.0 {
+                    if expired?(until) {
                         throw ReadTimeout("http: timed out waiting for the response body from {sock.host}")
                     }
                     __wait(sid, W_BODY, until)
@@ -1876,7 +1883,7 @@ pub class Pool {
 
     /// A connection for `key`: an idle or multiplexed one when possible,
     /// `open()` otherwise.
-    acquire(key: String, open: () -> Connection, until: Float | nil, h2?: Bool) -> Connection {
+    acquire(key: String, open: () -> Connection, until: ?Mono, h2?: Bool) -> Connection {
         let ^_ = __lock.lock()
         while true {
             if __closed? {
@@ -1897,7 +1904,7 @@ pub class Pool {
             while let $idle = __idle[key] and #idle > 0 {
                 let conn = idle.pop()
                 __nidle -= 1
-                if time.now() - conn.idle-since > float(limits.keepalive-expiry) || !conn.reusable? {
+                if time.since(conn.idle-since) > limits.keepalive-expiry || !conn.reusable? {
                     __total -= 1
                     conn.close()
                     continue
@@ -1906,8 +1913,8 @@ pub class Pool {
             }
 
             if h2? && __probing.contains?(key) {
-                __cv.wait(__lock, left(until) ?? 3600.0)
-                if until != nil && left(until) == 0.0 {
+                __cv.wait(__lock, until)
+                if expired?(until) {
                     throw PoolTimeout("http: timed out waiting for a connection to {key}")
                 }
                 continue
@@ -1940,8 +1947,8 @@ pub class Pool {
                 return conn
             }
 
-            __cv.wait(__lock, left(until) ?? 3600.0)
-            if until != nil && left(until) == 0.0 {
+            __cv.wait(__lock, until)
+            if expired?(until) {
                 throw PoolTimeout("http: timed out waiting for a free connection (max-connections: {limits.max-connections})")
             }
         }
@@ -2200,7 +2207,7 @@ pub class HTTPTransport : Transport {
         }
     }
 
-    __dial(url: URL, proxy: URL | nil, host: String, port: Int, until: Float | nil) -> Sock {
+    __dial(url: URL, proxy: URL | nil, host: String, port: Int, until: ?Mono) -> Sock {
         if uds {
             return Sock.unix(uds, until)
         }
@@ -2235,7 +2242,7 @@ pub class HTTPTransport : Transport {
         }
     }
 
-    __tunnel(s: Sock, p: URL, host: String, port: Int, until: Float | nil) {
+    __tunnel(s: Sock, p: URL, host: String, port: Int, until: ?Mono) {
         let target = host.contains?(':') ? "[{host}]:{port}" : "{host}:{port}"
         let extra = [('User-Agent', USER_AGENT)]
         if let $auth = proxy-auth(p) {
@@ -2254,7 +2261,7 @@ pub class HTTPTransport : Transport {
         }
     }
 
-    __read-exact(s: Sock, n: Int, until: Float | nil) -> Blob {
+    __read-exact(s: Sock, n: Int, until: ?Mono) -> Blob {
         let out = Blob()
         while #out < n {
             let $chunk = s.io(until, ConnectTimeout, -> c.recv(s.ptr, n - #out)) or throw ProxyError('http: proxy closed the connection')
@@ -2263,7 +2270,7 @@ pub class HTTPTransport : Transport {
         out
     }
 
-    __socks5(s: Sock, p: URL, host: String, port: Int, until: Float | nil) {
+    __socks5(s: Sock, p: URL, host: String, port: Int, until: ?Mono) {
         let user = p.username
         s.send((user == nil) ? Blob(5, 1, 0) : Blob(5, 2, 0, 2), until)
         let reply = __read-exact(s, 2, until)
@@ -2369,7 +2376,7 @@ pub class HTTPTransport : Transport {
                     },
                     _: ConnectError and attempt < retries => {
                         attempt += 1
-                        nap(min(0.5 * float(1 << attempt), 8.0))
+                        nap(min(abs(500ms * (1 << attempt)), 8s))
                         continue
                     },
                     _: ReadError and reused? && req.replayable? && IDEMPOTENT.contains?(req.method) && attempt < max(retries, 1) => {
@@ -2539,7 +2546,7 @@ fn compress-stream*(src: BodySource, coding: String) {
 }
 
 class EventState {
-    delay:     Float
+    delay:     Duration
     rsp:       Response | nil
     src:       Chunks[Event] | nil
     last-id:   String | nil
@@ -2558,7 +2565,7 @@ class EventState {
 /// An HTTP client with shared configuration and a connection pool.
 ///
 /// Keywords: `base-url`; `headers`, `params`, `cookies`, `auth` (defaults
-/// merged into every request); `timeout` (seconds or `Timeout`);
+/// merged into every request); `timeout` (a Duration or `Timeout`);
 /// `follow-redirects`, `max-redirects`; `http1`, `http2`; `verify` (true,
 /// false, a CA bundle, or an `ssl.Context`); `cert` (path or `(cert, key)`);
 /// `proxy` (`http://`, `https://`, `socks5://`, `socks5h://`) and
@@ -2594,7 +2601,7 @@ pub class Client {
         params: _ = nil,
         cookies: _ = nil,
         auth: _ = nil,
-        timeout: _ = 5.0,
+        timeout: _ = 5s,
         follow-redirects: Bool = true,
         max-redirects: Int = 20,
         http1: Bool = true,
@@ -2790,8 +2797,8 @@ pub class Client {
 
         rsp.request = req
         req.extensions['http-version'] = rsp.http-version
-        rsp.elapsed = time.now() - started
-        rsp.on-close(fn () { rsp.elapsed = time.now() - started })
+        rsp.elapsed = time.since(started)
+        rsp.on-close(fn () { rsp.elapsed = time.since(started) })
 
         cookies.extract(rsp.headers, req.url)
 
@@ -3027,14 +3034,14 @@ pub class Client {
     /// Server-Sent Events from `url`, reconnecting with Last-Event-ID when
     /// the stream ends or fails, until `reconnect: false` or `max-retries`
     /// consecutive failures.
-    events(url: String | URL, reconnect: Bool = true, max-retries: Int | nil = nil, retry-delay: Int | Float = 3.0, %kwargs) -> Chunks[Event] {
+    events(url: String | URL, reconnect: Bool = true, max-retries: Int | nil = nil, retry-delay: Duration = 3s, %kwargs) -> Chunks[Event] {
         let hs = Headers(kwargs['headers'])
         hs.set('Accept', 'text/event-stream')
         hs.set('Cache-Control', 'no-cache')
         let opts = kwargs - static!(%['headers', 'timeout'])
-        let timeout = kwargs['timeout'] ?? Timeout(self.timeout.connect ?? 5.0, read: false)
+        let timeout = kwargs['timeout'] ?? Timeout(self.timeout.connect ?? 5s, read: false)
 
-        let st = EventState(float(retry-delay))
+        let st = EventState(retry-delay)
 
         let fail = fn (e: TransportError) {
             st.close()
@@ -3086,7 +3093,7 @@ pub class Client {
                     st.failures = 0
                     st.last-id = ev.id
                     if ev.retry != nil {
-                        st.delay = float(ev.retry) / 1000.0
+                        st.delay = abs(ev.retry * 1ms)
                     }
                     return ev
                 }
@@ -3292,9 +3299,9 @@ pub class WebSocket {
         __closed?
     }
 
-    __io(timeout: Int | Float | nil, kind: (String) -> TimeoutError, f: () -> _) -> _ {
+    __io(timeout: ?time::Timeout, kind: (String) -> TimeoutError, f: () -> _) -> _ {
         let s = __sock
-        let until = deadline(seconds(timeout))
+        let until = absolute(timeout)
         while true {
             let r = do {
                 let ^_ = __lock.lock()
@@ -3302,12 +3309,12 @@ pub class WebSocket {
             }
             match r {
                 WANT_READ => {
-                    if !hl.wait-fd(s.fd, os.POLLIN, left(until)) {
+                    if !hl.wait-fd(s.fd, os.POLLIN, until) {
                         throw kind("http: timed out on the WebSocket to {s.host}")
                     }
                 },
                 WANT_WRITE => {
-                    if !hl.wait-fd(s.fd, os.POLLOUT, left(until)) {
+                    if !hl.wait-fd(s.fd, os.POLLOUT, until) {
                         throw kind("http: timed out writing to the WebSocket to {s.host}")
                     }
                 },
@@ -3318,7 +3325,7 @@ pub class WebSocket {
         nil
     }
 
-    __send(op: Int, data: String | Blob, timeout: Int | Float | nil) {
+    __send(op: Int, data: String | Blob, timeout: ?time::Timeout) {
         if __closed? {
             throw WriteError("http: the WebSocket to {__sock.host} is closed")
         }
@@ -3327,11 +3334,11 @@ pub class WebSocket {
     }
 
     /// Sends a text (String) or binary (Blob) message.
-    send(msg: String | Blob, timeout: Int | Float | nil = 5.0) {
+    send(msg: String | Blob, timeout: ?time::Timeout = 5s) {
         __send((msg :: String) ? OP_TEXT : OP_BINARY, msg, timeout)
     }
 
-    ping(data: String | Blob = '', timeout: Int | Float | nil = 5.0) {
+    ping(data: String | Blob = '', timeout: ?time::Timeout = 5s) {
         __send(OP_PING, data, timeout)
     }
 
@@ -3348,8 +3355,9 @@ pub class WebSocket {
 
     /// The next message: a String for text, a Blob for binary data, or nil
     /// once the connection has closed. Throws `ReadTimeout` when nothing
-    /// arrives within `timeout` seconds; a partial message is kept.
-    recv(timeout: Int | Float | nil = nil) -> String | Blob | nil {
+    /// arrives within `timeout` (a Duration or a deadline); a partial
+    /// message is kept.
+    recv(timeout: ?time::Timeout = nil) -> String | Blob | nil {
         if __closed? {
             return nil
         }
@@ -3361,7 +3369,7 @@ pub class WebSocket {
         }
         if msg == nil {
             try {
-                __io(1.0, WriteTimeout, -> c.flush(__sock.ptr))
+                __io(1s, WriteTimeout, -> c.flush(__sock.ptr))
             } catch _ {
             }
             __finish()
@@ -3369,16 +3377,16 @@ pub class WebSocket {
         msg
     }
 
-    /// Sends a close frame, waits up to `timeout` seconds for the server's,
-    /// and closes the connection.
-    close(code: Int = 1000, reason: String = '', timeout: Int | Float | nil = 1.0) {
+    /// Sends a close frame, waits up to `timeout` for the server's, and
+    /// closes the connection.
+    close(code: Int = 1000, reason: String = '', timeout: ?time::Timeout = 1s) {
         if __closed? {
             return
         }
         try {
-            __send(OP_CLOSE, Blob(code >> 8, code & 0xFF).push(reason), timeout)
-            let until = deadline(seconds(timeout))
-            while recv(timeout: left(until)) != nil {
+            let until = absolute(timeout)
+            __send(OP_CLOSE, Blob(code >> 8, code & 0xFF).push(reason), until)
+            while recv(timeout: until) != nil {
             }
         } catch _ {
         }

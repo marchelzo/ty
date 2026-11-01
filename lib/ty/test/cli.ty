@@ -43,9 +43,9 @@ pub class Options {
     shuffle?:          Bool = false
     seed:              ?Int = nil
     jobs:              ?Int = nil
-    timeout:           ?Float = nil
-    load-timeout:      ?Float = nil
-    grace:             ?Float = nil
+    timeout:           ?Duration = nil
+    load-timeout:      ?Duration = nil
+    grace:             ?Duration = nil
     no-capture?:       Bool = false
     keep-tmp?:         Bool = false
     max-respawns:      Int = 5
@@ -89,9 +89,9 @@ run control:
       --shard I/N         run only the I-th of N slices of the files
       --shuffle[=SEED]    shuffle file and test order
       --seed N            seed for --shuffle and per-test srand
-      --timeout S         per-test timeout (default 10)
-      --load-timeout S    per-file load timeout (default 30)
-      --grace S           extra time before a hung test is killed (default 2)
+      --timeout T         per-test timeout (default 10s; seconds, or 500ms, 2m, ...)
+      --load-timeout T    per-file load timeout (default 30s)
+      --grace T           extra time before a hung test is killed (default 2s)
       --max-respawns N    respawn a crashed worker at most N times (default 5)
   -s, --no-capture        do not capture test output (implies -J 1)
       --keep-tmp          keep the run directory and t.tmp-dir() directories
@@ -109,10 +109,10 @@ reporting:
 exit status: 0 ok, 1 failures, 2 usage, 5 nothing selected, 130 interrupted
 """
 
-fn number(opt: String, s: String) -> Float {
-    match s {
-        /^\d+(\.\d+)?$/ => float(s),
-        _               => throw UsageError("{opt} expects a number, got '{s}'"),
+fn duration(opt: String, s: String) -> Duration {
+    match events.parse-duration(s) {
+        nil => throw UsageError("{opt} expects a duration such as 2.5 or 500ms, got '{s}'"),
+        d   => d,
     }
 }
 
@@ -200,9 +200,9 @@ pub fn parse(args: Array[String]) -> Options {
             },
             '--seed'               => o.seed = integer(opt, value(opt, inline)),
             '-J' or '--jobs'       => o.jobs = integer(opt, value(opt, inline)),
-            '--timeout'            => o.timeout = number(opt, value(opt, inline)),
-            '--load-timeout'       => o.load-timeout = number(opt, value(opt, inline)),
-            '--grace'              => o.grace = number(opt, value(opt, inline)),
+            '--timeout'            => o.timeout = duration(opt, value(opt, inline)),
+            '--load-timeout'       => o.load-timeout = duration(opt, value(opt, inline)),
+            '--grace'              => o.grace = duration(opt, value(opt, inline)),
             '-s' or '--no-capture' => o.no-capture? = flag(opt, inline),
             '--keep-tmp'           => o.keep-tmp? = flag(opt, inline),
             '--max-respawns'       => o.max-respawns = integer(opt, value(opt, inline)),
@@ -390,8 +390,8 @@ fn write-text(p: String, text: String) {
     os.close(fd)
 }
 
-fn longest-first(jobs: Array[Job], durs: Dict[String, Float]) -> Array[Job] {
-    jobs.sort(by: j -> (-(durs[j.file] ?? 1.0e9), j.file))
+fn longest-first(jobs: Array[Job], durs: Dict[String, Duration]) -> Array[Job] {
+    jobs.sort(by: j -> (-(durs[j.file] ?? 1d), j.file))
 }
 
 fn tracked-files() -> Dict[String, Bool] {
@@ -614,7 +614,7 @@ fn list-run(o: Options, jobs: Array[Job], cfg: Settings) -> Int {
 }
 
 fn cpu-of(tally: Tally) -> Dict[String, Float] {
-    %{'user': tally.user, 'sys': tally.sys}
+    %{'user': tally.user.secs, 'sys': tally.sys.secs}
 }
 
 fn exit-status(tally: Tally, bad-rc: Int, interrupted?: Bool) -> Int {
@@ -652,7 +652,7 @@ fn suite-run(o: Options, args: Array[String], plan: Plan, seed: Int) -> Int {
         seq += 1
         ev['seq'] = seq
         if ev['ev'] == 'file-done' {
-            if let $f = events.get-str(ev, 'file') and let $d = events.get-float(ev, 'dur') {
+            if let $f = events.get-str(ev, 'file') and let $d = events.get-duration(ev, 'dur') {
                 durs[f] = d
             }
         }
@@ -692,7 +692,7 @@ fn suite-run(o: Options, args: Array[String], plan: Plan, seed: Int) -> Int {
     emit(events.run-end(
         tally.counts,
         files: tally.file-counts(),
-        dur: time.now() - t0,
+        dur: time.since(t0),
         cpu: cpu-of(tally),
         rc: rc,
         interrupted?: interrupted?

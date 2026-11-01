@@ -11,6 +11,7 @@
 #include "ty.h"
 #include "dtoa.h"
 #include "value.h"
+#include "chrono.h"
 #include "xd.h"
 #include "dict.h"
 #include "set.h"
@@ -590,6 +591,9 @@ HashImpl(Ty *ty, Value const *val, Cycles *cs)
         case VALUE_STRING:            return XXH3_64bits(ss(*val), sN(*val));
         case VALUE_INTEGER:           return hash64(val->z);
         case VALUE_REAL:              return flt_hash(val->real);
+        case VALUE_DURATION:          return hash64(val->ns);
+        case VALUE_TIMEDELTA:         return hash64(val->ns);
+        case VALUE_TIME:              return hash64(val->ns) ^ hash64(~val->clk);
         case VALUE_ARRAY:             return ary_hash(ty, val, cs);
         case VALUE_QUEUE:             return queue_hash(ty, val, cs);
         case VALUE_TUPLE:             return tpl_hash(ty, val, cs);
@@ -771,6 +775,27 @@ show_impl(
                         }
                         break;
                 }
+
+                case VALUE_DURATION:
+                case VALUE_TIMEDELTA:
+                        if (color) {
+                                sxdf(&buf, "%s", TERM(93));
+                        }
+                        ChronoShowDuration(ty, &buf, v.ns);
+                        if (color) {
+                                sxdf(&buf, "%s", TERM(0));
+                        }
+                        break;
+
+                case VALUE_TIME:
+                        if (color) {
+                                sxdf(&buf, "%s", TERM(93));
+                        }
+                        ChronoShowTime(ty, &buf, v.ns, v.clk);
+                        if (color) {
+                                sxdf(&buf, "%s", TERM(0));
+                        }
+                        break;
 
                 case VALUE_STRING:
                 {
@@ -1742,6 +1767,18 @@ CompareImpl(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 return (v1->z < v2->real) ? -1 : (v1->z != v2->real);
 
+        case PAIR_OF(VALUE_DURATION):
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION, VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                return (v1->ns < v2->ns) ? -1 : (v1->ns != v2->ns);
+
+        case PAIR_OF(VALUE_TIME):
+                if (v1->clk != v2->clk) {
+                        zP("cannot compare times from different clocks: %s and %s", VSC(v1), VSC(v2));
+                }
+                return (v1->ns < v2->ns) ? -1 : (v1->ns != v2->ns);
+
         case PAIR_OF(VALUE_STRING):
                 c = memcmp(ss(*v1), ss(*v2), min(sN(*v1), sN(*v2)));
                 return (c != 0) ? c : (int)((isize)sN(*v1) - (isize)sN(*v2));
@@ -1892,6 +1929,15 @@ TestEquality(Ty *ty, Value const *v1, Value const *v2, Cycles *cs)
         switch (PACK_TYPES(t0, t1)) {
         case PAIR_OF(VALUE_INTEGER):
                 return (v1->z == v2->z);
+
+        case PAIR_OF(VALUE_DURATION):
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION, VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                return (v1->ns == v2->ns);
+
+        case PAIR_OF(VALUE_TIME):
+                return (v1->ns == v2->ns) && (v1->clk == v2->clk);
 
         case PAIR_OF(VALUE_STRING):
                 return (sN(*v1) == sN(*v2))
@@ -2889,45 +2935,6 @@ Value
         return object;
 }
 
-struct timespec
-tuple_timespec(Ty *ty, char const *func, Value const *v)
-{
-        Value *sec = tuple_get(v, "sec");
-
-        if (sec == NULL || sec->type != VALUE_INTEGER) {
-                zP(
-                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
-                        func,
-                        TERM(93),
-                        VSC(v),
-                        TERM(0),
-                        TERM(92),
-                        "sec",
-                        TERM(0)
-                );
-        }
-
-        Value *nsec = tuple_get(v, "nsec");
-
-        if (nsec == NULL || nsec->type != VALUE_INTEGER) {
-                zP(
-                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
-                        func,
-                        TERM(93),
-                        VSC(v),
-                        TERM(0),
-                        TERM(92),
-                        "nsec",
-                        TERM(0)
-                );
-        }
-
-        return (struct timespec) {
-                .tv_sec = sec->z,
-                .tv_nsec = nsec->z
-        };
-}
-
 Value
 TyPathValue(Ty *ty, char const *ctx, char const *name, Value v)
 {
@@ -2993,6 +3000,11 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
 
         case CLASS_HEAP:
                 return builtin_heap(ty, argc, kwargs);
+
+        case CLASS_TIME:
+        case CLASS_DURATION:
+        case CLASS_TIMEDELTA:
+                return ChronoConstruct(ty, class_id, argc);
 
         case CLASS_QUEUE:
                 return builtin_queue(ty, argc, kwargs);

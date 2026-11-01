@@ -31,13 +31,13 @@ fn mounted?(dir: String) -> Bool {
 }
 
 fn await-mount(dir: String) {
-    let deadline = time.now() + 3.0
+    let deadline = time.now() + 3s
 
     while !mounted?(dir) {
         if time.now() > deadline {
             throw AssertionError("{dir} was never mounted")
         }
-        os.sleep(0.01)
+        os.sleep(10ms)
     }
 }
 
@@ -102,6 +102,10 @@ fn stat(path: String) -> os.Stat {
 fn kind(path: String) -> Int {
     let st = os.lstat(path) ?? throw AssertionError("lstat({path}): {errno.str(errno.get())}")
     st.mode & S_IFMT
+}
+
+fn timespec(t: fuse.Stamp) -> (Int, Int) {
+    (int(t) / 1000000000, int(t) % 1000000000)
 }
 
 fn set-times(path: String, atime: (Int, Int), mtime: (Int, Int)) {
@@ -217,12 +221,12 @@ pub fn memory-metadata() {
 
         set-times(file, (1000000000, 250000000), (978307200, (1 << 30) - 2))
         let st = stat(file)
-        assert(st.atime == 1000000000.25)
-        assert(st.mtime != 978307200.0)
+        assert(timespec(st.atime) == (1000000000, 250000000))
+        assert(timespec(st.mtime) != (978307200, 0))
 
         set-times(file, (0, (1 << 30) - 2), (978307200, 0))
-        assert(stat(file).mtime == 978307200.0)
-        assert(stat(file).atime == 1000000000.25)
+        assert(timespec(stat(file).mtime) == (978307200, 0))
+        assert(timespec(stat(file).atime) == (1000000000, 250000000))
 
         let vfs = os.statvfs(dir)
         assert(vfs.bsize == 512)
@@ -336,8 +340,8 @@ pub fn loopback-metadata() {
 
         set-times("{dir}/f", (1234567890, 500000000), (978307200, 125000000))
         let st = stat("{root}/f")
-        assert(st.atime == 1234567890.5)
-        assert(st.mtime == 978307200.125)
+        assert(timespec(st.atime) == (1234567890, 500000000))
+        assert(timespec(st.mtime) == (978307200, 125000000))
 
         assert(stat("{dir}/f").mtime == st.mtime)
         assert(os.statvfs(dir).blocks == os.statvfs(root).blocks)

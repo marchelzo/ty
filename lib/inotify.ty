@@ -1,5 +1,6 @@
 import ffi as c (C!)
 import os
+import time
 
 pub const IN_ACCESS        = 0x00000001
 pub const IN_MODIFY        = 0x00000002
@@ -104,11 +105,11 @@ pub class Inotify {
         return {wd: ev.wd, mask: ev.mask, cookie: ev.cookie, name}
     }
 
-    ready?(timeout: Float = -1.0) -> Bool {
+    ready?(timeout: ?time::Timeout = nil) -> Bool {
         os.poll([(__fd, os.POLLIN)], [], timeout) > 0
     }
 
-    events*(timeout: Float = -1.0) {
+    events*(timeout: ?time::Timeout = nil) {
         // Yield any buffered events first
         while let $ev = __next-event() {
             yield ev

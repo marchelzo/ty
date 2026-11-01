@@ -1,6 +1,7 @@
 import ink (..)
 import term (event)
 import os
+import time
 import path (Path)
 import ink.form.codec as codec (Sheet, CodecError, thaw, same?, dig, has?)
 import ink.form.schema (..)
@@ -53,7 +54,7 @@ fn pluck(data: _, p: Array) {
     }
 }
 
-fn mtime-of(file: String | nil) -> Float | nil {
+fn mtime-of(file: String | nil) -> Time[time::CLOCK_REALTIME] | nil {
     (file != nil) ? os.stat(file).?mtime : nil
 }
 
@@ -66,7 +67,7 @@ pub class FormModel {
     base:    _
     error:   String | nil
     rev:     Int
-    mtime:   Float | nil
+    mtime:   Time[time::CLOCK_REALTIME] | nil
 
     __undo:  Array[(_, Array)]
     __redo:  Array[(_, Array)]
@@ -385,7 +386,7 @@ pub class Form < Component {
     }
 
     mount() {
-        every(1.0, -> __poll())
+        every(1s, -> __poll())
     }
 
     __poll() {
@@ -405,7 +406,7 @@ pub class Form < Component {
 
     __say(msg: String, ok?: Bool) {
         __flash = (msg, ok?)
-        after(3.0, -> __unsay(msg, ok?))
+        after(3s, -> __unsay(msg, ok?))
     }
 
     __unsay(msg: String, ok?: Bool) {

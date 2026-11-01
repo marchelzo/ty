@@ -285,6 +285,32 @@ fn <=[T, U](a: Set[T], b: Set[U]) -> Bool;
 fn >[T, U](a: Set[T], b: Set[U]) -> Bool;
 fn >=[T, U](a: Set[T], b: Set[U]) -> Bool;
 
+fn -(a: TimeDelta) -> TimeDelta;
+fn +(a: Duration, b: Duration) -> Duration;
+fn +(a: TimeDelta, b: TimeDelta) -> TimeDelta;
+fn -(a: TimeDelta, b: TimeDelta) -> TimeDelta;
+fn *(a: TimeDelta, b: Int | Float) -> TimeDelta;
+fn *(a: Int | Float, b: TimeDelta) -> TimeDelta;
+fn /(a: TimeDelta, b: Int | Float) -> TimeDelta;
+fn /(a: TimeDelta, b: TimeDelta) -> Float;
+fn %(a: Duration, b: Duration) -> Duration;
+fn %(a: TimeDelta, b: TimeDelta) -> TimeDelta;
+fn <(a: TimeDelta, b: TimeDelta) -> Bool;
+fn <=(a: TimeDelta, b: TimeDelta) -> Bool;
+fn >(a: TimeDelta, b: TimeDelta) -> Bool;
+fn >=(a: TimeDelta, b: TimeDelta) -> Bool;
+fn <=>(a: TimeDelta, b: TimeDelta) -> Int;
+
+fn +[C](a: Time[C], b: TimeDelta) -> Time[C];
+fn +[C](a: TimeDelta, b: Time[C]) -> Time[C];
+fn -[C](a: Time[C], b: TimeDelta) -> Time[C];
+fn -[C](a: Time[C], b: Time[C]) -> TimeDelta;
+fn <[C](a: Time[C], b: Time[C]) -> Bool;
+fn <=[C](a: Time[C], b: Time[C]) -> Bool;
+fn >[C](a: Time[C], b: Time[C]) -> Bool;
+fn >=[C](a: Time[C], b: Time[C]) -> Bool;
+fn <=>[C](a: Time[C], b: Time[C]) -> Int;
+
 fn %[A, B, R](tpl: (A, B), f: (A | B) -> R) -> (R, R);
 fn %[A, B, C, R](tpl: (A, B, C), f: (A | B | C) -> R) -> (R, R, R);
 fn %[A, B, C, D, R](tpl: (A, B, C, D), f: (A | B | C | D) -> R) -> (R, R, R, R);
@@ -332,6 +358,8 @@ pub use time::ClockID =
   | time::CLOCK_PROCESS_CPUTIME_ID
   | time::CLOCK_THREAD_CPUTIME_ID
 #|]
+
+pub use time::Timeout = Duration | Time[Any]
 
 const `,` = tuple
 
@@ -2055,6 +2083,27 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
 
 
     clear(i: Int = 0, n: ?Int = nil) -> Blob;
+}
+
+class TimeDelta {
+    init(nsecs: Int);
+    init(text: String);
+
+    ns   -> Int   { int(self)          }
+    us   -> Float { int(self) / 1.0e3  }
+    ms   -> Float { int(self) / 1.0e6  }
+    secs -> Float { int(self) / 1.0e9  }
+}
+
+class Duration < TimeDelta {
+    init(nsecs: Int);
+    init(text: String);
+}
+
+class Time[C] {
+    init(nsecs: Int, clock: C) where C: time::ClockID;
+
+    clock -> C { time.clock(self) }
 }
 
 class Bool {
@@ -4076,7 +4125,7 @@ fn uuid7() {
     b[6] = 0x70 | (b[6] & 0x0F)
     b[8] = 0x80 | (b[8] & 0x3F)
 
-    let t = time.utime() / 1000
+    let t = int(time.time()) / 1000000
 
     b[0] = (t >> 40)
     b[1] = (t >> 32)
@@ -4178,8 +4227,8 @@ class Channel {
         thread.send(chan, x)
     }
 
-    recv(timeoutMs: ?Int) {
-        thread.recv(chan, timeoutMs if timeoutMs != nil)
+    recv(timeout: ?time::Timeout) {
+        thread.recv(chan, timeout if timeout != nil)
     }
 
     close() {
@@ -4421,8 +4470,8 @@ class CondVar {
         __var = thread.cond()
     }
 
-    wait(mtx: Mutex, *timeout) {
-        thread.waitCond(__var, mtx.inner, *timeout)
+    wait(mtx: Mutex, timeout: ?time::Timeout = nil) -> Bool {
+        thread.waitCond(__var, mtx.inner, timeout)
     }
 
     signal() {
@@ -4449,8 +4498,8 @@ class Note {
         thread.notify(__note)
     }
 
-    wait(timeout: ?Float) {
-        thread.wait-note(__note, timeout if timeout != nil)
+    wait(timeout: ?time::Timeout = nil) -> Bool {
+        thread.wait-note(__note, timeout)
     }
 
     notified? -> Bool {
@@ -4501,7 +4550,7 @@ class Thread[T] {
 
     static wait-any(
         objects: Array[Note | CondVar],
-        timeout: ?Float = nil,
+        timeout: ?time::Timeout = nil,
         lock: Mutex | Array[Mutex] | nil = nil
     ) -> Int | nil {
         thread.wait-any(
@@ -4523,8 +4572,8 @@ class Thread[T] {
         thread.join(__handle)
     }
 
-    join(timeoutMs: Int) -> Some[T] | None {
-        thread.join(__handle, timeoutMs)
+    join(timeout: time::Timeout) -> Some[T] | None {
+        thread.join(__handle, timeout)
     }
 
     kill(sig: Int) {
@@ -4876,7 +4925,7 @@ class SharedQueue[T] {
     put(x: T) -> SharedQueue[T];
     put-all(xs: Array[T]) -> SharedQueue[T];
     take-up-to(n: Int) -> Array[T];
-    try-take(timeout: Int | Float = 0) -> Some[T] | None;
+    try-take(timeout: time::Timeout = 0s) -> Some[T] | None;
     take() -> T;
     peek() -> T;
     try-peek() -> Some[T] | None;
@@ -4894,7 +4943,7 @@ class WorkQueue[T] {
     put(x: T) -> WorkQueue[T];
     put-all(xs: Array[T]) -> WorkQueue[T];
     take-up-to(n: Int) -> Array[T];
-    try-take(timeout: Int | Float = 0) -> Some[T] | None;
+    try-take(timeout: time::Timeout = 0s) -> Some[T] | None;
     take() -> T;
     peek() -> T;
     try-peek() -> Some[T] | None;

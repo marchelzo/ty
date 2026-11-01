@@ -71,23 +71,23 @@ pub class ProcessError < RuntimeError {
     }
 }
 
-/** Cumulative CPU time, in seconds. */
+/** Cumulative CPU time. */
 pub class Cpu {
-    user:     Float
-    system:   Float
-    children: Float
+    user:     Duration
+    system:   Duration
+    children: Duration
 
-    init(user: Float, system: Float, children: Float = 0.0) {
+    init(user: Duration, system: Duration, children: Duration = 0s) {
         self.user = user
         self.system = system
         self.children = children
     }
 
-    total -> Float { user + system }
-    family -> Float { total + children }
+    total  -> Duration { user + system   }
+    family -> Duration { total + children }
 
     __repr__() -> String {
-        "Cpu(user={user:.3}, system={system:.3}, children={children:.3})"
+        "Cpu(user={user}, system={system}, children={children})"
     }
     __str__ = use __repr__
 }
@@ -184,8 +184,8 @@ pub class Process {
         args ? args.join(' ') : name
     }
 
-    started -> Float { __proc-started(__pid) }
-    age -> Float { time.now(time.CLOCK_REALTIME) - started }
+    started -> Time[time::CLOCK_REALTIME] { __proc-started(__pid) }
+    age -> Duration { time.since(started) }
     cpu -> Cpu { __proc-cpu(__pid) }
     memory -> Memory { __proc-memory(__pid) }
     io -> Io { __proc-io(__pid) }
@@ -535,27 +535,26 @@ fn __proc-env(pid: Int) -> Array[String] {
     __bytes(__proc-file(pid, 'environ').read-bytes())
 }
 
-fn __ticks() -> Float {
-    float(sysconf(2))
+fn __ticks(n: Int) -> Duration {
+    abs(n * 1s / sysconf(2))
 }
 
-fn __boot-time() -> Float {
+fn __boot-time() -> Time[time::CLOCK_REALTIME] {
     for line in (__PROC / 'stat').read-text().lines() {
-        if let [_, seconds] = line.match(/^btime\s+(\d+)$/) {
-            return float(seconds)
+        if let [_, btime] = line.match(/^btime\s+(\d+)$/) {
+            return Time(int(btime) * 1000000000, time.CLOCK_REALTIME)
         }
     }
     throw RuntimeError('missing btime in /proc/stat')
 }
 
-fn __proc-started(pid: Int) -> Float {
-    __boot-time() + __proc-stat(pid).start / __ticks()
+fn __proc-started(pid: Int) -> Time[time::CLOCK_REALTIME] {
+    __boot-time() + __ticks(__proc-stat(pid).start)
 }
 
 fn __proc-cpu(pid: Int) -> Cpu {
     let s = __proc-stat(pid)
-    let hz = __ticks()
-    Cpu(s.utime / hz, s.stime / hz, (s.cutime + s.cstime) / hz)
+    Cpu(__ticks(s.utime), __ticks(s.stime), __ticks(s.cutime + s.cstime))
 }
 
 fn __proc-memory(pid: Int) -> Memory {
@@ -651,8 +650,7 @@ fn __task-info(pid: Int, tid: Int) {
     let r = __must(line.searchr(')'), 'task stat')
     let name = line.slice(l + 1, r - l - 1)
     let f = line.slice(r + 2).trim().split(/\s+/)
-    let hz = __ticks()
-    ({name, state: f[0], cpu: Cpu(__int(f[11]) / hz, __int(f[12]) / hz)})
+    ({name, state: f[0], cpu: Cpu(__ticks(__int(f[11])), __ticks(__int(f[12])))})
 }
 
 fn __proc-read(pid: Int, addr: Int, size: Int) -> Blob {
@@ -972,14 +970,14 @@ fn __proc-strings(pid: Int) {
 fn __proc-args(pid: Int) -> Array[String] { __proc-strings(pid).0 }
 fn __proc-env(pid: Int) -> Array[String] { __proc-strings(pid).1 }
 
-fn __proc-started(pid: Int) -> Float {
+fn __proc-started(pid: Int) -> Time[time::CLOCK_REALTIME] {
     let b = __bsd(pid)
-    b.start_sec + b.start_usec / 1e6
+    Time(b.start_sec * 1000000000 + b.start_usec * 1000, time.CLOCK_REALTIME)
 }
 
 fn __proc-cpu(pid: Int) -> Cpu {
     let t = __task(pid)
-    Cpu(t.total_user / 1e9, t.total_system / 1e9)
+    Cpu(Duration(t.total_user), Duration(t.total_system))
 }
 
 fn __proc-memory(pid: Int) -> Memory {
@@ -1106,7 +1104,7 @@ fn __task-info(pid: Int, tid: Int) {
     __pidinfo(pid, PROC_PIDTHREADINFO, t, tid)
     let name = c.str(t.name()) || c.str(__bsd(pid).name())
     let state = %{1: 'R', 2: 'T', 3: 'S', 4: 'D', 5: 'H'}[t.run_state] ?? '?'
-    ({name, state, cpu: Cpu(t.user_time / 1e9, t.system_time / 1e9)})
+    ({name, state, cpu: Cpu(Duration(t.user_time), Duration(t.system_time))})
 }
 
 fn __self-task() -> Int {

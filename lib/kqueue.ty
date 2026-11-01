@@ -1,6 +1,7 @@
 import ffi as c (C!)
 import ptr (typed)
 import os
+import time
 
 pub const EVFILT_READ     = (-1)
 pub const EVFILT_WRITE    = (-2)
@@ -190,10 +191,10 @@ pub class Kqueue {
         __apply(ident, filter, flags | EV_ADD | EV_CLEAR, fflags, data)
     }
 
-    poll(sec: Float = -1.0) -> Array[Event] {
-        let tsp = if sec >= 0.0 {
-            let nanos = int(sec * 1e9)
-            __ts.sec = nanos / 1_000_000_000
+    poll(timeout: ?time::Timeout = nil) -> Array[Event] {
+        let tsp = if let $t = timeout {
+            let nanos = int((t :: Duration) ? t : time.until(t))
+            __ts.sec  = nanos / 1_000_000_000
             __ts.nsec = nanos % 1_000_000_000
             __ts.get()
         }
@@ -201,9 +202,9 @@ pub class Kqueue {
         (n == -1) ? [] : [__read-event(__buf, i) for i in ..n]
     }
 
-    events*(sec: Float = -1.0) {
+    events*(timeout: ?time::Timeout = nil) {
         for (;;) {
-            let evs = poll(sec)
+            let evs = poll(timeout)
             break if !evs
             yield *evs
         }

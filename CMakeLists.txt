@@ -468,6 +468,7 @@ set(_src_files
   src/blob.c
   src/bundle.c
   src/chan.c
+  src/chrono.c
   src/class.c
   src/compiler.c
   src/diag.c

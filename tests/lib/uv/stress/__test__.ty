@@ -5,4 +5,4 @@ if c.open('uv') == nil {
     skip-dir('libuv is not installed', opt-in: 'stress')
 }
 
-configure(opt-in: 'stress', serial: true, timeout: 600.0)
+configure(opt-in: 'stress', serial: true, timeout: 10m)

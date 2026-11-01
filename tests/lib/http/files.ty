@@ -35,7 +35,7 @@ fn teardown() {
 }
 
 fn routes(srv) {
-    srv.static-files('/static', ROOT, max-age: 3600, precompressed: true)
+    srv.static-files('/static', ROOT, max-age: 1h, precompressed: true)
     srv.static-files('/spa', ROOT, fallback: 'index.html')
     srv.get('/download', (req, rsp) -> rsp.file("{ROOT}/hello.txt", download: 'greeting.txt'))
 }

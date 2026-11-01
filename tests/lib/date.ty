@@ -1,8 +1,8 @@
-import date (..)
+import date hiding (Duration)
 import time
 
 pub fn test-duration-basic() {
-    let d = Duration(hours=1, minutes=30)
+    let d = date.Duration(hours=1, minutes=30)
     assert(d.hours == 1)
     assert(d.minutes == 30)
     assert(!d.blank?)
@@ -10,14 +10,14 @@ pub fn test-duration-basic() {
 }
 
 pub fn test-duration-blank() {
-    let d = Duration()
+    let d = date.Duration()
     assert(d.blank?)
     assert(d.sign == 0)
     assert("{d}" == 'PT0S')
 }
 
 pub fn test-duration-negated() {
-    let d = Duration(days=5, hours=3)
+    let d = date.Duration(days=5, hours=3)
     let n = d.negated()
     assert(n.days == -5)
     assert(n.hours == -3)
@@ -25,52 +25,52 @@ pub fn test-duration-negated() {
 }
 
 pub fn test-duration-abs() {
-    let d = Duration(days=-5, hours=-3)
+    let d = date.Duration(days=-5, hours=-3)
     let a = d.abs()
     assert(a.days == 5 && a.hours == 3)
 }
 
 pub fn test-duration-add() {
-    let a = Duration(hours=1, minutes=30)
-    let b = Duration(hours=2, minutes=45)
+    let a = date.Duration(hours=1, minutes=30)
+    let b = date.Duration(hours=2, minutes=45)
     let c = a + b
     assert(c.hours == 3 && c.minutes == 75)
 }
 
 pub fn test-duration-total-seconds() {
-    let d = Duration(hours=1, minutes=30, seconds=15)
+    let d = date.Duration(hours=1, minutes=30, seconds=15)
     assert(d.total-seconds == 5415.0)
 }
 
 pub fn test-duration-with-fraction() {
-    let d = Duration(seconds=1, milliseconds=500)
+    let d = date.Duration(seconds=1, milliseconds=500)
     assert("{d}" == 'PT1.5S')
 }
 
 pub fn test-duration-sign() {
-    assert(Duration(days=1).sign == 1)
-    assert(Duration(days=-1).sign == -1)
-    assert(Duration().sign == 0)
+    assert(date.Duration(days=1).sign == 1)
+    assert(date.Duration(days=-1).sign == -1)
+    assert(date.Duration().sign == 0)
 }
 
 pub fn test-duration-rejects-mixed-signs() {
     try {
-        Duration(hours=1, minutes=-30)
+        date.Duration(hours=1, minutes=-30)
         assert(false, 'should have thrown')
     } catch e: ValueError { assert(true) }
 }
 
 pub fn test-duration-calendar-compare-requires-relative-date() {
     try {
-        Duration.compare(Duration(months=1), Duration(days=30))
+        date.Duration.compare(date.Duration(months=1), date.Duration(days=30))
         assert(false, 'should have thrown')
     } catch e: ValueError { assert(true) }
 }
 
 pub fn test-duration-calendar-compare-with-relative-date() {
     let leap-february = PlainDate(2024, 2, 1)
-    assert(Duration.compare(Duration(months=1), Duration(days=29), leap-february) == 0)
-    assert(Duration(months=1).total('days', leap-february) == 29.0)
+    assert(date.Duration.compare(date.Duration(months=1), date.Duration(days=29), leap-february) == 0)
+    assert(date.Duration(months=1).total('days', leap-february) == 29.0)
 }
 
 /* --- PlainDate tests --- */
@@ -130,27 +130,27 @@ pub fn test-plain-date-days-in-month() {
 
 pub fn test-plain-date-add-days() {
     let d = PlainDate(2024, 1, 30)
-    let r = d.add(Duration(days=5))
+    let r = d.add(date.Duration(days=5))
     assert(r == PlainDate(2024, 2, 4))
 }
 
 pub fn test-plain-date-add-months() {
     let d = PlainDate(2024, 1, 31)
-    let r = d.add(Duration(months=1))
+    let r = d.add(date.Duration(months=1))
     /* Jan 31 + 1 month = Feb 29 (2024 is leap) */
     assert(r == PlainDate(2024, 2, 29))
 }
 
 pub fn test-plain-date-add-years() {
     let d = PlainDate(2024, 2, 29)
-    let r = d.add(Duration(years=1))
+    let r = d.add(date.Duration(years=1))
     /* Feb 29 + 1 year = Feb 28 (2025 not leap) */
     assert(r == PlainDate(2025, 2, 28))
 }
 
 pub fn test-plain-date-subtract() {
     let d = PlainDate(2024, 3, 1)
-    let r = d.subtract(Duration(days=1))
+    let r = d.subtract(date.Duration(days=1))
     assert(r == PlainDate(2024, 2, 29))
 }
 
@@ -186,8 +186,8 @@ pub fn test-plain-date-with() {
 
 pub fn test-plain-date-operator-plus-minus() {
     let d = PlainDate(2024, 6, 15)
-    assert(d + Duration(days=1) == PlainDate(2024, 6, 16))
-    assert(d - Duration(days=1) == PlainDate(2024, 6, 14))
+    assert(d + date.Duration(days=1) == PlainDate(2024, 6, 16))
+    assert(d - date.Duration(days=1) == PlainDate(2024, 6, 14))
 }
 
 pub fn test-plain-date-diff-operator() {
@@ -199,7 +199,7 @@ pub fn test-plain-date-diff-operator() {
 
 pub fn test-plain-date-cross-year() {
     let d = PlainDate(2023, 12, 31)
-    assert(d.add(Duration(days=1)) == PlainDate(2024, 1, 1))
+    assert(d.add(date.Duration(days=1)) == PlainDate(2024, 1, 1))
 }
 
 pub fn test-plain-date-to-datetime() {
@@ -234,14 +234,14 @@ pub fn test-plain-time-with-fractions() {
 
 pub fn test-plain-time-add() {
     let t = PlainTime(23, 30, 0)
-    let r = t.add(Duration(hours=2))
+    let r = t.add(date.Duration(hours=2))
     /* Wraps around midnight */
     assert(r.hour == 1 && r.minute == 30)
 }
 
 pub fn test-plain-time-subtract() {
     let t = PlainTime(1, 0, 0)
-    let r = t.subtract(Duration(hours=2))
+    let r = t.subtract(date.Duration(hours=2))
     assert(r.hour == 23)
 }
 
@@ -286,19 +286,19 @@ pub fn test-plain-date-time-from-string() {
 
 pub fn test-plain-date-time-add-across-midnight() {
     let dt = PlainDateTime(2024, 1, 1, 23, 0, 0)
-    let r = dt.add(Duration(hours=2))
+    let r = dt.add(date.Duration(hours=2))
     assert(r == PlainDateTime(2024, 1, 2, 1, 0, 0))
 }
 
 pub fn test-plain-date-time-subtract-across-midnight() {
     let dt = PlainDateTime(2024, 1, 2, 1, 0, 0)
-    let r = dt.subtract(Duration(hours=2))
+    let r = dt.subtract(date.Duration(hours=2))
     assert(r == PlainDateTime(2024, 1, 1, 23, 0, 0))
 }
 
 pub fn test-plain-date-time-add-months-and-hours() {
     let dt = PlainDateTime(2024, 1, 31, 12, 0, 0)
-    let r = dt.add(Duration(months=1, hours=6))
+    let r = dt.add(date.Duration(months=1, hours=6))
     assert(r == PlainDateTime(2024, 2, 29, 18, 0, 0))
 }
 
@@ -365,13 +365,13 @@ pub fn test-instant-from-string-offset() {
 
 pub fn test-instant-add() {
     let i = Instant.from-epoch-seconds(0)
-    let r = i.add(Duration(hours=24))
+    let r = i.add(date.Duration(hours=24))
     assert(r.epoch-seconds == 86400)
 }
 
 pub fn test-instant-subtract() {
     let i = Instant.from-epoch-seconds(86400)
-    let r = i.subtract(Duration(hours=24))
+    let r = i.subtract(date.Duration(hours=24))
     assert(r.epoch-seconds == 0)
 }
 
@@ -394,7 +394,7 @@ pub fn test-instant-comparison() {
 
 pub fn test-instant-rejects-calendar-units() {
     try {
-        Instant.from-epoch-seconds(0).add(Duration(months=1))
+        Instant.from-epoch-seconds(0).add(date.Duration(months=1))
         assert(false, 'should have thrown')
     } catch e: ValueError {
         assert(true)
@@ -417,7 +417,7 @@ pub fn test-instant-roundtrip() {
 
 pub fn test-instant-rejects-days() {
     try {
-        Instant.from-epoch-seconds(0).add(Duration(days=1))
+        Instant.from-epoch-seconds(0).add(date.Duration(days=1))
         assert(false, 'should have thrown')
     } catch e: ValueError {
         assert(true)
@@ -481,12 +481,12 @@ pub fn test-zoned-date-time-dst-overlap-disambiguation() {
 
 pub fn test-zoned-date-time-calendar-and-clock-arithmetic() {
     let start = ZonedDateTime.from('2024-03-09T12:00:00-05:00[America/New_York]')
-    let next-day = start.add(Duration(days=1))
-    let next-24-hours = start.add(Duration(hours=24))
+    let next-day = start.add(date.Duration(days=1))
+    let next-24-hours = start.add(date.Duration(hours=24))
     assert(next-day.hour == 12 && next-day.offset == '-04:00')
     assert(next-24-hours.hour == 13)
     assert(start.until(next-day).hours == 23)
-    assert(Duration.compare(Duration(days=1), Duration(hours=24), start) == -1)
+    assert(date.Duration.compare(date.Duration(days=1), date.Duration(hours=24), start) == -1)
 }
 
 pub fn test-zoned-date-time-hours-in-day() {
@@ -527,13 +527,13 @@ pub fn test-plain-year-month-from-string() {
 
 pub fn test-plain-year-month-add() {
     let ym = PlainYearMonth(2024, 11)
-    let r = ym.add(Duration(months=3))
+    let r = ym.add(date.Duration(months=3))
     assert(r == PlainYearMonth(2025, 2))
 }
 
 pub fn test-plain-year-month-subtract() {
     let ym = PlainYearMonth(2024, 2)
-    let r = ym.subtract(Duration(months=3))
+    let r = ym.subtract(date.Duration(months=3))
     assert(r == PlainYearMonth(2023, 11))
 }
 
@@ -664,90 +664,90 @@ pub fn test-plain-date-feb29-nonleap() {
     }
 }
 
-/* --- Duration.from(String) tests --- */
+/* --- date.Duration.from(String) tests --- */
 
 pub fn test-duration-from-string-basic() {
-    let d = Duration.from('P1Y2M3DT4H5M6S')
+    let d = date.Duration.from('P1Y2M3DT4H5M6S')
     assert(d.years == 1 && d.months == 2 && d.days == 3)
     assert(d.hours == 4 && d.minutes == 5 && d.seconds == 6)
 }
 
 pub fn test-duration-from-string-time-only() {
-    let d = Duration.from('PT1H30M')
+    let d = date.Duration.from('PT1H30M')
     assert(d.hours == 1 && d.minutes == 30)
     assert(d.years == 0 && d.days == 0)
 }
 
 pub fn test-duration-from-string-negative() {
-    let d = Duration.from('-P5D')
+    let d = date.Duration.from('-P5D')
     assert(d.days == -5)
     assert(d.sign == -1)
 }
 
 pub fn test-duration-from-string-fractional-seconds() {
-    let d = Duration.from('PT1.5S')
+    let d = date.Duration.from('PT1.5S')
     assert(d.seconds == 1 && d.milliseconds == 500)
 }
 
 pub fn test-duration-from-string-weeks() {
-    let d = Duration.from('P2W')
+    let d = date.Duration.from('P2W')
     assert(d.weeks == 2)
 }
 
 pub fn test-duration-from-string-roundtrip() {
-    let d = Duration(years=1, months=2, days=3, hours=4, minutes=5, seconds=6)
+    let d = date.Duration(years=1, months=2, days=3, hours=4, minutes=5, seconds=6)
     let s = "{d}"
-    let d2 = Duration.from(s)
+    let d2 = date.Duration.from(s)
     assert(d2.years == 1 && d2.months == 2 && d2.days == 3)
     assert(d2.hours == 4 && d2.minutes == 5 && d2.seconds == 6)
 }
 
-/* --- Duration.total() tests --- */
+/* --- date.Duration.total() tests --- */
 
 pub fn test-duration-total-hours() {
-    let d = Duration(days=1, hours=6)
+    let d = date.Duration(days=1, hours=6)
     assert(d.total('hours') == 30.0)
 }
 
 pub fn test-duration-total-minutes() {
-    let d = Duration(hours=2, minutes=30)
+    let d = date.Duration(hours=2, minutes=30)
     assert(d.total('minutes') == 150.0)
 }
 
 pub fn test-duration-total-milliseconds() {
-    let d = Duration(seconds=1, milliseconds=500)
+    let d = date.Duration(seconds=1, milliseconds=500)
     assert(d.total('milliseconds') == 1500.0)
 }
 
-/* --- Duration.round() tests --- */
+/* --- date.Duration.round() tests --- */
 
 pub fn test-duration-round-to-hours() {
-    let d = Duration(hours=1, minutes=45)
+    let d = date.Duration(hours=1, minutes=45)
     let r = d.round('hour')
     assert(r.hours == 2 && r.minutes == 0)
 }
 
 pub fn test-duration-round-floor() {
-    let d = Duration(hours=1, minutes=59)
+    let d = date.Duration(hours=1, minutes=59)
     let r = d.round('hour', 'floor')
     assert(r.hours == 1 && r.minutes == 0)
 }
 
 pub fn test-duration-round-ceil() {
-    let d = Duration(hours=1, minutes=1)
+    let d = date.Duration(hours=1, minutes=1)
     let r = d.round('hour', 'ceil')
     assert(r.hours == 2 && r.minutes == 0)
 }
 
-/* --- Duration.compare() tests --- */
+/* --- date.Duration.compare() tests --- */
 
 pub fn test-duration-compare() {
-    let a = Duration(hours=1)
-    let b = Duration(minutes=90)
-    assert(Duration.compare(a, b) == -1)
-    assert(Duration.compare(b, a) == 1)
-    let c = Duration(minutes=60)
-    assert(Duration.compare(a, c) == 0)
+    let a = date.Duration(hours=1)
+    let b = date.Duration(minutes=90)
+    assert(date.Duration.compare(a, b) == -1)
+    assert(date.Duration.compare(b, a) == 1)
+    let c = date.Duration(minutes=60)
+    assert(date.Duration.compare(a, c) == 0)
 }
 
 /* --- PlainTime.round() tests --- */
@@ -866,10 +866,10 @@ pub fn test-plain-date-time-to-month-day() {
     assert(md == PlainMonthDay(6, 15))
 }
 
-/* --- Duration.create() tests --- */
+/* --- date.Duration.create() tests --- */
 
 pub fn test-duration-create() {
-    let d = Duration.create(hours=2, minutes=30)
+    let d = date.Duration.create(hours=2, minutes=30)
     assert(d.hours == 2 && d.minutes == 30)
     assert(d.days == 0 && d.years == 0)
 }
@@ -1065,7 +1065,7 @@ pub fn test-duration-multiply() {
 }
 
 pub fn test-duration-multiply-compound() {
-    let d = 2 * Duration(hours=1, minutes=30)
+    let d = 2 * date.Duration(hours=1, minutes=30)
     assert(d.hours == 2 && d.minutes == 60)
 }
 
@@ -1146,7 +1146,7 @@ pub fn test-idiomatic-arithmetic() {
     assert(next-meeting == PlainDateTime(2024, 6, 22, 14, 0, 0))
 }
 
-/* --- Float * Duration tests --- */
+/* --- Float * date.Duration tests --- */
 
 pub fn test-float-multiply-half-hour() {
     let d = 0.5 * HOUR
@@ -1183,9 +1183,26 @@ pub fn test-float-multiply-in-expression() {
 
 pub fn test-float-multiply-rejects-calendar-units() {
     try {
-        0.5 * Duration(months=1)
+        0.5 * date.Duration(months=1)
         assert(false, 'should have thrown')
     } catch e: ValueError {
         assert(true)
     }
+}
+
+pub fn test-instant-and-builtin-time() {
+    let epoch = time.time({year: 70, mon: 0, mday: 1}, utc: true)
+    let i = Instant.of(epoch + 1d + 1500ms)
+    assert(i.epoch-milliseconds == 86_401_500)
+    assert(i.to-time() == epoch + 1d + 1500ms)
+    assert((i + 30m).epoch-seconds == 88_201)
+    assert((i - 1d).epoch-milliseconds == 1_500)
+    assert(time.since(instant-now().to-time()) < 1m)
+}
+
+pub fn test-duration-and-builtin-delta() {
+    assert("{date.Duration.of(90s + 5ns)}" == 'PT90.000000005S')
+    assert("{date.Duration.of(-90s)}" == '-PT90S')
+    assert(date.Duration(hours=1, minutes=30).delta == 90m)
+    assert(date.Duration.of(2h).delta == 2h)
 }

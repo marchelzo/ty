@@ -19,11 +19,11 @@ fn routes(srv) {
         let es = rsp.events()
         for i in ..3 {
             es.send("n{i}")
-            http.sleep(0.01)
+            http.sleep(10ms)
         }
     })
     srv.get('/slow/<n>', fn (req, rsp, n) {
-        http.sleep(0.2)
+        http.sleep(200ms)
         rsp.plain("slow {n}")
     })
     srv.get('/fail', (req, rsp) -> throw RuntimeError('nope'))
@@ -99,12 +99,12 @@ pub fn graceful-shutdown-over-h2() {
     let srv = http.Server('127.0.0.1', 0, threads: 1, tls: {cert: CERT, key: KEY})
     routes(srv)
     let t = Thread(srv.run)
-    os.sleep(0.1)
+    os.sleep(100ms)
     let out = [nil]
     let client = Thread(fn () {
         out[0] = curl('--http2', '--cacert', CA, "{srv.url}/slow/9")
     })
-    os.sleep(0.1)
+    os.sleep(100ms)
     srv.stop()
     client.join()
     t.join()

@@ -28,8 +28,8 @@ clap! Pp {
     /// Sort column
     sort: String, short: 's', placeholder: 'KEY', default: 'pid', check: ['pid', 'pct', 'cpu', 'mem', 'age', 'threads', 'name', 'user']
 
-    /// Seconds to sample CPU usage over (0 for lifetime average, like ps)
-    interval: Float, short: 'i', default: 0.0, placeholder: 'SECS'
+    /// How long to sample CPU usage over (0s for lifetime average, like ps)
+    interval: Duration, short: 'i', default: 0s, placeholder: 'DUR'
 
     /// Send SIG (name or number) to every matching process
     kill: String, short: 'k', placeholder: 'SIG'
@@ -51,10 +51,10 @@ use Row = {
     pid:     Int,
     user:    String | nil,
     state:   String | nil,
-    cpu:     Float | nil,
+    cpu:     Duration | nil,
     pct:     Float | nil,
     rss:     Int | nil,
-    age:     Float | nil,
+    age:     Duration | nil,
     threads: Int | nil,
     name:    String,
     names:   Array[String],
@@ -96,15 +96,15 @@ fn state-of(p: Process) -> String | nil {
          :                'S'
 }
 
-fn pct-of(total: Float | nil, age: Float | nil, then: Float | nil, dt: Float) -> Float | nil {
-    match (dt > 0.0, total, age, then) {
-        (true,  t: Float, _, x: Float) => (t - x) / dt * 100.0,
-        (false, t: Float, a: Float, _) => (a > 0.0) ? t / a * 100.0 : nil,
+fn pct-of(total: Duration | nil, age: Duration | nil, then: Duration | nil, dt: Duration) -> Float | nil {
+    match (dt > 0s, total, age, then) {
+        (true,  t: Duration, _, x: Duration) => (t - x) / dt * 100.0,
+        (false, t: Duration, a: Duration, _) => (a > 0s) ? t / a * 100.0 : nil,
         _                              => nil
     }
 }
 
-fn row(p: Process, before: Dict[Int, Float], dt: Float) -> Row {
+fn row(p: Process, before: Dict[Int, Duration], dt: Duration) -> Row {
     let exe  = safe(-> p.exe)
     let argv = safe(-> p.argv) ?? []
     let arg0 = argv ? Path(argv[0]).name : nil
@@ -148,14 +148,14 @@ fn fmt-bytes(n: Int) -> String {
     "{int(x)}P"
 }
 
-fn fmt-cpu(s: Float) -> String {
-    let n = int(s)
+fn fmt-cpu(d: Duration) -> String {
+    let n = int(d.secs)
     return (n >= 3600) ? "{n / 3600}:{n / 60 % 60:02}:{n % 60:02}"
-         :               "{n / 60}:{s % 60.0:05.2f}"
+         :               "{n / 60}:{(d % 1m).secs:05.2f}"
 }
 
-fn fmt-age(s: Float) -> String {
-    let n = int(s)
+fn fmt-age(d: Duration) -> String {
+    let n = int(d.secs)
     return (n < 60)    ? "{n}s"
          : (n < 3600)  ? "{n / 60}m{n % 60:02}s"
          : (n < 86400) ? "{n / 3600}h{n / 60 % 60:02}m"
@@ -185,12 +185,12 @@ fn pct-style(x: Float | nil) -> String {
          :               'dim'
 }
 
-fn cpu-style(s: Float | nil) -> String {
-    let s = s ?? 0.0
-    return (s >= 3600.0) ? 'red'
-         : (s >= 60.0)   ? 'yellow'
-         : (s >= 1.0)    ? 'no-fg'
-         :                 'dim'
+fn cpu-style(d: Duration | nil) -> String {
+    let d = d ?? 0s
+    return (d >= 1h) ? 'red'
+         : (d >= 1m) ? 'yellow'
+         : (d >= 1s) ? 'no-fg'
+         :             'dim'
 }
 
 fn command(r: Row, re: Regex | nil) -> String {
@@ -258,9 +258,9 @@ fn render(rows: Array[Row], re: Regex | nil) {
 fn sort-key(by: String) -> (Row -> Any) {
     match by {
         'pct'     => (r -> r.pct ?? -1.0),
-        'cpu'     => (r -> r.cpu ?? -1.0),
+        'cpu'     => (r -> r.cpu ?? -1s),
         'mem'     => (r -> r.rss ?? -1),
-        'age'     => (r -> r.age ?? -1.0),
+        'age'     => (r -> r.age ?? -1s),
         'threads' => (r -> r.threads ?? -1),
         'name'    => (r -> r.name),
         'user'    => (r -> r.user ?? ''),
@@ -268,15 +268,15 @@ fn sort-key(by: String) -> (Row -> Any) {
     }
 }
 
-fn sample(secs: Float) -> (Dict[Int, Float], Float) {
-    if secs <= 0.0 {
-        return (%{}, 0.0)
+fn sample(interval: Duration) -> (Dict[Int, Duration], Duration) {
+    if interval == 0s {
+        return (%{}, 0s)
     }
 
-    let t0     = time.utime(time.CLOCK_MONOTONIC)
+    let t0     = time.now()
     let before = %{p.pid: t for p in procs.find() if let $t = safe(-> p.cpu.total)}
-    os.sleep(secs)
-    (before, Float(time.utime(time.CLOCK_MONOTONIC) - t0) / 1.0e6)
+    os.sleep(interval)
+    (before, time.since(t0))
 }
 
 fn signal(s: String) -> Int | nil {
@@ -355,7 +355,7 @@ fn main() {
         os.exit(2)
     }
 
-    let (before, dt) = sample((sig == nil) ? opts.interval : 0.0)
+    let (before, dt) = sample((sig == nil) ? opts.interval : 0s)
     let rows  = [row(p, before, dt) for p in procs.find() if p.pid != me]
                .filter(r -> keep?(r) && mine?(r))
                .sort(by=sort-key(opts.sort), desc=desc?)

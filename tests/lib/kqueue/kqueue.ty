@@ -16,7 +16,7 @@ pub fn test-pipe-read-ready() {
 
     os.write(w, 'hello')
 
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 1)
     assert(evs[0].ident == r)
     assert(evs[0].filter == kqueue.EVFILT_READ)
@@ -32,7 +32,7 @@ pub fn test-pipe-write-ready() {
     let kq = kqueue.Kqueue()
     kq.add(w, kqueue.EVFILT_WRITE)
 
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 1)
     assert(evs[0].ident == w)
     assert(evs[0].filter == kqueue.EVFILT_WRITE)
@@ -48,12 +48,12 @@ pub fn test-poll-timeout-no-events() {
     let kq = kqueue.Kqueue()
     kq.add(r, kqueue.EVFILT_READ)
 
-    let t0 = time.utime()
-    let evs = kq.poll(sec: 0.0)
-    let dt = time.utime() - t0
+    let t0 = time.now()
+    let evs = kq.poll(0s)
+    let dt = time.since(t0)
 
     assert(#evs == 0)
-    assert(dt < 100_000)
+    assert(dt < 100ms)
 
     os.close(r)
     os.close(w)
@@ -65,12 +65,12 @@ pub fn test-poll-timeout-fractional() {
     let kq = kqueue.Kqueue()
     kq.add(r, kqueue.EVFILT_READ)
 
-    let t0 = time.utime()
-    let evs = kq.poll(sec: 0.05)
-    let dt = time.utime() - t0
+    let t0 = time.now()
+    let evs = kq.poll(50ms)
+    let dt = time.since(t0)
 
     assert(#evs == 0)
-    assert(dt >= 40_000)
+    assert(dt >= 40ms)
 
     os.close(r)
     os.close(w)
@@ -88,7 +88,7 @@ pub fn test-multiple-fds() {
     os.write(w1, 'aaa')
     os.write(w2, 'bbbbb')
 
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 2)
 
     let by-fd = %{ev.ident: ev for ev in evs}
@@ -108,12 +108,12 @@ pub fn test-oneshot() {
     kq.oneshot(r, kqueue.EVFILT_READ)
 
     os.write(w, 'x')
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 1)
 
     os.read(r, 1)
     os.write(w, 'y')
-    let evs2 = kq.poll(sec: 0.0)
+    let evs2 = kq.poll(0s)
     assert(#evs2 == 0)
 
     os.close(r)
@@ -127,13 +127,13 @@ pub fn test-del() {
     kq.add(r, kqueue.EVFILT_READ)
 
     os.write(w, 'x')
-    assert(#kq.poll(sec: 0.0) == 1)
+    assert(#kq.poll(0s) == 1)
 
     os.read(r, 1)
     kq.del(r, kqueue.EVFILT_READ)
 
     os.write(w, 'y')
-    assert(#kq.poll(sec: 0.0) == 0)
+    assert(#kq.poll(0s) == 0)
 
     os.close(r)
     os.close(w)
@@ -146,16 +146,16 @@ pub fn test-disable-enable() {
     kq.add(r, kqueue.EVFILT_READ)
 
     os.write(w, 'x')
-    assert(#kq.poll(sec: 0.0) == 1)
+    assert(#kq.poll(0s) == 1)
 
     os.read(r, 1)
     kq.disable(r, kqueue.EVFILT_READ)
 
     os.write(w, 'y')
-    assert(#kq.poll(sec: 0.0) == 0)
+    assert(#kq.poll(0s) == 0)
 
     kq.enable(r, kqueue.EVFILT_READ)
-    assert(#kq.poll(sec: 0.0) == 1)
+    assert(#kq.poll(0s) == 1)
 
     os.close(r)
     os.close(w)
@@ -169,7 +169,7 @@ pub fn test-eof-on-close() {
 
     os.close(w)
 
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 1)
     assert(evs[0].flags & kqueue.EV_EOF)
 
@@ -183,11 +183,11 @@ pub fn test-data-bytes-available() {
     kq.add(r, kqueue.EVFILT_READ)
 
     os.write(w, 'hello world')
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(evs[0].data == 11)
 
     os.read(r, 5)
-    let evs2 = kq.poll(sec: 0.0)
+    let evs2 = kq.poll(0s)
     assert(evs2[0].data == 6)
 
     os.close(r)
@@ -199,14 +199,14 @@ pub fn test-timer() {
     let kq = kqueue.Kqueue()
     kq.add(1, kqueue.EVFILT_TIMER, data: 50)
 
-    let t0 = time.utime()
-    let evs = kq.poll(sec: 1.0)
-    let dt = time.utime() - t0
+    let t0 = time.now()
+    let evs = kq.poll(1s)
+    let dt = time.since(t0)
 
     assert(#evs == 1)
     assert(evs[0].ident == 1)
     assert(evs[0].filter == kqueue.EVFILT_TIMER)
-    assert(dt >= 40_000)
+    assert(dt >= 40ms)
 
     kq.close()
 }
@@ -215,11 +215,11 @@ pub fn test-timer-oneshot() {
     let kq = kqueue.Kqueue()
     kq.oneshot(42, kqueue.EVFILT_TIMER, data: 20)
 
-    let evs = kq.poll(sec: 1.0)
+    let evs = kq.poll(1s)
     assert(#evs == 1)
     assert(evs[0].ident == 42)
 
-    let evs2 = kq.poll(sec: 0.05)
+    let evs2 = kq.poll(50ms)
     assert(#evs2 == 0)
 
     kq.close()
@@ -231,14 +231,14 @@ pub fn test-clear() {
     kq.clear(r, kqueue.EVFILT_READ)
 
     os.write(w, 'abc')
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 1)
 
-    let evs2 = kq.poll(sec: 0.0)
+    let evs2 = kq.poll(0s)
     assert(#evs2 == 0)
 
     os.write(w, 'xyz')
-    let evs3 = kq.poll(sec: 0.0)
+    let evs3 = kq.poll(0s)
     assert(#evs3 == 1)
 
     os.close(r)
@@ -254,7 +254,7 @@ pub fn test-read-and-write-same-fd() {
 
     os.write(w, 'x')
 
-    let evs = kq.poll(sec: 0.0)
+    let evs = kq.poll(0s)
     assert(#evs == 2)
 
     assert(%[ev.filter for ev in evs] == %[kqueue.EVFILT_READ, kqueue.EVFILT_WRITE])
@@ -270,7 +270,7 @@ pub fn test-events-generator() {
     kq.oneshot(2, kqueue.EVFILT_TIMER, data: 20)
 
     let got = []
-    for ev in kq.events(0.1) {
+    for ev in kq.events(100ms) {
         got.push(ev)
     }
     assert(#got == 2)
@@ -304,7 +304,7 @@ pub fn test-process-exit() {
     kq.add(pid, kqueue.EVFILT_PROC, fflags: kqueue.NOTE_EXIT)
     os.close(w)
 
-    let evs = kq.poll(sec: 2.0)
+    let evs = kq.poll(2s)
     assert(#evs == 1)
     assert(evs[0].ident == pid)
     assert(evs[0].filter == kqueue.EVFILT_PROC)

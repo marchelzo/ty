@@ -26,8 +26,8 @@ fn with-echo-server(f) {
 pub fn test-race-fastest-wins() {
     uv.run(fn () {
         let result = uv.race([
-            fn () { uv.sleep(200); 'slow' },
-            fn () { uv.sleep(10);  'fast' },
+            fn () { uv.sleep(200ms); 'slow' },
+            fn () { uv.sleep(10ms);  'fast' },
         ])
         assert(result == 'fast')
     })
@@ -37,7 +37,7 @@ pub fn test-race-survivor() {
     uv.run(fn () {
         let result = uv.race([
             fn () { throw RuntimeError('boom') },
-            fn () { uv.sleep(10); 'ok' },
+            fn () { uv.sleep(10ms); 'ok' },
         ])
         assert(result == 'ok')
     })
@@ -64,7 +64,7 @@ pub fn test-staggered-fast-fallback() {
         let result = uv.race([
             fn () { order.push('a'); throw RuntimeError('nope') },
             fn () { order.push('b'); 'ok' },
-        ], stagger=5000)
+        ], stagger=5000ms)
         assert(result == 'ok')
         assert(order == ['a', 'b'])
     })
@@ -73,9 +73,9 @@ pub fn test-staggered-fast-fallback() {
 pub fn test-staggered-first-wins() {
     uv.run(fn () {
         let result = uv.race([
-            fn () { uv.sleep(10); 'first' },
-            fn () { uv.sleep(10); 'second' },
-        ], stagger=5000)
+            fn () { uv.sleep(10ms); 'first' },
+            fn () { uv.sleep(10ms); 'second' },
+        ], stagger=5000ms)
         assert(result == 'first')
     })
 }
@@ -84,10 +84,10 @@ pub fn test-race-slow-cancels() {
     uv.run(fn () {
         let ok = true
         let result = uv.race([
-            fn () { uv.sleep(300); ok = false; 'slow' },
-            fn () { uv.sleep(10);              'fast' },
-        ], stagger=150)
-        uv.sleep(175)
+            fn () { uv.sleep(300ms); ok = false; 'slow' },
+            fn () { uv.sleep(10ms);              'fast' },
+        ], stagger=150ms)
+        uv.sleep(175ms)
         assert(result == 'fast')
         assert(ok)
     })
@@ -97,10 +97,10 @@ pub fn test-race-slow-wins-with-head-start() {
     uv.run(fn () {
         let ok = true
         let result = uv.race([
-            fn () { uv.sleep(500);             'slow' },
-            fn () { uv.sleep(125); ok = false; 'fast' },
-        ], stagger=475)
-        uv.sleep(175)
+            fn () { uv.sleep(500ms);             'slow' },
+            fn () { uv.sleep(125ms); ok = false; 'fast' },
+        ], stagger=475ms)
+        uv.sleep(175ms)
         assert(result == 'slow')
         assert(ok)
     })
@@ -126,7 +126,7 @@ pub fn test-happy-eyeballs() {
 
 pub fn test-happy-eyeballs-fast-fallback() {
     with-echo-server(fn (port) {
-        let sock = uv.dial('localhost', port, stagger=5000)
+        let sock = uv.dial('localhost', port, stagger=5000ms)
         sock.write('hello')
         assert(sock.read(5) == 'hello')
         sock.close()
@@ -150,14 +150,14 @@ pub fn test-timeout-interrupts-the-body() {
         let start   = uv.now()
         let caught? = false
         try {
-            with uv.timeout(20) {
-                uv.sleep(1000)
+            with uv.timeout(20ms) {
+                uv.sleep(1000ms)
             }
         } catch _: uv.TimeoutError {
             caught? = true
         }
         assert(caught?)
-        assert(uv.now() - start < 500)
+        assert(uv.now() - start < 500ms)
     })
 }
 
@@ -165,12 +165,12 @@ pub fn test-timeout-is-disarmed-on-exit() {
     let start = nil
     uv.run(fn () {
         start = uv.now()
-        with uv.timeout(30) {
-            uv.sleep(5)
+        with uv.timeout(30ms) {
+            uv.sleep(5ms)
         }
-        uv.sleep(60)
+        uv.sleep(60ms)
     })
-    assert(uv.now() - start < 500)
+    assert(uv.now() - start < 500ms)
 }
 
 pub fn test-timeout-cleans-up-the-interrupted-operation() {
@@ -178,13 +178,13 @@ pub fn test-timeout-cleans-up-the-interrupted-operation() {
     uv.run(fn () {
         start = uv.now()
         try {
-            with uv.timeout(10) {
-                uv.sleep(5000)
+            with uv.timeout(10ms) {
+                uv.sleep(5000ms)
             }
         } catch _: uv.TimeoutError {
         }
     })
-    assert(uv.now() - start < 500)
+    assert(uv.now() - start < 500ms)
 }
 
 pub fn test-race-losers-cannot-swallow-cancellation() {
@@ -192,11 +192,11 @@ pub fn test-race-losers-cannot-swallow-cancellation() {
         let zombie? = false
         let cleaned? = false
         let result = uv.race([
-            fn () { uv.sleep(5); 'fast' },
+            fn () { uv.sleep(5ms); 'fast' },
             fn () {
                 for ..3 {
                     try {
-                        uv.sleep(30)
+                        uv.sleep(30ms)
                         zombie? = true
                         return 'slow'
                     } catch _ {
@@ -205,13 +205,13 @@ pub fn test-race-losers-cannot-swallow-cancellation() {
             },
             fn () {
                 try {
-                    uv.sleep(30)
+                    uv.sleep(30ms)
                 } finally {
                     cleaned? = true
                 }
             },
         ])
-        uv.sleep(100)
+        uv.sleep(100ms)
         assert(result == 'fast')
         assert(!zombie?)
         assert(cleaned?)
@@ -223,7 +223,7 @@ pub fn test-spawn-returns-a-cancelable-task() {
         let caught? = false
         let task = uv.spawn(fn () {
             try {
-                uv.sleep(5000)
+                uv.sleep(5000ms)
             } catch _: uv.CanceledError {
                 caught? = true
             }
@@ -240,7 +240,7 @@ pub fn test-closing-a-task-runs-its-cleanup() {
         start = uv.now()
         let task = uv.spawn(fn () {
             try {
-                uv.sleep(5000)
+                uv.sleep(5000ms)
             } catch _ {
                 cleaned? = nil
             } finally {
@@ -250,7 +250,7 @@ pub fn test-closing-a-task-runs-its-cleanup() {
         task.close()
     })
     assert(cleaned?)
-    assert(uv.now() - start < 500)
+    assert(uv.now() - start < 500ms)
 }
 
 pub fn test-run-closes-stranded-tasks() {
@@ -258,7 +258,7 @@ pub fn test-run-closes-stranded-tasks() {
     uv.run(fn () {
         uv.spawn(fn () {
             try {
-                uv.sleep(5000)
+                uv.sleep(5000ms)
             } finally {
                 cleaned? = true
             }
@@ -273,10 +273,10 @@ pub fn test-timeout-closes-a-pending-race() {
         let losers = []
         let caught? = false
         try {
-            with uv.timeout(20) {
+            with uv.timeout(20ms) {
                 uv.race([
-                    fn () { try { uv.sleep(5000) } finally { losers.push('a') } },
-                    fn () { try { uv.sleep(5000) } finally { losers.push('b') } },
+                    fn () { try { uv.sleep(5000ms) } finally { losers.push('a') } },
+                    fn () { try { uv.sleep(5000ms) } finally { losers.push('b') } },
                 ])
             }
         } catch _: uv.TimeoutError {
@@ -304,7 +304,7 @@ pub fn test-stop-closes-blocked-connections() {
         srv.listen()
         let (_, port) = os.getnameinfo(srv.address, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
         let socks = [uv.dial('127.0.0.1', port), uv.dial('127.0.0.1', port)]
-        uv.sleep(20)
+        uv.sleep(20ms)
         srv.close()
         uv.stop()
     })
@@ -322,7 +322,7 @@ pub fn test-timeout-interrupts-a-bare-yield() {
     uv.run(fn () {
         let caught? = false
         try {
-            with uv.timeout(10) {
+            with uv.timeout(10ms) {
                 yield nil
             }
         } catch _: uv.TimeoutError {

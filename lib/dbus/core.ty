@@ -1,4 +1,5 @@
 import ffi as c (C!)
+import time
 
 if not let $lib = c.open('systemd', [0]) {
     throw RuntimeError('failed to load libsystemd')
@@ -129,6 +130,14 @@ pub fn connect(kind: String = 'system') {
         _        => throw DBusError(-22, "bad bus type: {kind}")
     }
     Bus(bus[0])
+}
+
+fn usecs(timeout: ?time::Timeout) -> Int {
+    match timeout {
+        nil         => -1,
+        d: Duration => int(d) / 1000,
+        t           => int(time.until(t)) / 1000
+    }
 }
 
 fn _type-arg(ch: String, v: _) -> _ {
@@ -302,17 +311,17 @@ pub class Bus {
         r > 0
     }
 
-    wait(timeout-usec: Int = -1) {
+    wait(timeout: ?time::Timeout = nil) {
         check!(
-            sd_bus_wait(__bus, timeout-usec),
+            sd_bus_wait(__bus, usecs(timeout)),
             'wait'
         )
     }
 
-    run(timeout-usec: Int = -1) {
+    run(timeout: ?time::Timeout = nil) {
         while true {
             if !process() {
-                wait(timeout-usec)
+                wait(timeout)
             }
         }
     }

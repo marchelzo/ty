@@ -1,3 +1,5 @@
+import ty.test.events as events
+
 pub class UsageError < RuntimeError {}
 
 pub class Options {
@@ -13,8 +15,8 @@ pub class Options {
     tags:              ?String = nil
     seed:              ?Int = nil
     shuffle?:          Bool = false
-    timeout:           ?Float = nil
-    grace:             ?Float = nil
+    timeout:           ?Duration = nil
+    grace:             ?Duration = nil
     list:              ?String = nil
     static?:           Bool = false
     strict?:           Bool = false
@@ -49,7 +51,7 @@ run control:
       --max-fail N        stop after N failures
       --shuffle[=SEED]    run tests in a random order
       --seed N            seed for --shuffle and per-test srand
-      --timeout S         per-test timeout in seconds
+      --timeout T         per-test timeout (seconds, or 500ms, 2m, ...)
       --retries N         rerun a failing test up to N times; a pass is 'flaky'
       --repeat N          run each test N times; it fails if any run fails
       --last-failed       only run the tests that failed last time
@@ -67,10 +69,10 @@ reporting:
       --quiet             only show failures
 """
 
-fn number(opt: String, s: String) -> Float {
-    match s {
-        /^-?\d+(\.\d+)?$/ => float(s),
-        _                 => throw UsageError("{opt} expects a number, got '{s}'"),
+fn duration(opt: String, s: String) -> Duration {
+    match events.parse-duration(s) {
+        nil => throw UsageError("{opt} expects a duration such as 2.5 or 500ms, got '{s}'"),
+        d   => d,
     }
 }
 
@@ -117,8 +119,8 @@ pub fn parse(args: Array[String]) -> Options {
             '--exclude'               => o.excludes.push(value(opt, inline)),
             '-t' or '--tags'          => o.tags = value(opt, inline),
             '--seed'                  => o.seed = integer(opt, value(opt, inline)),
-            '--timeout'               => o.timeout = number(opt, value(opt, inline)),
-            '--grace'                 => o.grace = number(opt, value(opt, inline)),
+            '--timeout'               => o.timeout = duration(opt, value(opt, inline)),
+            '--grace'                 => o.grace = duration(opt, value(opt, inline)),
             '--static'                => o.static? = true,
             '--strict'                => o.strict? = true,
             '--forbid-only'           => o.forbid-only? = true,

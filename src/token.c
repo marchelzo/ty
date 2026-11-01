@@ -302,6 +302,7 @@ token_show_type(Ty *ty, int type)
         case TOKEN_FUN_SPECIAL_STRING: return "interpolated string function";
         case TOKEN_INTEGER:            return "integer";
         case TOKEN_REAL:               return "real";
+        case TOKEN_DURATION:           return "duration";
         case TOKEN_NEWLINE:            return "newline";
         case TOKEN_KEYWORD:            return "keyword";
         case TOKEN_DIRECTIVE:          return "compile-time directive";
@@ -346,6 +347,7 @@ token_show(Ty *ty, Token const *t)
         case TOKEN_REGEX:      ty_snprintf(token_show_buffer, 512, "regex /%s/", t->regex->pattern);          break;
         case TOKEN_INTEGER:    ty_snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
         case TOKEN_REAL:       ty_snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
+        case TOKEN_DURATION:   ty_snprintf(token_show_buffer, 512, "duration '%"PRIiMAX"ns'", t->integer);  break;
         case TOKEN_KEYWORD:    ty_snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
         case TOKEN_USER_OP:    ty_snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
         default:               ty_snprintf(token_show_buffer, 512, "%s", token_show_type(ty, t->type));       break;

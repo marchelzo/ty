@@ -5,7 +5,7 @@ import time
 import log
 import _client (serve, Client, get, dial, WsClient, xread)
 
-fn read-lines(fd: Int, want: Int, limit: Float = 3.0) -> Array[String] {
+fn read-lines(fd: Int, want: Int, limit: Duration = 3s) -> Array[String] {
     let buf = Blob()
     let deadline = time.now() + limit
     while time.now() < deadline {
@@ -129,7 +129,7 @@ pub fn access-log-combined-and-json() {
         assert(e['status'] == 200)
         assert(e['bytes'] == 4)
         assert(e['route'] == '/p')
-        assert(e['seconds'] >= 0.0)
+        assert(e['duration'] >= 0.0)
         assert(e['id'] :: String)
     }, access-log: 'json', access-log-fd: w2)
     os.close(w2)
@@ -148,8 +148,8 @@ pub fn access-log-callback() {
     }, fn (srv) {
         assert(get(srv.port, '/s').body == 'abcdefg')
         let t0 = time.now()
-        while do { let ^_ = lock.lock(); #seen } == 0 && time.now() - t0 < 2.0 {
-            os.sleep(0.01)
+        while do { let ^_ = lock.lock(); #seen } == 0 && time.since(t0) < 2s {
+            os.sleep(10ms)
         }
         let e = do { let ^_ = lock.lock(); seen[0] }
         assert(e.status == 200)
@@ -175,8 +175,8 @@ pub fn access-log-through-log-module() {
             assert(get(srv.port, '/hi').body == 'hi')
             assert(get(srv.port, '/boom').status == 500)
             let t0 = time.now()
-            while #mem.snapshot().filter(\_.module == 'http.access') < 2 && time.now() - t0 < 2.0 {
-                os.sleep(0.01)
+            while #mem.snapshot().filter(\_.module == 'http.access') < 2 && time.since(t0) < 2s {
+                os.sleep(10ms)
             }
         }, access-log: 'log')
     } finally {
@@ -210,7 +210,7 @@ pub fn stats-and-prometheus() {
         srv.get('/ok', (req, rsp) -> rsp.plain('ok'))
         srv.get('/boom', (req, rsp) -> throw RuntimeError('boom'))
         srv.get('/slow', fn (req, rsp) {
-            http.sleep(0.03)
+            http.sleep(30ms)
             rsp.plain('slow')
         })
         srv.metrics-endpoint()
@@ -258,13 +258,13 @@ pub fn websocket-gauge() {
     }, fn (srv) {
         let a = WsClient(srv.port, '/ws')
         let b = WsClient(srv.port, '/ws')
-        os.sleep(0.1)
+        os.sleep(100ms)
         assert(srv.stats()['websockets'] == 2)
         a.close()
         b.close()
         let t0 = time.now()
-        while srv.stats()['websockets'] > 0 && time.now() - t0 < 2.0 {
-            os.sleep(0.02)
+        while srv.stats()['websockets'] > 0 && time.since(t0) < 2s {
+            os.sleep(20ms)
         }
         assert(srv.stats()['websockets'] == 0)
         assert(srv.stats()['websockets_total'] == 2)

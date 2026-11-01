@@ -1,6 +1,6 @@
 import ty
 import ty.interpreter (Repl)
-import time (now)
+import time (now, since)
 import sh
 
 const CHURN = '''
@@ -17,7 +17,7 @@ fn growth(output: String) -> Int {
 
 pub fn repl-worker-collects-garbage() {
     let repl   = Repl()
-    let result = repl.eval(CHURN, 60000)
+    let result = repl.eval(CHURN, 1m)
     repl.close()
 
     assert(result.error == nil, result.error)
@@ -26,7 +26,7 @@ pub fn repl-worker-collects-garbage() {
 
 pub fn failed-parse-under-dash-e-keeps-gc-running() {
     let script = [*CHURN.lines().map(&trim).filter(bool)[;-1], 'print(rss() - before)'].join('; ')
-    let result = sh.run([ty.executable, '-b', '-e', script], timeout=60)
+    let result = sh.run([ty.executable, '-b', '-e', script], timeout=60s)
     assert(growth(result.stdout) < 50_000_000, result.stdout)
 }
 
@@ -36,5 +36,5 @@ pub fn join-is-linear() {
     let text  = parts.join(',')
 
     assert(text.split(',') == parts)
-    assert(now() - start < 2.0, "join took {now() - start:.2f}s")
+    assert(since(start) < 2s, "join took {since(start)}")
 }

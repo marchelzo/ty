@@ -54,6 +54,8 @@ const COMPRESSIBLE = /^\s*(?:text\/[^;\s]*|[^;\s]*\+(?:json|xml)|application\/(?
 
 let ACCESS = log.Logger('http.access')
 
+const EPOCH = time.time({year: 70, mon: 0, mday: 1}, utc: true)
+
 pub class TimeoutError < RuntimeError {
     init(what: String = 'operation timed out') {
         super(what)
@@ -62,7 +64,7 @@ pub class TimeoutError < RuntimeError {
 
 pub use AccessEntry = {
     id:       String | nil,
-    time:     Float,
+    time:     Time[time::CLOCK_REALTIME],
     remote:   String | nil,
     method:   String,
     target:   String,
@@ -70,15 +72,15 @@ pub use AccessEntry = {
     protocol: String,
     status:   Int,
     bytes:    Int,
-    seconds:  Float,
+    duration: Duration,
     referer:  String | nil,
     agent:    String | nil
 };
 
 pub use AccessLog = String | Bool | ((AccessEntry) -> _) | nil;
 
-/// Every limit and timeout of a `Server` (seconds for timeouts); pass them
-/// as keywords to `Server`.
+/// Every limit and timeout of a `Server` (Durations for timeouts and
+/// intervals); pass them as keywords to `Server`.
 pub class Config {
     threads:                     Int = os.ncpu()
     backlog:                     Int = 1024
@@ -90,19 +92,19 @@ pub class Config {
     max-requests-per-connection: Int = 0
     max-write-buffer:            Int = 8 * 1024 * 1024
     write-high-water:            Int = 256 * 1024
-    header-timeout:              Int | Float = 10
-    request-timeout:             Int | Float = 60
-    idle-timeout:                Int | Float = 60
-    write-timeout:               Int | Float = 60
-    handshake-timeout:           Int | Float = 10
-    linger-timeout:              Int | Float = 2
-    shutdown-timeout:            Int | Float = 10
+    header-timeout:              Duration = 10s
+    request-timeout:             Duration = 60s
+    idle-timeout:                Duration = 60s
+    write-timeout:               Duration = 60s
+    handshake-timeout:           Duration = 10s
+    linger-timeout:              Duration = 2s
+    shutdown-timeout:            Duration = 10s
     ws-max-message:              Int = 16 * 1024 * 1024
     ws-compression:              Bool = true
     ws-compress-min:             Int = 256
-    ws-ping-interval:            Int | Float = 30
-    ws-idle-timeout:             Int | Float = 120
-    sse-keepalive:               Int | Float = 15
+    ws-ping-interval:            Duration = 30s
+    ws-idle-timeout:             Duration = 120s
+    sse-keepalive:               Duration = 15s
     h2:                          Bool = true
     h2-max-concurrent-streams:   Int = 128
     h2-initial-window:           Int = 1024 * 1024
@@ -382,8 +384,8 @@ pub class Response : Exchange {
     set-cookie(
         name: String,
         value: String,
-        max-age: Int | nil = nil,
-        expires: Int | Float | nil = nil,
+        max-age: ?Duration = nil,
+        expires: ?Time[time::CLOCK_REALTIME] = nil,
         path: String | Bool = '/',
         domain: String | nil = nil,
         secure: Bool | nil = nil,
@@ -408,7 +410,7 @@ pub class Response : Exchange {
     }
 
     clear-cookie(name: String, path: String | Bool = '/', domain: String | nil = nil) -> Response {
-        set-cookie(name, '', max-age: 0, expires: 0, path: path, domain: domain, http-only: false, same-site: false, secure: false)
+        set-cookie(name, '', max-age: 0s, expires: EPOCH, path: path, domain: domain, http-only: false, same-site: false, secure: false)
     }
 
     /// Sends a file (see `http.files.send-file` for options).
@@ -655,13 +657,13 @@ pub class BodyWriter {
 }
 
 /// Server-Sent Events stream (text/event-stream); thread-safe like
-/// BodyWriter. Idle streams get a comment every `sse-keepalive` seconds.
+/// BodyWriter. Idle streams get a comment every `sse-keepalive`.
 pub class EventStream < BodyWriter {
     init(rsp: Response) {
         super(rsp)
-        let secs = float(server-config(rsp.loop).sse-keepalive)
-        if secs > 0.0 {
-            c.keepalive(rsp.core, rsp.id, secs)
+        let idle = server-config(rsp.loop).sse-keepalive
+        if idle > 0s {
+            c.keepalive(rsp.core, rsp.id, idle)
         }
     }
 
@@ -1412,10 +1414,7 @@ pub class Server : Handler {
         let req = rsp.request
         let status = 0
         let logged? = config.access-log != nil && config.access-log != false
-
-        if logged? {
-            req.start = time.now()
-        }
+        let start   = time.now()
 
         try {
             with log::span!("request", req: req.id) {
@@ -1423,7 +1422,7 @@ pub class Server : Handler {
             }
         } finally {
             if logged? {
-                __access(req, rsp, (status == 0) ? 499 : status, time.now() - req.start, (status == 0) ? 0 : rsp.bytes)
+                __access(req, rsp, (status == 0) ? 499 : status, time.since(start), (status == 0) ? 0 : rsp.bytes)
             }
             rsp.loop.detach(rsp.id)
         }
@@ -1559,10 +1558,10 @@ pub class Server : Handler {
         }
     }
 
-    __access(req: Request, rsp: Response, status: Int, seconds: Float, bytes: Int) {
+    __access(req: Request, rsp: Response, status: Int, duration: Duration, bytes: Int) {
         let entry: AccessEntry = {
             id:       req.id,
-            time:     time.utc(),
+            time:     time.time(),
             remote:   req.remote,
             method:   req.method,
             target:   req.target,
@@ -1570,7 +1569,7 @@ pub class Server : Handler {
             protocol: req.http-version,
             status:   status,
             bytes:    bytes,
-            seconds:  seconds,
+            duration: duration,
             referer:  req.header('referer'),
             agent:    req.header('user-agent')
         }
@@ -1585,7 +1584,7 @@ pub class Server : Handler {
                     route:    entry.route,
                     status:   status,
                     bytes:    bytes,
-                    ms:       seconds * 1000.0,
+                    duration: duration,
                     remote:   entry.remote,
                     protocol: entry.protocol,
                     referer:  entry.referer,
@@ -1594,14 +1593,14 @@ pub class Server : Handler {
                 )
                 return
             },
-            'json' => json.encode(entry),
+            'json' => json.encode({*entry, time: float(int(entry.time)) / 1e9, duration: duration.secs}),
             true, 'combined' => do {
-                let when = time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime(int(entry.time)))
+                let when = time.strftime('%d/%b/%Y:%H:%M:%S +0000', time.gmtime(entry.time))
                 let clean = (s: String | nil) -> (s ?? '-').sub(/["\\\x00-\x1F]/, '?')
-                "{entry.remote ?? '-'} - - [{when}] \"{clean(entry.method)} {clean(entry.target)} {entry.protocol}\" {status} {bytes} \"{clean(entry.referer)}\" \"{clean(entry.agent)}\" {int(seconds * 1000000.0)}us {entry.id}"
+                "{entry.remote ?? '-'} - - [{when}] \"{clean(entry.method)} {clean(entry.target)} {entry.protocol}\" {status} {bytes} \"{clean(entry.referer)}\" \"{clean(entry.agent)}\" {duration.ns / 1000}us {entry.id}"
             },
             other: String => do {
-                log::error!("unknown access-log format", format: other, @every: 60.0)
+                log::error!("unknown access-log format", format: other, @every: 60s)
                 return
             },
             f => do {
@@ -1641,7 +1640,7 @@ pub class Server : Handler {
     }
 
     /// Serves until `stop()` is called (from any thread or handler), then
-    /// drains in-flight requests for up to `shutdown-timeout` seconds.
+    /// drains in-flight requests for up to `shutdown-timeout`.
     run() {
         if __running.swap(1) != 0 {
             throw RuntimeError('http: server is already running')

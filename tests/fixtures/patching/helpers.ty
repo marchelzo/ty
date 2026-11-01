@@ -1,6 +1,6 @@
 import time
 import ty.test (patch)
 
-pub fn freeze-time(at: Float) {
+pub fn freeze-time(at: Time[time::CLOCK_MONOTONIC]) {
     patch(time.now, () -> at)
 }

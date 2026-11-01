@@ -5,7 +5,7 @@ import ty.test.events as events (
     Event,
     get-str,
     get-int,
-    get-float,
+    get-duration,
     get-event,
     get-events,
     get-strs
@@ -13,12 +13,12 @@ import ty.test.events as events (
 
 pub TAIL_LIMIT = 65536
 pub SNIPPET_LIMIT = 4096
-pub DEFAULT_TIMEOUT = 10.0
-pub DEFAULT_LOAD_TIMEOUT = 30.0
-pub DEFAULT_GRACE = 2.0
-pub TEARDOWN_TIMEOUT = 10.0
-pub TERM_GRACE = 1.0
-pub TICK = 0.05
+pub DEFAULT_TIMEOUT = 10s
+pub DEFAULT_LOAD_TIMEOUT = 30s
+pub DEFAULT_GRACE = 2s
+pub TEARDOWN_TIMEOUT = 10s
+pub TERM_GRACE = 1s
+pub TICK = 50ms
 
 let PDEATH: ?Int = (ty.platform == 'linux') ? os.SIGKILL : nil
 
@@ -66,7 +66,7 @@ fn env-prefix(env: Dict[String, String]) -> Array[String] {
 
 pub class Proc {
     pid:     Int
-    t0:      Float
+    t0:      Time[time::CLOCK_MONOTONIC]
     out-buf: Blob
     err-buf: Blob
     status:  ?Int
@@ -122,7 +122,7 @@ pub class Proc {
         let rounds = 0
         while #__fds > 0 && rounds < 64 {
             let hits: Array[(Int, Int)] = []
-            break if os.poll(fds(), hits, 0) <= 0
+            break if os.poll(fds(), hits, 0s) <= 0
             for (fd, _) in hits {
                 ready(fd)
             }
@@ -195,8 +195,8 @@ pub class Job {
     script?:      Bool = false
     strict?:      Bool = false
     allow-empty?: Bool = false
-    timeout:      ?Float = nil
-    load-timeout: ?Float = nil
+    timeout:      ?Duration = nil
+    load-timeout: ?Duration = nil
     tags:         ?String = nil
     select-path:  ?String = nil
     group:        ?String = nil
@@ -205,9 +205,9 @@ pub class Job {
     finished:     Dict[String, Bool] = %{}
     selected:     ?Array[String] = nil
     infos:        Dict[String, Event] = %{}
-    t0:           ?Float = nil
-    utime:        Float = 0.0
-    stime:        Float = 0.0
+    t0:           ?Time[time::CLOCK_MONOTONIC] = nil
+    utime:        Duration = 0s
+    stime:        Duration = 0s
     maxrss:       Int = 0
     rc:           ?Int = nil
     ev-path:      String = ''
@@ -231,9 +231,9 @@ pub class Settings {
     cmd:          Array[String] = []
     fwd:          Array[String] = []
     jobs:         Int = 1
-    timeout:      ?Float = nil
-    load-timeout: ?Float = nil
-    grace:        Float = DEFAULT_GRACE
+    timeout:      ?Duration = nil
+    load-timeout: ?Duration = nil
+    grace:        Duration = DEFAULT_GRACE
     max-respawns: Int = 5
     max-fail:     ?Int = nil
     list?:        Bool = false
@@ -247,10 +247,10 @@ class Live {
     slot:         Int
     proc:         Proc
     phase:        String = 'load'
-    deadline:     ?Float = nil
+    deadline:     ?Time[time::CLOCK_MONOTONIC] = nil
     open:         ?Event = nil
-    open-at:      Float = 0.0
-    open-soft:    ?Float = nil
+    open-at:      Time[time::CLOCK_MONOTONIC] = time.now()
+    open-soft:    ?Duration = nil
     collected?:   Bool = false
     ended?:       Bool = false
     kill-reason:  ?String = nil
@@ -274,7 +274,7 @@ pub class Sched {
     __live:       Array[Live] = []
     __free:       Array[Int] = []
     __busy:       Dict[String, Bool] = %{}
-    __term-at:    ?Float = nil
+    __term-at:    ?Time[time::CLOCK_MONOTONIC] = nil
     __hard?:      Bool = false
     __dirty?:     Bool = false
 
@@ -349,7 +349,7 @@ pub class Sched {
                 it.proc.kill(os.SIGTERM)
             }
         }
-        let late? = time.now() >= (__term-at ?? 0.0)
+        let late? = __term-at != nil && time.until(__term-at) == 0s
         if !__hard? && (n > 1 || late?) {
             __hard? = true
             for __live {
@@ -429,7 +429,7 @@ pub class Sched {
         argv
     }
 
-    load-limit(job: Job) -> Float {
+    load-limit(job: Job) -> Duration {
         job.load-timeout ?? self.cfg.load-timeout ?? DEFAULT_LOAD_TIMEOUT
     }
 
@@ -474,7 +474,7 @@ pub class Sched {
         emit(ev)
     }
 
-    next-deadline() -> ?Float {
+    next-deadline() -> ?Time[time::CLOCK_MONOTONIC] {
         let soonest = __term-at
         for __live {
             let $d = it.deadline or continue
@@ -490,7 +490,7 @@ pub class Sched {
         }
         let timeout = match next-deadline() {
             nil => TICK,
-            d   => (d - time.now()).clamp(0.0, TICK),
+            d   => min(time.until(d), TICK),
         }
         let hits: Array[(Int, Int)] = []
         os.poll(fds, hits, timeout)
@@ -561,16 +561,16 @@ pub class Sched {
         emit(ev)
     }
 
-    hard-limit(job: Job, id: String) -> (Float | nil, Float | nil) {
+    hard-limit(job: Job, id: String) -> (Duration | nil, Duration | nil) {
         let info = job.infos[id]
-        let base = get-float(info, 'timeout')
+        let base = get-duration(info, 'timeout')
                 ?? job.timeout
                 ?? self.cfg.timeout
                 ?? DEFAULT_TIMEOUT
-        if base <= 0.0 {
+        if base == 0s {
             return (nil, nil)
         }
-        let soft = ('slow' in get-strs(info, 'tags')) ? base * 5.0 : base
+        let soft = ('slow' in get-strs(info, 'tags')) ? abs(5 * base) : base
         (soft, soft + self.cfg.grace)
     }
 
@@ -610,7 +610,7 @@ pub class Sched {
 
     check-deadline(w: Live) {
         let $d = w.deadline or return
-        if w.kill-reason != nil || time.now() < d {
+        if w.kill-reason != nil || time.until(d) > 0s {
             return
         }
         w.kill-reason = "timeout-{w.phase}"
@@ -682,7 +682,7 @@ pub class Sched {
             return if respawn?(w)
         } else if w.collected? && !w.ended? {
             let why = (w.kill-reason == 'timeout-between')
-                    ? "worker stalled for {load-limit(job)}s between tests"
+                    ? "worker stalled for {load-limit(job)} between tests"
                     : "worker {w.proc.describe()} between tests"
             not-run(w, why)
         }
@@ -726,13 +726,13 @@ pub class Sched {
             _          => '',
         }
         let p = w.proc
-        let dur = time.now() - w.open-at
+        let dur = time.since(w.open-at)
         let ev = match (w.kill-reason, p.signal) {
             ('timeout-test', _) => events.test-end(
                 id,
                 'timeout',
                 dur: dur,
-                reason: "exceeded {w.open-soft}s + {self.cfg.grace}s grace",
+                reason: "exceeded {w.open-soft} + {self.cfg.grace} grace",
                 output: output,
                 hard?: true
             ),
@@ -754,7 +754,7 @@ pub class Sched {
     finish-script(w: Live) {
         let job = w.job
         let p = w.proc
-        let dur = time.now() - p.t0
+        let dur = time.since(p.t0)
         let out = tail-str(p.out-buf, SNIPPET_LIMIT)
         let err = tail-str(p.err-buf, SNIPPET_LIMIT)
         let output = [out, err].filter(\#_ > 0).join('')
@@ -765,7 +765,7 @@ pub class Sched {
                 id,
                 'timeout',
                 dur: dur,
-                reason: "exceeded {load-limit(job)}s",
+                reason: "exceeded {load-limit(job)}",
                 output: output,
                 hard?: true
             ),
@@ -797,7 +797,7 @@ pub class Sched {
         let ev = events.file-done(
             job.file,
             st,
-            dur: time.now() - (job.t0 ?? time.now()),
+            dur: (job.t0 == nil) ? 0s : time.since(job.t0),
             rusage: events.rusage(job.utime, job.stime, job.maxrss),
             stdout-tail: job.out-tail,
             stderr-tail: job.err-tail,

@@ -1,4 +1,4 @@
-import time (now)
+import time
 import json
 import io
 import path (Path)
@@ -175,11 +175,11 @@ fn benchmark-program(name: String, categories: String, f) {
             let metrics: Dict[String, [(Float, Float)]] = %{}
             for ..rounds {
                 let s0 = counters.snapshot()
-                let t0 = now()
+                let t0 = time.now()
                 f(iters)
-                let t1 = now()
+                let dt = time.since(t0)
                 let s1 = counters.snapshot()
-                times.push(t1 - t0)
+                times.push(dt.secs)
                 for k, x in Counters.delta(s0, s1) {
                     (metrics[k] ?= []).push(x)
                 }
@@ -197,9 +197,9 @@ fn benchmark-program(name: String, categories: String, f) {
         /^\d+$/ => {
             let iters = int($0)
             inherit-elevation()
-            let t0 = now()
+            let t0 = time.now()
             f(iters)
-            let dt = now() - t0
+            let dt = time.since(t0).secs
             print("{name}: {iters} iters in {fmt-time(dt)} ({fmt-time(dt / iters)}/iter)")
             os.exit(0)
         },
@@ -281,9 +281,9 @@ pub fn load-benchmarks(dir: String | Path) -> Array[Benchmark] {
 pub fn calibrate(f, target: Float = 0.5) {
     let iters = 1
     while true {
-        let t0 = now()
+        let t0 = time.now()
         f(iters)
-        let elapsed = now() - t0
+        let elapsed = time.since(t0).secs
         if elapsed >= target {
             return iters
         }

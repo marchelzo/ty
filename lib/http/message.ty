@@ -263,7 +263,6 @@ pub class Request {
     remote:   String | nil
     id:       String | nil
     route:    String | nil
-    start:    Float = 0.0
     session:  _
     exchange: _
 

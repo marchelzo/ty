@@ -375,7 +375,7 @@ pub fn custom-format-and-validation() {
 }
 
 fn spam(i: Int) {
-    warn!("spam", i, @every: 3600.0)
+    warn!("spam", i, @every: 1h)
 }
 
 pub fn rate-limits() {
@@ -387,8 +387,8 @@ pub fn rate-limits() {
         info!("once", i, @once)
     }
     for i in ..4 {
-        info!("fast", i, @every: 0.02)
-        os.sleep(0.008)
+        info!("fast", i, @every: 20ms)
+        os.sleep(8ms)
     }
     assert(mem.records.filter(\_.msg == 'spam').map(&.fields) == [[('i', 0)]])
     assert(mem.records.filter(\_.msg == 'once').map(&.fields) == [[('i', 0)]])

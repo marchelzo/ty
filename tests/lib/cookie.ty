@@ -3,10 +3,15 @@ import path (Path)
 import sqlite (SQLite)
 import time
 
+fn chrome-us(t: Time[time::CLOCK_REALTIME]) -> Int {
+    int(t) / 1000 + 11644473600000000
+}
+
 pub fn test-chrome-expiry-conversion() {
     assert(chrome-expiry(0) == nil)
-    assert(chrome-expiry(11644473600000000) == 0.0)
-    assert(chrome-expiry(11644473601000000) == 1.0)
+    assert(int(chrome-expiry(11644473600000000)!) == 0)
+    assert(int(chrome-expiry(11644473601000000)!) == 1000000000)
+    assert(chrome-expiry(11644473601500000)! - chrome-expiry(11644473600000000)! == 1500ms)
 }
 
 pub fn test-chrome-v10-decryption() {
@@ -55,8 +60,8 @@ pub fn test-domain-limited-browser-extraction() {
             db.exec('CREATE TABLE meta (key TEXT, value TEXT)')
             db.exec("INSERT INTO meta VALUES ('version', '23')")
             db.exec('CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER)')
-            let future = int((time.utc() + 3600.0 + 11644473600.0) * 1000000.0)
-            let past = int((time.utc() - 3600.0 + 11644473600.0) * 1000000.0)
+            let future = chrome-us(time.time() + 1h)
+            let past = chrome-us(time.time() - 1h)
             db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
                 '.rippling.com', 'session', 'live', Blob(), '/', future, 1)
             db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -87,7 +92,7 @@ pub fn test-browser-extraction-includes-wal() {
         with db = SQLite(str(database)) {
             db.fetchOne('PRAGMA journal_mode=WAL')
             db.exec('PRAGMA wal_autocheckpoint=0')
-            let future = int((time.utc() + 3600.0 + 11644473600.0) * 1000000.0)
+            let future = chrome-us(time.time() + 1h)
             db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
                 '.example.com', 'from-wal', 'yes', Blob(), '/', future, 1)
 
@@ -99,13 +104,13 @@ pub fn test-browser-extraction-includes-wal() {
 }
 
 pub fn test-expiry-uses-wall-clock() {
-    let now = time.utc()
-    assert(Cookie('old', 'value', expires=now - 60).is-expired())
-    assert(!Cookie('live', 'value', expires=now + 60).is-expired())
+    let now = time.time()
+    assert(Cookie('old', 'value', expires=now - 1m).is-expired())
+    assert(!Cookie('live', 'value', expires=now + 1m).is-expired())
 
     let jar = CookieJar()
-    jar.set-cookie(Cookie('old', 'value', domain='example.com', expires=now - 60))
-    jar.set-cookie(Cookie('live', 'value', domain='example.com', expires=now + 60))
+    jar.set-cookie(Cookie('old', 'value', domain='example.com', expires=now - 1m))
+    jar.set-cookie(Cookie('live', 'value', domain='example.com', expires=now + 1m))
     assert(jar.get-cookie-header('http://example.com/') == 'live=value')
 }
 
@@ -113,7 +118,7 @@ pub fn test-cookie-file-filtering-uses-wall-clock() {
     with root = Path.tempdir('ty-cookie-time-test') {
         let input = root / 'input.txt'
         let output = root / 'output.txt'
-        let now = int(time.utc())
+        let now = int(time.time()) / 1000000000
         input.write([
             '# Netscape HTTP Cookie File',
             "example.com\tFALSE\t/\tFALSE\t{now - 60}\told\tvalue",

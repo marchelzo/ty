@@ -38,7 +38,7 @@ class Pty {
     __tio: TermIO
     __drain: Thread
 
-    init(esc-delay: Float = 0.01) {
+    init(esc-delay: Duration = 10ms) {
         __pty = openpty((24, 80))!
         __tio = TermIO(fd=__pty.slave, mouse=true, esc-delay=esc-delay)
         __drain = Thread(__discard-output)
@@ -51,11 +51,11 @@ class Pty {
         }
     }
 
-    send(chunks: Array[String | Float]) -> Array[String] {
+    send(chunks: Array[String | Duration]) -> Array[String] {
         for chunks {
             match it {
-                s: String => write(__pty.master, s),
-                t: Float  => sleep(t)
+                s: String   => write(__pty.master, s),
+                t: Duration => sleep(t)
             }
         }
 
@@ -63,7 +63,7 @@ class Pty {
 
         let out: Array[String] = []
 
-        while let $ev = __tio.next-event(2.0) {
+        while let $ev = __tio.next-event(2s) {
             let s = show(ev)
             break if s == 'K:KP_0'
             out.push(s)
@@ -72,7 +72,7 @@ class Pty {
         out
     }
 
-    feed(s: String, gap: Float) -> String {
+    feed(s: String, gap: Duration) -> String {
         send([s, gap]).join(' ')
     }
 
@@ -84,7 +84,7 @@ class Pty {
     }
 }
 
-fn check(cases: Array[(String, String)], gap: Float = 0.0) {
+fn check(cases: Array[(String, String)], gap: Duration = 0s) {
     let p = Pty()
     let bad: Array[(String, String, String)] = []
 
@@ -110,7 +110,7 @@ pub fn legacy-control-keys() {
         ("\x01",     'K:a+C'),
         ("\x1b",     'K:ESCAPE'),
         ("\x1b\x1b", 'K:ESCAPE K:ESCAPE')
-    ], gap=0.1)
+    ], gap=100ms)
 }
 
 pub fn legacy-alt-keys() {
@@ -123,7 +123,7 @@ pub fn legacy-alt-keys() {
         ("\x1b[",           'K:[+A'),
         ("\x1bO",           'K:O+A'),
         ("\x1b\x1b[A",      'K:UP+A')
-    ], gap=0.1)
+    ], gap=100ms)
 }
 
 pub fn legacy-navigation-keys() {
@@ -199,12 +199,12 @@ pub fn mouse-and-paste() {
 }
 
 pub fn split-sequences() {
-    let p = Pty(esc-delay=1.0)
+    let p = Pty(esc-delay=1s)
     let got = [
-        p.send(["\x1b[1;", 0.002, "5A"]),
-        p.send(["\x1b", 0.002, "[B"]),
-        p.send(["\x1b[200~ab\x1b[20", 0.02, "1~"]),
-        p.send(["\xc3", 0.002, "\xa9"]),
+        p.send(["\x1b[1;", 2ms, "5A"]),
+        p.send(["\x1b", 2ms, "[B"]),
+        p.send(["\x1b[200~ab\x1b[20", 20ms, "1~"]),
+        p.send(["\xc3", 2ms, "\xa9"]),
         p.send(["z"])
     ]
     p.close()
@@ -218,7 +218,7 @@ pub fn split-sequences() {
 }
 
 pub fn mouse-burst-across-reads() {
-    let p = Pty(esc-delay=1.0)
+    let p = Pty(esc-delay=1s)
     let burst = ["\x1b[<35;{1 + i % 90};{1 + i % 20}M" for i in ..2000].join('')
     let got = p.send([burst])
     p.close()

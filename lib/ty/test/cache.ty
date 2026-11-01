@@ -8,8 +8,8 @@ fn durations-file() -> String {
     "{CACHE-DIR}/durations.json"
 }
 
-pub fn load-durations() -> Dict[String, Float] {
-    let out: Dict[String, Float] = %{}
+pub fn load-durations() -> Dict[String, Duration] {
+    let out: Dict[String, Duration] = %{}
     let $text = slurp(durations-file()) or return out
     let data = try {
         json.parse(text)
@@ -21,8 +21,8 @@ pub fn load-durations() -> Dict[String, Float] {
     }
     for k, v in data {
         match (k, v) {
-            (f: String, x: Float) => out[f] = x,
-            (f: String, n: Int)   => out[f] = float(n),
+            (f: String, x: Float) => out[f] = abs(x * 1s),
+            (f: String, n: Int)   => out[f] = abs(n * 1s),
             _                     => nil,
         }
     }
@@ -41,8 +41,8 @@ pub fn save-json(path: String, data: Any) {
     os.rename(tmp, path)
 }
 
-pub fn save-durations(durs: Dict[String, Float]) {
-    save-json(durations-file(), durs)
+pub fn save-durations(durs: Dict[String, Duration]) {
+    save-json(durations-file(), %{f: d.secs for f, d in durs})
 }
 
 fn last-failed-file() -> String {

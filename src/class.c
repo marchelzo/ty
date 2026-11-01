@@ -93,6 +93,9 @@ static char const *BuiltinClassNames[] = {
         [CLASS_MODULE]          = "Module",
         [CLASS_QUEUE]           = "Queue",
         [CLASS_HEAP]            = "Heap",
+        [CLASS_TIME]            = "Time",
+        [CLASS_DURATION]        = "Duration",
+        [CLASS_TIMEDELTA]       = "TimeDelta",
         [CLASS_RANGE]           = "Range",
         [CLASS_REGEX]           = "Regex",
         [CLASS_REGEXV]          = "RegexV",
@@ -294,6 +297,7 @@ class_fold_field(Ty *ty, Expr const *dflt, Value *out)
         case EXPRESSION_BOOLEAN:  *out = BOOLEAN(dflt->boolean);        return true;
         case EXPRESSION_INTEGER:  *out = INTEGER(dflt->integer);        return true;
         case EXPRESSION_REAL:     *out = REAL(dflt->real);              return true;
+        case EXPRESSION_DURATION: *out = DURATION(dflt->integer);       return true;
         case EXPRESSION_STRING:   *out = InternedString(dflt->string);  return true;
         }
 

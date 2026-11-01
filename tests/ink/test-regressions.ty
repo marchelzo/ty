@@ -161,7 +161,7 @@ pub fn flex-components-follow-resize() {
 
 class ToastApp < ink.Component {
     render() -> ink.Node {
-        <ink.Box><ink.Toast duration=1.0>saved</ink.Toast></ink.Box>
+        <ink.Box><ink.Toast duration=1s>saved</ink.Toast></ink.Box>
     }
 }
 
@@ -171,7 +171,7 @@ pub fn toast-hides-after-its-duration() {
     for ..5 {
         h.repaint()
     }
-    h.advance(2.0)
+    h.advance(2s)
     h.assert-not-contains('saved')
 }
 
@@ -179,7 +179,7 @@ class TimerApp < ink.Component {
     __text: String = 'before'
 
     mount() {
-        after(0.5, -> do { __text = 'after' })
+        after(500ms, -> do { __text = 'after' })
     }
 
     render() -> ink.Node {
@@ -194,7 +194,7 @@ class TimerHost < ink.Component {
 pub fn timer-callbacks-repaint-their-owner() {
     let h = ink.TestHarness(TimerHost())
     assert(h.line(0) == 'before')
-    h.advance(1.0)
+    h.advance(1s)
     assert(h.line(0) == 'after')
 }
 
@@ -521,12 +521,12 @@ pub fn looks-file-reloads-and-reports-errors() {
     ink.watch-looks(file)
     let h = ink.TestHarness(LookApp(), cols=30, rows=10, color?=false)
     assert(h.line(0).match?(/^┌/))
-    os.sleep(1.1)
+    os.sleep(1100ms)
     path.Path(file).write('.card { borderr: double }')
     h.repaint()
     assert(h.line(0).match?(/^┌/))
     assert(ink.look-error() != nil)
-    os.sleep(1.1)
+    os.sleep(1100ms)
     path.Path(file).write('.card { border: bold }')
     h.repaint()
     assert(h.line(0).match?(/^┏/))
@@ -561,7 +561,7 @@ fn sock-session(h: ink.TestHarness, path: String, reqs: Array[String]) -> Array[
     let out: Array[Dict[String, _]] = []
     while #out < #reqs {
         h.repaint()
-        if let Some(line) = replies.try-take(0.01) {
+        if let Some(line) = replies.try-take(10ms) {
             out.push(json.parse(line))
         }
     }

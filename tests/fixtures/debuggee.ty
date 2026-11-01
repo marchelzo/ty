@@ -30,7 +30,7 @@ fn worker(started: Channel) {
         } catch _ {
             n += 0
         }
-        sleep(0.002)
+        sleep(2ms)
     }
 }
 
@@ -51,5 +51,5 @@ while true {
     total = hot(200000)
     calls += 1
     total += helper(Box(value: 21), calls % 4)
-    sleep(0.001)
+    sleep(1ms)
 }

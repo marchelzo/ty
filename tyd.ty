@@ -78,7 +78,7 @@ let err-fd = match open("{TYLS_ERR_PATH}", O_WRONLY | O_TRUNC | O_CREAT, 0644) {
 
 let TY_LS_CMD = getenv('TY_LS_CMD').?words() ?? [ty.executable, '--ls']
 
-let TYLS_TIMEOUT = float(getenv('TYLS_TIMEOUT') ?? '0.35')
+let TYLS_TIMEOUT = abs(float(getenv('TYLS_TIMEOUT') ?? '0.35') * 1s)
 
 let responses: SharedQueue[(Int, String | nil)] = SharedQueue()
 
@@ -143,7 +143,7 @@ fn get() -> String | nil {
         },
 
         None => {
-            error!("tyls timed out after {TYLS_TIMEOUT}s")
+            error!("tyls timed out after {TYLS_TIMEOUT}")
             restart-tyls!()
             return nil
         }

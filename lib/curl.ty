@@ -502,11 +502,20 @@ pub class URL {
  * Cookie
  * ============================================================================ */
 
+fn ms(t: time::Timeout) -> Int {
+    let d = (t :: Duration) ? t : time.until(t)
+    max(1, (int(d) + 999999) / 1000000)
+}
+
+fn seconds(x: Float) -> Duration {
+    abs(x * 1s)
+}
+
 pub class Cookie {
     domain:    String
     path:      String
     secure:    Bool
-    expires:   Int
+    expires:   ?Time[time::CLOCK_REALTIME]
     name:      String
     value:     String
     http-only: Bool
@@ -518,7 +527,7 @@ pub class Cookie {
         path: String = '/',
         secure: Bool = false,
         http-only: Bool = false,
-        expires: Int = 0
+        expires: ?Time[time::CLOCK_REALTIME] = nil
     ) {
         self.name      = name
         self.value     = value
@@ -534,6 +543,7 @@ pub class Cookie {
         if #parts < 7 {
             return nil
         }
+        let expiry = Int(parts[4]) ?? 0
         Cookie(
             name=parts[5],
             value=parts[6],
@@ -541,7 +551,7 @@ pub class Cookie {
             path=parts[2],
             secure=(parts[3].upper() == 'TRUE'),
             http-only=parts[0].starts?('#HttpOnly_'),
-            expires=Int(parts[4]) ?? 0
+            expires=(expiry > 0) ? Time(expiry * 1000000000, time.CLOCK_REALTIME) : nil
         )
     }
 
@@ -549,7 +559,8 @@ pub class Cookie {
         let domain = http-only ? "#HttpOnly_{self.domain}" : self.domain
         let include-subdomains = self.domain.starts?('.') ? 'TRUE' : 'FALSE'
         let secure-str = secure ? 'TRUE' : 'FALSE'
-        "{domain}\t{include-subdomains}\t{path}\t{secure-str}\t{expires}\t{name}\t{value}"
+        let expiry = (expires == nil) ? 0 : int(expires) / 1000000000
+        "{domain}\t{include-subdomains}\t{path}\t{secure-str}\t{expiry}\t{name}\t{value}"
     }
 
     to-header() -> String {
@@ -558,7 +569,9 @@ pub class Cookie {
         if path != '/'  { parts.push("Path={path}")       }
         if secure       { parts.push('Secure')            }
         if http-only    { parts.push('HttpOnly')          }
-        if expires > 0  { parts.push("Expires={expires}") }
+        if let $t = expires {
+            parts.push("Expires={time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(t))}")
+        }
         parts.join('; ')
     }
 
@@ -570,9 +583,9 @@ pub class Cookie {
         } else if self.domain != '' && self.domain != host {
             return false
         }
-        if !path.starts?(self.path)                       { return false }
-        if self.secure && !secure                         { return false }
-        if self.expires > 0 && self.expires < time.time() { return false }
+        if !path.starts?(self.path)                          { return false }
+        if self.secure && !secure                            { return false }
+        if self.expires != nil && self.expires < time.time() { return false }
         true
     }
 
@@ -750,7 +763,7 @@ pub class Response {
     body:           Blob
     url:            String
     redirect-count: Int
-    total-time:     Float
+    total-time:     Duration
     http-version:   Int
 
     init(
@@ -759,7 +772,7 @@ pub class Response {
         body: Blob,
         url: String = '',
         redirect-count: Int = 0,
-        total-time: Float = 0.0,
+        total-time: Duration = 0s,
         http-version: Int = CURL_HTTP_VERSION_NONE
     ) {
         self.status = status
@@ -830,8 +843,8 @@ pub class RequestOptions {
     body:             String | Blob | nil
     form:             FormData | nil
     json:             Any | nil
-    timeout:          Int | nil
-    connect-timeout:  Int | nil
+    timeout:          ?time::Timeout
+    connect-timeout:  ?time::Timeout
     follow-redirects: Bool
     max-redirects:    Int
     auth:             (String, String) | nil
@@ -910,9 +923,9 @@ pub class SSEEvent {
     event: String | nil
     data:  String
     id:    String | nil
-    retry: Int | nil
+    retry: ?Duration
 
-    init(data: String, event: ?String = nil, id: ?String = nil, retry: ?Int = nil) {
+    init(data: String, event: ?String = nil, id: ?String = nil, retry: ?Duration = nil) {
         self.data  = data
         self.event = event
         self.id    = id
@@ -933,8 +946,8 @@ pub class SSEEvent {
         if id {
             parts.push("id: {id}")
         }
-        if retry {
-            parts.push("retry: {retry}")
+        if let $r = retry {
+            parts.push("retry: {int(r) / 1000000}")
         }
         parts.join('\n')
     }
@@ -945,7 +958,7 @@ pub class SSEParser {
     __event:   String | nil
     __data:    Array[String]
     __id:      String | nil
-    __retry:   Int | nil
+    __retry:   ?Duration
     __last-id: String | nil
 
     init() {
@@ -1004,10 +1017,10 @@ pub class SSEParser {
             }
 
             match field {
-                'event' => { __event = value                        },
-                'data'  => { __data.push(value)                     },
-                'id'    => { if '\0' not in value { __id = value }  },
-                'retry' => { if let $n = Int(value) { __retry = n } },
+                'event' => { __event = value                                    },
+                'data'  => { __data.push(value)                                 },
+                'id'    => { if '\0' not in value { __id = value }              },
+                'retry' => { if let $n = Int(value) { __retry = abs(n * 1ms) } },
                 _       => { }
             }
         }
@@ -1243,7 +1256,7 @@ class StreamingSession {
         __added = true
     }
 
-    poll(timeout-ms: Int = 100) -> Bool {
+    poll(timeout: time::Timeout = 100ms) -> Bool {
         if __done {
             return false
         }
@@ -1272,7 +1285,7 @@ class StreamingSession {
         }
 
         let numfds = c.auto(c.box(c.int))
-        res = curl_multi_poll(__multi, nil, 0, timeout-ms, numfds)
+        res = curl_multi_poll(__multi, nil, 0, ms(timeout), numfds)
         if res != CURLM_OK {
             __error = CURLMError(res, 'curl_multi_poll()')
             __done = true
@@ -1317,13 +1330,13 @@ class StreamingSession {
     status -> Int { __getinfo-long(CURLINFO_RESPONSE_CODE) }
     effective-url -> String { __getinfo-str(CURLINFO_EFFECTIVE_URL) ?? '' }
     redirect-count -> Int { __getinfo-long(CURLINFO_REDIRECT_COUNT) }
-    total-time -> Float {
+    total-time -> Duration {
         let out = c.auto(c.box(c.double))
         let res = curl_easy_getinfo(__easy, CURLINFO_TOTAL_TIME, (c.ptr, out))
         if res != CURLE_OK {
             throw CURLError(res, 'curl_easy_getinfo()')
         }
-        out[0]
+        seconds(out[0])
     }
     http-version -> Int { __getinfo-long(CURLINFO_HTTP_VERSION) }
     body -> Blob {
@@ -1836,10 +1849,10 @@ pub class Session {
         }
 
         if let $tm = timeout {
-            t.setopt-long(CURLOPT_TIMEOUT, tm, 'CURLOPT_TIMEOUT')
+            t.setopt-long(CURLOPT_TIMEOUT_MS, ms(tm), 'CURLOPT_TIMEOUT_MS')
         }
         if let $tm = connect-timeout {
-            t.setopt-long(CURLOPT_CONNECTTIMEOUT, tm, 'CURLOPT_CONNECTTIMEOUT')
+            t.setopt-long(CURLOPT_CONNECTTIMEOUT_MS, ms(tm), 'CURLOPT_CONNECTTIMEOUT_MS')
         }
 
         t.setopt-long(CURLOPT_FOLLOWLOCATION, follow-redirects ? 1 : 0, 'CURLOPT_FOLLOWLOCATION')
@@ -1950,7 +1963,7 @@ pub class Session {
         let status = __getinfo-long(CURLINFO_RESPONSE_CODE)
         let effective-url = __getinfo-str(CURLINFO_EFFECTIVE_URL) ?? url
         let redirect-count = __getinfo-long(CURLINFO_REDIRECT_COUNT)
-        let total-time = __getinfo-double(CURLINFO_TOTAL_TIME)
+        let total-time = seconds(__getinfo-double(CURLINFO_TOTAL_TIME))
         let http-version = __getinfo-long(CURLINFO_HTTP_VERSION)
 
         let response = Response(
@@ -1984,7 +1997,7 @@ pub class Session {
         __configure(opts, stream)
         stream.start()
 
-        while #stream.headers == 0 && stream.poll(10) {
+        while #stream.headers == 0 && stream.poll(10ms) {
             ;
         }
 
@@ -2323,8 +2336,8 @@ pub fn fetch(
     body: String | Blob | nil = nil,
     form: FormData | nil = nil,
     json: Any | nil = nil,
-    timeout: Int | nil = nil,
-    connect-timeout: Int | nil = nil,
+    timeout: ?time::Timeout = nil,
+    connect-timeout: ?time::Timeout = nil,
     follow-redirects: Bool = true,
     max-redirects: Int = 30,
     auth: (String, String) | nil = nil,

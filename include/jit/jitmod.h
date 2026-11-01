@@ -30,6 +30,9 @@
         X(DICT,             VALUE_DICT)             \
         X(SET,              VALUE_SET)              \
         X(HEAP,             VALUE_HEAP)             \
+        X(TIME,             VALUE_TIME)             \
+        X(DURATION,         VALUE_DURATION)         \
+        X(TIMEDELTA,        VALUE_TIMEDELTA)        \
         X(BLOB,             VALUE_BLOB)             \
         X(TUPLE,            VALUE_TUPLE)            \
         X(OBJECT,           VALUE_OBJECT)           \

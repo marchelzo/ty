@@ -37,34 +37,36 @@ pub fn local-functions() {
     assert(calls-local() == 'anything goes')
 }
 
+let FROZEN = time.now() - 1h
+
 pub fn patches-end-with-the-test() {
     assert(calls-local() == 2)
-    assert(target.stamp() > 1000.0)
+    assert(target.stamp() > FROZEN)
 }
 
 pub fn builtins-reach-other-modules() {
-    patch(time.now, () -> 5.0)
-    assert(time.now() == 5.0)
-    assert(target.stamp() == 5.0)
+    patch(time.now, () -> FROZEN)
+    assert(time.now() == FROZEN)
+    assert(target.stamp() == FROZEN)
 }
 
 pub fn with-restores-at-the-end-of-the-block() {
-    with patch(time.now, () -> 5.0) {
-        assert(target.stamp() == 5.0)
+    with patch(time.now, () -> FROZEN) {
+        assert(target.stamp() == FROZEN)
     }
-    assert(target.stamp() > 1000.0)
+    assert(target.stamp() > FROZEN)
 }
 
 pub fn explicit-restore() {
-    let p = patch(time.now, () -> 5.0)
+    let p = patch(time.now, () -> FROZEN)
     p.restore()
     p.restore()
-    assert(time.now() > 1000.0)
+    assert(time.now() > FROZEN)
 }
 
 pub fn patching-from-a-helper-module() {
-    freeze-time(9.0)
-    assert(target.stamp() == 9.0)
+    freeze-time(FROZEN - 1s)
+    assert(target.stamp() == FROZEN - 1s)
 }
 
 pub fn fields-and-entries() {

@@ -94,7 +94,7 @@ pub fn test-processes-gossip-through-a-hub() {
         let outputs = []
 
         uv.run(fn () {
-            let gc = uv.spawn(w.churn-gc, 13)
+            let gc = uv.spawn(w.churn-gc, 13ms)
             hub = Hub(peers)
             procs = [
                 os.spawn(
@@ -160,7 +160,7 @@ fn frame-size() -> Int {
 fn chatter(port: Int, trips: Int, report: DefaultDict[String, Int]) {
     let sock = uv.dial('127.0.0.1', port)
     defer sock.close()
-    let budget = (rand(5) == 0) ? rand(1, 60) : 120000
+    let budget = (rand(5) == 0) ? w.jitter(1, 60) : 2m
     try {
         with uv.timeout(budget) {
             for ..trips {
@@ -181,7 +181,7 @@ fn node(i: Int, conns: Int, trips: Int, up: Channel, down: Channel) -> DefaultDi
     srand(1009 * i + 17)
     let report = %{*: 0}
     uv.run(fn () {
-        let gc  = uv.spawn(w.churn-gc, 11)
+        let gc  = uv.spawn(w.churn-gc, 11ms)
         let srv = uv.server('127.0.0.1', 0)
         srv.on-connection = server -> echo(server, report)
         srv.listen()
@@ -206,7 +206,7 @@ fn node(i: Int, conns: Int, trips: Int, up: Channel, down: Channel) -> DefaultDi
 }
 
 fn recv!(ch: Channel) -> _ {
-    match ch.recv(60000) {
+    match ch.recv(1m) {
         Some(x) => x,
         None    => throw RuntimeError('timed out waiting for a node'),
     }
@@ -311,7 +311,7 @@ pub fn test-filesystem-churn-under-a-watcher() {
         let kept: Array[String] = []
 
         uv.run(fn () {
-            let gc      = uv.spawn(w.churn-gc, 9)
+            let gc      = uv.spawn(w.churn-gc, 9ms)
             let watcher = uv.loop().fs-event()
             watcher.on-event = fn (name, _) {
                 seen[name] = true
@@ -319,7 +319,7 @@ pub fn test-filesystem-churn-under-a-watcher() {
             watcher.start(dir)
 
             kept = scribble(dir, 'm', files)
-            uv.sleep(50)
+            uv.sleep(50ms)
 
             watcher.stop()
             watcher.close()
@@ -342,7 +342,7 @@ fn dribble(server: uv.UVSocket) {
     try {
         while true {
             client.write('x' * rand(1, 100))
-            uv.sleep(rand(0, 3))
+            uv.sleep(w.jitter(0, 3))
         }
     } catch _: uv.UVError {
     } finally {
@@ -358,19 +358,19 @@ fn hold-socket(port: Int) {
 
 fn victim-op(port: Int, big: String) -> _ {
     match rand(7) {
-        0 => uv.sleep(rand(0, 40)),
+        0 => uv.sleep(w.jitter(0, 40)),
         1 => #uv.slurp(big),
         2 => hold-socket(port),
         3 => uv.getaddrinfo('localhost', port),
-        4 => uv.race([-> uv.sleep(rand(0, 20)), -> hold-socket(port), -> #uv.slurp(big)]),
-        5 => uv.gather([-> uv.sleep(rand(0, 20)), -> hold-socket(port)]),
-        _ => uv.gather([-> #uv.slurp(big), -> uv.sleep(rand(0, 5))]),
+        4 => uv.race([-> uv.sleep(w.jitter(0, 20)), -> hold-socket(port), -> #uv.slurp(big)]),
+        5 => uv.gather([-> uv.sleep(w.jitter(0, 20)), -> hold-socket(port)]),
+        _ => uv.gather([-> #uv.slurp(big), -> uv.sleep(w.jitter(0, 5))]),
     }
 }
 
 fn victim(port: Int, big: String, outcomes: DefaultDict[String, Int]) {
     try {
-        with uv.timeout(rand(1, 30)) {
+        with uv.timeout(w.jitter(1, 30)) {
             victim-op(port, big)
         }
         outcomes['finished'] += 1
@@ -394,7 +394,7 @@ pub fn test-cancellation-storm-leaves-nothing-behind() {
         uv.run(fn () {
             uv.spit(big, w.blob-of(1, 3000000))
 
-            let gc  = uv.spawn(w.churn-gc, 5)
+            let gc  = uv.spawn(w.churn-gc, 5ms)
             let srv = uv.server('127.0.0.1', 0)
             srv.on-connection = dribble
             srv.listen()
@@ -402,7 +402,7 @@ pub fn test-cancellation-storm-leaves-nothing-behind() {
 
             for ..rounds {
                 let tasks = [uv.spawn(victim, port, big, outcomes) for _ in ..wave]
-                uv.sleep(rand(0, 15))
+                uv.sleep(w.jitter(0, 15))
                 for task in tasks {
                     match rand(4) {
                         0 => uv.cancel(task),
@@ -412,7 +412,7 @@ pub fn test-cancellation-storm-leaves-nothing-behind() {
                 }
             }
 
-            uv.sleep(100)
+            uv.sleep(100ms)
             srv.close()
             gc.close()
             w.quiesce()

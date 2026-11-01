@@ -2,18 +2,18 @@ import watchfs (..)
 import path (Path)
 import os
 
-let TIMEOUT = 2.0
+let TIMEOUT = 2s
 
-fn after(ms, f) {
+fn after(delay: Duration, f) {
     Thread(fn () {
-        os.sleep(ms / 1e3)
+        os.sleep(delay)
         f()
     })
 }
 
 pub fn test-detect-create() {
     with dir = Path.tempdir('watchfs') {
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             (dir / 'hello.txt').write('hello')
         })
 
@@ -30,7 +30,7 @@ pub fn test-detect-modify() {
         let file = dir / 'data.txt'
         file.write('initial')
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             file.write('modified')
         })
 
@@ -50,7 +50,7 @@ pub fn test-detect-delete() {
         let file = dir / 'doomed.txt'
         file.write('bye')
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             file.unlink()
         })
 
@@ -67,7 +67,7 @@ pub fn test-detect-rename() {
         let file = dir / 'old.txt'
         file.write('data')
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             file.rename(dir / 'new.txt')
         })
 
@@ -92,9 +92,9 @@ pub fn test-detect-rename() {
 
 pub fn test-multiple-events() {
     with dir = Path.tempdir('watchfs') {
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             (dir / 'a.txt').write('aaa')
-            os.sleep(0.03)
+            os.sleep(30ms)
             (dir / 'b.txt').write('bbb')
         })
 
@@ -117,7 +117,7 @@ pub fn test-recursive() {
         let sub = dir / 'sub'
         sub.mkdir()
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             (sub / 'deep.txt').write('deep')
         })
 
@@ -136,7 +136,7 @@ pub fn test-watcher-class() {
     with dir = Path.tempdir('watchfs') {
         let w = Watcher(dir)
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             (dir / 'x.txt').write('x')
         })
 
@@ -159,10 +159,10 @@ pub fn test-watcher-dir-property() {
 
 pub fn test-create-then-delete() {
     with dir = Path.tempdir('watchfs') {
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             let f = dir / 'ephemeral.txt'
             f.write('here')
-            os.sleep(0.04)
+            os.sleep(40ms)
             f.unlink()
         })
 
@@ -192,9 +192,9 @@ fn saved-after-replace(replace: (Path, Path) -> _) -> Bool {
         let file = dir / 'app.ty'
         file.write('v0')
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             replace(dir, file)
-            os.sleep(0.15)
+            os.sleep(150ms)
             file.write('v2')
         })
 
@@ -231,11 +231,11 @@ pub fn test-recursive-dir-recreated() {
         let sub = dir / 'sub'
         sub.mkdir()
 
-        let thrd = after(50, fn () {
+        let thrd = after(50ms, fn () {
             sub.rmtree()
-            os.sleep(0.05)
+            os.sleep(50ms)
             sub.mkdir()
-            os.sleep(0.05)
+            os.sleep(50ms)
             (sub / 'again.txt').write('x')
         })
 

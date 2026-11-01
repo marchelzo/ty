@@ -1,10 +1,11 @@
 import errno
 import thread
+import time
 
 /** Complete resource-usage data returned by wait4(2). */
 pub use RUsage = {
-    utime: Float,
-    stime: Float,
+    utime: Duration,
+    stime: Duration,
     maxrss: Int,
     ixrss: Int,
     idrss: Int,
@@ -45,9 +46,9 @@ pub use Stat = {
     gid:     Int,
     rdev:    Int,
     size:    Int,
-    atime:   Float,
-    mtime:   Float,
-    ctime:   Float,
+    atime:   Time[time::CLOCK_REALTIME],
+    mtime:   Time[time::CLOCK_REALTIME],
+    ctime:   Time[time::CLOCK_REALTIME],
     blksize: Int,
     blocks:  Int
 }

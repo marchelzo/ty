@@ -44,7 +44,7 @@ pub fn decoders-match-reference-pixels() {
 pub fn animations-keep-timing-and-loop-count() {
     let gif = im.load("{DIR}/gif-anim-d2.gif")
     assert(#gif.frames == 6)
-    assert(gif.frames.map(&.delay) == [0.05, 0.06, 0.07, 0.08, 0.09, 0.1])
+    assert(gif.frames.map(&.delay) == [50ms, 60ms, 70ms, 80ms, 90ms, 100ms])
     let png = im.load("{DIR}/apng-d1-b0.png")
     assert(png.animated?)
     assert(png.format == 'png')

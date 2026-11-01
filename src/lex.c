@@ -7,6 +7,7 @@
 #include <stdnoreturn.h>
 #include <assert.h>
 #include <errno.h>
+#include <math.h>
 
 #include <pcre2.h>
 #include <utf8proc.h>
@@ -16,6 +17,7 @@
 #include "token.h"
 #include "value.h"
 #include "lex.h"
+#include "chrono.h"
 #include "compiler.h"
 
 bool
@@ -292,6 +294,19 @@ mkinteger(Ty *ty, intmax_t k)
         return (Token) {
                 .type    = TOKEN_INTEGER,
                 .integer = k,
+                .start   = Start,
+                .end     = state.loc,
+                .nl      = state.need_nl,
+                .ctx     = state.ctx
+        };
+}
+
+static Token
+mkduration(Ty *ty, i64 ns)
+{
+        return (Token) {
+                .type    = TOKEN_DURATION,
+                .integer = ns,
                 .start   = Start,
                 .end     = state.loc,
                 .nl      = state.need_nl,
@@ -1305,125 +1320,155 @@ Unterminated:
         error(ty, "unterminated regex literal");
 }
 
-static intmax_t
-uatou(Ty *ty, char const *s, char const **end, int base)
+void
+ScanNumber(char const *s, char const *end, bool float_ok, NumLit *out)
 {
-        char num[128];
-        int n = 0;
-        int i = 0;
+        char        num[128];
+        char       *q;
+        char const *p      = s;
+        int         n      = 0;
+        bool        prefix = (p[0] == '0') && (p[1] == 'b' || p[1] == 'o' || p[1] == 'x');
+        int         base   = (p[0] != '0') ? 10
+                           : (p[1] == 'b') ? 2
+                           : (p[1] == 'x') ? 16
+                           :                 8;
+        i64         unit;
+        isize       w;
 
-        for (;; ++i) {
+        *out = (NumLit) { .err = NUM_OK };
+
+        p += prefix ? 2 : 0;
+
+        char const *digits = p;
+
+        for (;; ++p) {
                 if (n == sizeof num - 1) {
-                        error(ty, "invalid numeric literal: %.*s", n, num);
+                        out->err = NUM_TOO_LONG;
+                        out->n   = p - s;
+                        return;
                 }
                 if (
-                        (xisdigit(s[i]) && (s[i] - '0') < base)
-                     || (base == 16 && xisxdigit(s[i]))
+                        (xisdigit(*p) && (*p - '0') < base)
+                     || (base == 16 && xisxdigit(*p))
                 ) {
-                        num[n++] = s[i];
-                } else if (s[i] != '_') {
+                        num[n++] = *p;
+                } else if (*p != '_') {
                         break;
                 }
         }
 
         num[n] = '\0';
-        *end = s + i;
+        errno  = 0;
+        out->k = strtoull(num, NULL, base);
 
-        errno = 0;
+        if (errno != 0) {
+                out->err    = NUM_ERRNO;
+                out->errnum = errno;
+                return;
+        }
 
-        return strtoull(num, NULL, base);
+        if (
+                float_ok && (
+                        (*p == 'e')
+                     || (*p == 'E')
+                     || (
+                                (*p == '.')
+                             && !xisalpha(p[1])
+                             && (p[1] != '_')
+                             && (p[1] != '.')
+                        )
+                )
+        ) {
+                errno     = 0;
+                out->x    = ty_strtod(digits, &q, end - digits);
+                out->real = true;
+                out->k    = 0;
+                p         = q;
+                if (errno != 0) {
+                        out->err    = NUM_ERRNO;
+                        out->errnum = errno;
+                        return;
+                }
+        } else if (*p == 'r') {
+                out->n = p - s;
+                if (
+                        (out->k < INT_MIN)
+                     || (out->k > INT_MAX)
+                     || ((out->k = strtoull(p + 1, &q, (base = out->k))), errno != 0)
+                ) {
+                        out->err = NUM_BAD_BASE;
+                        return;
+                }
+                out->n = q - s;
+                return;
+        }
+
+        w = (base == 10 || out->k == 0) ? ChronoUnit(p, end, &unit) : 0;
+
+        if (w == 0) {
+                out->err = xisalnum(*p) ? NUM_TRAILING : NUM_OK;
+                out->n   = p - s;
+                return;
+        }
+
+        if (ChronoLiteral(out->real, out->x, out->k, unit, &out->ns) != CHRONO_OK) {
+                out->err = NUM_DURATION_RANGE;
+                return;
+        }
+
+        out->duration = true;
+        out->n        = (p + w) - s;
 }
 
 static Token
 lexnum(Ty *ty, bool float_ok)
 {
-        char *end;
+        NumLit      lit;
+        char const *err;
 
-        int base = (C(0) != '0') ? 10 : (
-                   (C(1) == 'b') ? (nextchar(ty), nextchar(ty), 2)
-                 : (C(1) == 'o') ? (nextchar(ty), nextchar(ty), 8)
-                 : (C(1) == 'x') ? (nextchar(ty), nextchar(ty), 16)
-                 : /*----------------------------------------*/ 8
-        );
+        ScanNumber(SRC, END, float_ok, &lit);
 
-        intmax_t integer = uatou(ty, SRC, (char const **)&end, base);
+        switch (lit.err) {
+        case NUM_OK:
+                break;
 
-        if (errno != 0) {
-                char const *err = strerror(errno);
+        case NUM_TOO_LONG:
+                error(ty, "invalid numeric literal: %.*s", (int)lit.n, SRC);
+
+        case NUM_ERRNO:
+                err = strerror(lit.errnum);
                 error(ty, "invalid numeric literal: %c%s", xtolower(err[0]), err + 1);
+
+        case NUM_BAD_BASE:
+                error(
+                        ty,
+                        "invalid base %s%.*s%s used in integer literal",
+                        TERM(36),
+                        (int)lit.n,
+                        SRC,
+                        TERM(39)
+                );
+
+        case NUM_TRAILING:
+                error(
+                        ty,
+                        "trailing character after numeric literal: %s'%c'%s",
+                        TERM(36),
+                        SRC[lit.n],
+                        TERM(39)
+                );
+
+        case NUM_DURATION_RANGE:
+                error(ty, "duration literal is out of range");
         }
 
-        int n = end - SRC;
-        Token num;
-
-        if (
-                float_ok && (
-                        (C(n) == 'e')
-                     || (C(n) == 'E')
-                     || (
-                                C(n) == '.'
-                             && !xisalpha(C(n + 1))
-                             && C(n + 1) != '_'
-                             && C(n + 1) != '.'
-                        )
-                )
-        ) {
-                errno = 0;
-                double real = ty_strtod(SRC, &end, END - SRC);
-                n = end - SRC;
-                if (errno != 0) {
-                        char const *err = strerror(errno);
-                        error(ty, "invalid numeric literal: %c%s", xtolower(err[0]), err + 1);
-                }
-                if (xisalnum(C(n))) {
-                        error(
-                                ty,
-                                "trailing character after numeric literal: %s'%c'%s",
-                                TERM(36),
-                                C(n),
-                                TERM(39)
-                        );
-                }
-                while (SRC != end) {
-                        nextchar(ty);
-                }
-                num = mkreal(ty, real);
-        } else if (C(n) == 'r') {
-                if (
-                        (integer < INT_MIN)
-                     || (integer > INT_MAX)
-                     || ((integer = strtoull(end + 1, &end, (base = integer))), errno != 0)
-                ) {
-                        error(
-                                ty,
-                                "invalid base %s%.*s%s used in integer literal",
-                                TERM(36),
-                                n,
-                                SRC,
-                                TERM(39)
-                        );
-                }
-                while (SRC != end) {
-                        nextchar(ty);
-                }
-                num = mkinteger(ty, integer);
-        } else {
-                if (xisalnum(C(n))) {
-                        error(
-                                ty,
-                                "trailing character after numeric literal: %s'%c'%s",
-                                TERM(36),
-                                C(n),
-                                TERM(39)
-                        );
-                }
-                while (SRC != end) {
-                        nextchar(ty);
-                }
-                num = mkinteger(ty, integer);
+        for (isize i = 0; i < lit.n; ++i) {
+                nextchar(ty);
         }
 
-        return num;
+        return lit.duration ? mkduration(ty, lit.ns)
+             : lit.real     ? mkreal(ty, lit.x)
+             :                mkinteger(ty, lit.k);
 }
 
 static Token

@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "qcache.h"
 #include "value.h"
+#include "chrono.h"
 #include "vm.h"
 
 #define QUEUE_BLOCK_N 64
@@ -427,12 +428,9 @@ shared_queue_try_take(Ty *ty, Value *self, int argc, Value *kwargs)
         if (argc == 0) {
                 found = queue_take(ty, self->shared_queue, &v, 1, false) != 0;
         } else {
-                u64 ms = MSEC_TIMEOUT_ARG(0);
-                u64 now = TyMonotonicTime();
-                u64 deadline = UINT64_MAX;
-                if (ms < (UINT64_MAX - now) / TY_1e6) {
-                        deadline = now + ms * TY_1e6;
-                }
+                i64 ns       = ChronoTimeout(ty, "SharedQueue.try-take()", &ARG(0));
+                u64 now      = TyMonotonicTime();
+                u64 deadline = (ns < 0 || (u64)ns > UINT64_MAX - now) ? UINT64_MAX : now + ns;
                 found = queue_wait(ty, self->shared_queue, &v, false, deadline);
         }
         return found ? Some(v) : None;

@@ -376,7 +376,7 @@ pub class InteractiveLineReader {
     }
 
     __add-history(lines: Array[Array[String]], i: Int, j: Int) {
-        let entry = {lines, i, j, t: time.utc()}
+        let entry = {lines, i, j, t: int(time.time()) / 1.0e9}
 
         if let $file = __history-file {
             file.parent.mkdir(parents=true, exist-ok=true)

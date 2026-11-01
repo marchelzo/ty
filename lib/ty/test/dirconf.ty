@@ -7,12 +7,12 @@ import ty.test.sched as sched (Proc)
 import ty.test.config as config (MARKER, SKIP_STATUS)
 
 pub CONFIG = '__test__.ty'
-pub PROBE_TIMEOUT = 30.0
+pub PROBE_TIMEOUT = 30s
 
 pub class DirConf {
     dir:          String
-    timeout:      ?Float = nil
-    load-timeout: ?Float = nil
+    timeout:      ?Duration = nil
+    load-timeout: ?Duration = nil
     tags:         Array[String] = []
     opt-in:       Bool | String | nil = nil
     serial:       ?Bool = nil
@@ -37,8 +37,8 @@ pub class DirConf {
 }
 
 pub class Effective {
-    timeout:      ?Float = nil
-    load-timeout: ?Float = nil
+    timeout:      ?Duration = nil
+    load-timeout: ?Duration = nil
     tags:         Array[String] = []
     group:        ?String = nil
     env:          Dict[String, String] = %{}
@@ -81,10 +81,10 @@ pub fn pattern-matches?(dir: String, pat: String, file: String) -> Bool {
     !p.match?(/\//) && rel.split('/').any?(\_.match?(re))
 }
 
-fn as-float(x: Any) -> ?Float {
+fn as-duration(x: Any) -> ?Duration {
     match x {
-        f: Float => f,
-        n: Int   => float(n),
+        f: Float => abs(f * 1s),
+        n: Int   => abs(n * 1s),
         _        => nil,
     }
 }
@@ -151,10 +151,10 @@ fn first-line(text: String) -> ?String {
 }
 
 fn apply(c: DirConf, m: Dict[String, Any]) {
-    if let $t = as-float(key(m, 'timeout')) {
+    if let $t = as-duration(key(m, 'timeout')) {
         c.timeout = t
     }
-    if let $t = as-float(key(m, 'load-timeout')) {
+    if let $t = as-duration(key(m, 'load-timeout')) {
         c.load-timeout = t
     }
     match key(m, 'opt-in') {
@@ -197,14 +197,14 @@ fn fail(p: Probe, why: String, st: Event) {
     c.stderr = sched.tail-str(p.proc.err-buf)
 }
 
-fn interpret(p: Probe, timeout: Float) {
+fn interpret(p: Probe, timeout: Duration) {
     let c = p.conf
     let out = sched.tail-str(p.proc.out-buf)
     let err = sched.tail-str(p.proc.err-buf)
     let ms = markers(out)
     if p.timed-out? {
         let st = events.status('timeout', signal: 'SIGKILL', phase: 'load')
-        fail(p, "{p.name} timed out after {timeout}s", st)
+        fail(p, "{p.name} timed out after {timeout}", st)
         return
     }
     if let $sig = p.proc.signal {
@@ -238,7 +238,7 @@ pub fn probe(
     dirs: Array[String],
     cmd: Array[String],
     interrupted?: () -> Bool,
-    timeout: Float = PROBE_TIMEOUT
+    timeout: Duration = PROBE_TIMEOUT
 ) -> Dict[String, DirConf] {
     let out: Dict[String, DirConf] = %{}
     let running: Array[Probe] = []

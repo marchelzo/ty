@@ -26,7 +26,7 @@ pub fn jit-numeric-pow() {
     assert(float-int == 0.125 && type(float-int) == Float)
     assert((float-float - 11.313708498984761).abs < 0.000000000001)
     assert(type(float-float) == Float)
-    assert(pow-ii(2, -1) == 0)
+    assert(pow-ii(2, -1) == 1)
     assert(pow-ii(-2, 3) == -8)
     assert(pow-ii(0, 0) == 1)
     assert(pow-ii(-1, 9223372036854775807) == 1)

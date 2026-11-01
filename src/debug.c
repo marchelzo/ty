@@ -1387,6 +1387,9 @@ DbgTypeName(Ty *ty, Value const *v)
         case VALUE_DICT:             return "Dict";
         case VALUE_SET:              return "Set";
         case VALUE_HEAP:             return "Heap";
+        case VALUE_TIME:             return "Time";
+        case VALUE_DURATION:         return "Duration";
+        case VALUE_TIMEDELTA:        return "TimeDelta";
         case VALUE_TUPLE:            return "Tuple";
         case VALUE_OBJECT:           return class_name(ty, x.class);
         case VALUE_CLASS:            return "Class";

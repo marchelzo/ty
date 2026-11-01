@@ -1,4 +1,4 @@
-import fuse (ENOATTR, FUSEError, FileInfo, Operations, XATTR_CREATE, XATTR_REPLACE)
+import fuse (ENOATTR, FUSEError, FileInfo, Operations, Stamp, XATTR_CREATE, XATTR_REPLACE)
 import errno (EEXIST, ENOENT, ENOTEMPTY)
 import os (S_IFDIR, S_IFLNK, S_IFMT, S_IFREG)
 import time
@@ -7,14 +7,14 @@ class Node {
     mode:   Int
     uid:    Int
     gid:    Int
-    atime:  Float
-    mtime:  Float
-    ctime:  Float
+    atime:  Stamp
+    mtime:  Stamp
+    ctime:  Stamp
     data:   Blob
     xattrs: Dict[String, Blob]
 
     init(mode: Int) {
-        let now = time.utc()
+        let now = time.time()
         let ctx = fuse.context()
 
         self.mode = mode
@@ -32,7 +32,7 @@ class Node {
     nlink -> Int { dir? ? 2 : 1 }
 
     touch() {
-        mtime = time.utc()
+        mtime = time.time()
         ctime = mtime
     }
 }
@@ -173,7 +173,7 @@ class Memory < Operations {
             __nodes[new + path[#old;]] = __nodes.remove(path)!
         }
 
-        node.ctime = time.utc()
+        node.ctime = time.time()
         __node(parent(old)).touch()
         __node(parent(new)).touch()
     }
@@ -189,7 +189,7 @@ class Memory < Operations {
     chmod(path: String, mode: Int, _) {
         let node = __node(path)
         node.mode = (node.mode & S_IFMT) | (mode & ~S_IFMT)
-        node.ctime = time.utc()
+        node.ctime = time.time()
     }
 
     @synchronized
@@ -197,15 +197,15 @@ class Memory < Operations {
         let node = __node(path)
         node.uid = uid ?? node.uid
         node.gid = gid ?? node.gid
-        node.ctime = time.utc()
+        node.ctime = time.time()
     }
 
     @synchronized
-    utimens(path: String, atime: ?Float, mtime: ?Float, _) {
+    utimens(path: String, atime: ?Stamp, mtime: ?Stamp, _) {
         let node = __node(path)
         node.atime = atime ?? node.atime
         node.mtime = mtime ?? node.mtime
-        node.ctime = time.utc()
+        node.ctime = time.time()
     }
 
     @synchronized

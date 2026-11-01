@@ -19,11 +19,11 @@ import ty.test.select as select
 
 let RUNNER-DIR = Path(__file__).parent.str()
 
-let DEFAULT-WORKER-TIMEOUT = 10.0
+let DEFAULT-WORKER-TIMEOUT = 10s
 
 class AlarmState {
     tid:     Int = thread.id()
-    secs:    Float = 0.0
+    limit:   Duration = 0s
     armed?:  Bool = false
 }
 
@@ -33,30 +33,25 @@ fn on-alarm(sig: Int) {
     return if !ALARM.armed?
     if thread.id() == ALARM.tid {
         ALARM.armed? = false
-        throw TestTimeout(ALARM.secs)
+        throw TestTimeout(ALARM.limit)
     }
     os.kill(os.getpid(), os.SIGALRM)
 }
 
-fn arm(secs: ?Float) {
-    let $s = secs or return
-    if s <= 0.0 {
+fn arm(limit: ?Duration) {
+    let $d = limit or return
+    if d == 0s {
         return
     }
     ALARM.tid    = thread.id()
-    ALARM.secs   = s
+    ALARM.limit  = d
     ALARM.armed? = true
-    os.alarm(s)
+    os.alarm(d)
 }
 
 fn disarm() {
     ALARM.armed? = false
-    os.alarm(0.0)
-}
-
-fn cpu-time() -> Float {
-    let t = time.gettime(time.CLOCK_PROCESS_CPUTIME_ID)
-    t.sec + t.nsec / 1.0e9
+    os.alarm(0s)
 }
 
 use Frame = {file: ?String, line: Int, col: Int, func: ?String, src: String}
@@ -159,10 +154,10 @@ class Stage {
     what: ?String = nil
 }
 
-fn invoke(c: TestCase, t: Test, secs: ?Float, fx: Resolver) -> Outcome {
+fn invoke(c: TestCase, t: Test, limit: ?Duration, fx: Resolver) -> Outcome {
     let stage = Stage()
     try {
-        arm(secs)
+        arm(limit)
         for core.hooks('before-each') {
             stage.what = "before-each hook {hook-name(it)} failed"
             call-hook(it, t)
@@ -187,7 +182,7 @@ fn invoke(c: TestCase, t: Test, secs: ?Float, fx: Resolver) -> Outcome {
     } catch e: TestTimeout {
         disarm()
         let tr = ty.trace()
-        return Outcome('timeout', reason: "exceeded {e.secs}s", failure: failure-of(e, tr))
+        return Outcome('timeout', reason: "exceeded {e.limit}", failure: failure-of(e, tr))
     } catch e {
         disarm()
         let tr = ty.trace()
@@ -291,7 +286,7 @@ fn static-skip(c: TestCase, file-skip: ?String) -> ?String {
 
 class Attempt {
     o:      Outcome
-    dur:    Float
+    dur:    Duration
     output: String
     logs:   Array[String]
     tmp:    ?String
@@ -300,7 +295,7 @@ class Attempt {
 
     init(
         o:      Outcome,
-        dur:    Float,
+        dur:    Duration,
         output: String,
         logs:   Array[String],
         tmp:    ?String,
@@ -341,12 +336,12 @@ fn plural(n: Int, word: String) -> String {
     (n == 1) ? "{n} {word}" : "{n} {word}s"
 }
 
-fn effective-timeout(c: TestCase, o: Options) -> ?Float {
+fn effective-timeout(c: TestCase, o: Options) -> ?Duration {
     let base = c.meta.timeout
             ?? o.timeout
             ?? (o.worker? ? DEFAULT-WORKER-TIMEOUT : nil)
-    let $secs = base or return nil
-    c.meta.slow? ? secs * 5.0 : secs
+    let $d = base or return nil
+    c.meta.slow? ? abs(5 * d) : d
 }
 
 class Run {
@@ -374,7 +369,7 @@ class Run {
     finish(
         c:      TestCase,
         o:      Outcome,
-        dur:    Float = 0.0,
+        dur:    Duration = 0s,
         output: String = '',
         logs:   Array[String] = [],
         tmp:    ?String = nil,
@@ -547,19 +542,19 @@ class Run {
         srand(seed ^ select.fnv1a32(c.id) ^ (attempt - 1))
 
         let t = Test(c.id, c.name, c.file, c.line, seed, attempt: attempt)
-        let secs = effective-timeout(c, opts)
+        let limit = effective-timeout(c, opts)
 
         fixtures.begin-test()
         capture.?begin()
         let t0 = time.now()
         patching.push-scope(t.cleanup)
         core.enter-test(t)
-        let o = invoke(c, t, secs, fixtures)
+        let o = invoke(c, t, limit, fixtures)
         let after-failure = run-after-each(t)
         let cleanup-failure = run-cleanups(t)
         core.leave-test()
         patching.pop-scope()
-        let dur = time.now() - t0
+        let dur = time.since(t0)
         capture.?end()
 
         let output = capture.?read(offset) ?? ''
@@ -816,8 +811,8 @@ pub fn run(argv: Array[String]) -> Int {
     }
 
     let sink = make-sink(o, !o.worker?)
-    let t0 = time.now()
-    let cpu0 = cpu-time()
+    let t0   = time.now()
+    let cpu0 = time.now(time.CLOCK_PROCESS_CPUTIME_ID)
 
     if !o.worker? {
         sink.emit(events.run-start(seed, argv: [file, *argv], root: os.getcwd(), mode: 'file'))
@@ -885,8 +880,8 @@ pub fn run(argv: Array[String]) -> Int {
         sink.emit(events.run-end(
             r.counts,
             files: files,
-            dur: time.now() - t0,
-            cpu: %{'user': cpu-time() - cpu0},
+            dur: time.since(t0),
+            cpu: %{'user': time.since(cpu0).secs},
             rc: r.rc
         ))
     }

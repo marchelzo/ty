@@ -9,6 +9,7 @@ import io_uring (
 import errno
 import ffi as c (C!)
 import os
+import time
 
 C! fn {
     void *memset(void *s, int c, size_t n);
@@ -311,9 +312,9 @@ pub fn test-cq-size() {
 pub fn test-wait-timeout() {
     let ring = IoUring(entries: 4)
 
-    ring.wait(1, timeout: 0.01)
+    ring.wait(1, timeout: 10ms)
     assert(#ring.peek-cqes() == 0)
-    assert(ring.wait-cqe(timeout: 0.01) == nil)
+    assert(ring.wait-cqe(timeout: 10ms) == nil)
 
     ring.close()
 }
@@ -321,7 +322,7 @@ pub fn test-wait-timeout() {
 pub fn test-timeout-op() {
     let ring = IoUring(entries: 4)
 
-    ring.prep-timeout(0.01, user: 7)
+    ring.prep-timeout(10ms, user: 7)
     ring.submit()
 
     let cqe = ring.wait-cqe()
@@ -329,8 +330,8 @@ pub fn test-timeout-op() {
     assert(cqe.res == -errno.ETIME)
 
     ring.prep-nop(user: 0)
-    ring.prep-timeout(0.06, user: 1)
-    ring.prep-timeout(0.02, user: 2)
+    ring.prep-timeout(60ms, user: 1)
+    ring.prep-timeout(20ms, user: 2)
     ring.submit()
 
     let order = [ring.wait-cqe().user for _ in ..3]
@@ -339,10 +340,26 @@ pub fn test-timeout-op() {
     ring.close()
 }
 
+pub fn test-absolute-timeout-op() {
+    let ring = IoUring(entries: 4)
+
+    ring.prep-timeout(time.now() + 40ms, user: 1)
+    ring.prep-timeout(time.time() + 10ms, user: 2)
+    ring.prep-timeout(time.now() - 1s, user: 3)
+    ring.submit()
+
+    let order = [ring.wait-cqe() for _ in ..3]
+    assert(order.map(&.user) == [3, 2, 1])
+    assert(order.all?(\_.res == -errno.ETIME))
+    assert(ring.wait-cqe(timeout: time.now() + 10ms) == nil)
+
+    ring.close()
+}
+
 pub fn test-cancel() {
     let ring = IoUring(entries: 4)
 
-    ring.prep-timeout(10, user: 1)
+    ring.prep-timeout(10s, user: 1)
     ring.submit()
 
     ring.prep-cancel(1, user: 2)
@@ -363,7 +380,7 @@ pub fn test-link-timeout() {
     let buf = c.alloc(8)
 
     ring.prep-read(r, buf, 8, user: 1, sqe-flags: IOSQE_IO_LINK)
-    ring.prep-link-timeout(0.01, user: 2)
+    ring.prep-link-timeout(10ms, user: 2)
     ring.submit-and-wait(2)
 
     let res = %{cqe.user: cqe.res for cqe in ring.peek-cqes()}
@@ -534,14 +551,14 @@ pub fn test-each-cqe-batches() {
 }
 
 pub fn test-sqpoll() {
-    let ring = IoUring(entries: 4, flags: IORING_SETUP_SQPOLL, sq-idle-ms: 1)
+    let ring = IoUring(entries: 4, flags: IORING_SETUP_SQPOLL, sq-idle: 1ms)
 
     for round in ..3 {
         ring.prep-nop(user: round)
         ring.submit()
         let cqe = ring.wait-cqe()
         assert(cqe.user == round)
-        os.sleep(0.05)
+        os.sleep(50ms)
     }
 
     ring.close()

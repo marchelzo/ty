@@ -1,5 +1,5 @@
 import os
-import time (now)
+import time
 import chalk (chalk)
 import path (Path)
 import clap (clap!)
@@ -303,7 +303,7 @@ fn run-suite(opts: RunOptions, database: String) {
     print()
 
     let build-tree = snapshot-self()
-    let started = now()
+    let started = time.now()
     let results: [Result] = []
     let name-width: Int = (running.map(\#_.name).max() ?? 0) + 2
     for entry in running {
@@ -339,7 +339,7 @@ fn run-suite(opts: RunOptions, database: String) {
 
     let run-id = record-run(
         database, results, mode, opts.warmup, opts.rounds, opts.filter,
-        #all, now() - started, opts.note, build-tree
+        #all, time.since(started).secs, opts.note, build-tree
     )
     save-results(RESULTS_FILE, results)
     print()

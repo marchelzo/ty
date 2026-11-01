@@ -1,5 +1,5 @@
 import os
-import time (now)
+import time
 import errno (EINTR)
 
 #|if __windows__
@@ -31,11 +31,18 @@ fn drain(fd: Int, buf: Blob) {
     }
 }
 
+fn arm(timeout: ?time::Timeout) -> ?Time[Any] {
+    match timeout {
+        d: Duration => time.now() + d,
+        t           => t
+    }
+}
+
 fn __run(
     cmd: String,
     argv: Array[String],
     input: Blob | String | nil = nil,
-    timeout: Float | Int | nil = nil,
+    timeout: ?time::Timeout = nil,
     signal: Int = os.SIGTERM,
     combineOutput: Bool = false,
     shareStderr: Bool = false,
@@ -76,7 +83,7 @@ fn __run(
         os.close(p.stdin)
     }
 
-    let deadline = (timeout == nil) ? nil : now() + timeout
+    let deadline = arm(timeout)
 
     let timed-out? = false
 
@@ -92,11 +99,9 @@ fn __run(
 
 #|if __apple__ || __linux__ || __bsd__
     for (;;) {
-        let left = deadline ?: (deadline - now())
-
-        if left != nil && left <= 0.0 {
+        if deadline != nil && time.until(deadline) == 0s {
             if hook != nil && keep-going?(nil) {
-                deadline = now() + (timeout ?? 0)
+                deadline = (timeout :: Duration) ? arm(timeout) : nil
                 continue
             }
             os.kill(-p.pid, signal)
@@ -104,7 +109,7 @@ fn __run(
             break
         }
 
-        let n = os.poll(pfds-in, pfds-out, left)
+        let n = os.poll(pfds-in, pfds-out, deadline)
 
         continue if (n == 0) || (n == EINTR)
         break if n < 0
@@ -155,19 +160,13 @@ fn __run(
         stdoutThread.join()
         stderrThread.join()
     } else {
-        let start = utime()
-        let remainingMs = int(timeout * 1.0e3)
-
-        if not let Some(_) = stdoutThread.join(remainingMs) {
+        if not let Some(_) = stdoutThread.join(deadline) {
             return nil
         }
 
-        remainingMs -= (utime() - start) / 1000
-
-        if not let Some(_) = stderrThread.join(max(0, remainingMs)) {
+        if not let Some(_) = stderrThread.join(deadline) {
             return nil
         }
-
     }
 
     return out.str!()

@@ -1,4 +1,4 @@
-import time (now)
+import time (now, since)
 
 fn kind(xs: Array[Int]) -> String { 'ints' }
 fn kind(xs: Array[String]) -> String { 'strings' }
@@ -71,6 +71,6 @@ pub fn test-overloaded-constructors-take-large-arrays-quickly() {
     for ..1000 {
         assert(#Segments(big).parts == 100000)
     }
-    assert(now() - t0 < 0.5, "overloaded init checked every element: {now() - t0}s")
+    assert(since(t0) < 500ms, "overloaded init checked every element: {since(t0)}")
     assert(Segments('a/b/c').parts == ['a', 'b', 'c'])
 }

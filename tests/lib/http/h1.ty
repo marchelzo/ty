@@ -167,7 +167,7 @@ pub fn headers-roundtrip() {
         let c = Client(srv.port)
         c.send('GET /headers HTTP/1.1\r\nHost: x\r\nX-Custom: yes\r\n\r\n')
         let buf = Blob()
-        os.sleep(0.2)
+        os.sleep(200ms)
         xread(c.fd, buf, 65536)
         let text = buf.str!()
         assert(text.contains?('X-One: 1\r\n'))

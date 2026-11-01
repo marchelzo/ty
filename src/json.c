@@ -137,6 +137,9 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
 
         case VALUE_INTEGER:
+        case VALUE_TIME:
+        case VALUE_DURATION:
+        case VALUE_TIMEDELTA:
                 xvR(*out, out->count + 64);
                 out->count += ty_snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
                 break;

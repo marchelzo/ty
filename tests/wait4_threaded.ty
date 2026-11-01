@@ -12,7 +12,7 @@ pub fn concurrent-wait4-results() {
         }) for _ in ..16]
 
         while ready.load() < #threads {
-            sleep(0.001)
+            sleep(1ms)
         }
         gate.notify()
 

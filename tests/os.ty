@@ -19,15 +19,15 @@ pub fn poll-inferred-arrays() {
     assert(write(wr, 'x') == 1)
 
     let bare = []
-    assert(poll([rd], bare, 0) == 1)
+    assert(poll([rd], bare, 0s) == 1)
     assert(bare == [(rd, POLLIN)])
 
     let pairs = []
-    assert(poll([(rd, POLLIN)], pairs, 0) == 1)
+    assert(poll([(rd, POLLIN)], pairs, 0s) == 1)
     assert(pairs == [(rd, POLLIN)])
 
     let tagged = []
-    assert(poll([(rd, POLLIN, 'ready')], tagged, 0) == 1)
+    assert(poll([(rd, POLLIN, 'ready')], tagged, 0s) == 1)
     assert(tagged == [(rd, POLLIN, 'ready')])
 }
 
@@ -42,8 +42,8 @@ pub fn wait4-result() {
 
         let rusage = result.rusage
         assert(#rusage == 16)
-        assert(rusage.utime >= 0.0)
-        assert(rusage.stime >= 0.0)
+        assert(rusage.utime >= 0s)
+        assert(rusage.stime >= 0s)
         assert([
             rusage.maxrss,
             rusage.ixrss,

@@ -619,6 +619,12 @@ pub class Duration {
         total-nanoseconds / 1000000000.0
     }
 
+    static of(delta: TimeDelta) -> Duration {
+        Duration(seconds=delta.ns / 1000000000, nanoseconds=delta.ns % 1000000000)
+    }
+
+    delta -> TimeDelta { total-nanoseconds * 1ns }
+
     total(unit: String, relative-to: PlainDate | ZonedDateTime | nil = nil) -> Float {
         let nanos = __duration-nanoseconds-relative(self, relative-to)
         match unit {
@@ -1387,6 +1393,12 @@ pub class Instant {
         Instant(nanos)
     }
 
+    static of(t: Time[time::CLOCK_REALTIME]) -> Instant {
+        Instant(int(t))
+    }
+
+    to-time() -> Time[time::CLOCK_REALTIME] { Time(__epoch-nanos, time.CLOCK_REALTIME) }
+
     epoch-seconds -> Int { __epoch-nanos / 1000000000 }
     epoch-milliseconds -> Int { __epoch-nanos / 1000000 }
     epoch-microseconds -> Int { __epoch-nanos / 1000 }
@@ -1498,6 +1510,8 @@ fn >=(a: Instant, b: Instant) -> Bool { !(a < b) }
 fn +(a: Instant, b: Duration) -> Instant { a.add(b) }
 fn -(a: Instant, b: Duration) -> Instant { a.subtract(b) }
 fn -(a: Instant, b: Instant) -> Duration { b.until(a) }
+fn +(a: Instant, b: TimeDelta) -> Instant { Instant(a.epoch-nanoseconds + b.ns) }
+fn -(a: Instant, b: TimeDelta) -> Instant { Instant(a.epoch-nanoseconds - b.ns) }
 
 /* ============================================================================
  * ZonedDateTime
@@ -1551,7 +1565,7 @@ fn __offset-seconds-at(epoch-seconds: Int, zone: String) -> Int {
     if let $fixed = __fixed-offset-seconds(zone) {
         return fixed
     }
-    let tm = time.zonetime(epoch-seconds, zone)
+    let tm = time.zonetime(Time(epoch-seconds * 1000000000, time.CLOCK_REALTIME), zone)
         ?? throw ValueError("invalid or unavailable time zone: '{zone}'")
     tm.gmtoff ?? throw ValueError("time zone has no UTC offset: '{zone}'")
 }
@@ -2084,10 +2098,7 @@ fn ==(a: PlainMonthDay, b: PlainMonthDay) -> Bool { a.equals(b) }
  * ============================================================================ */
 
 pub fn instant-now() -> Instant {
-    let secs = time.utc()
-    let whole = Int(secs)
-    let frac = secs - whole
-    Instant(whole * 1000000000 + Int(frac * 1000000000))
+    Instant.of(time.time())
 }
 
 fn __local-dt() -> PlainDateTime {

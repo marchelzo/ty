@@ -17,7 +17,7 @@ fn picture(frames: Int = 1) -> im.Picture {
                 rgba[p * 4 + 3] = 255
             }
             rgba
-        }, 0.1)
+        }, 100ms)
         for f in ..frames
     ], 'raw')
 }
@@ -58,11 +58,11 @@ pub fn text-mode-draws-colored-cells() {
 pub fn animation-advances-and-reuploads() {
     let h = ink.TestHarness(Frame(src=picture(3), protocol='kitty', width=4), cols=40, rows=20)
     assert(#h.uploads == 1)
-    h.advance(0.11)
+    h.advance(110ms)
     assert(#h.uploads == 2)
     assert(h.uploads[0] != h.uploads[1])
-    h.advance(0.11)
-    h.advance(0.11)
+    h.advance(110ms)
+    h.advance(110ms)
     assert(#h.uploads == 4)
     assert(h.uploads[3] == h.uploads[0])
 }

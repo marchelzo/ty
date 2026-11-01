@@ -185,10 +185,10 @@ pub fn test_eventfd() {
 pub fn test_timerfd() {
     let tfd = os.timerfd_create(time.CLOCK_MONOTONIC, 0)
     assert(tfd >= 0)
-    assert(os.timerfd_settime(tfd, 0, 0.1) == 0)
+    assert(os.timerfd_settime(tfd, 0, 100ms) == 0)
     let (remaining, interval) = os.timerfd_gettime(tfd)!
-    assert(remaining > 0.0)
-    assert(interval == 0.0)
+    assert(remaining > 0s && remaining <= 100ms)
+    assert(interval == 0s)
     os.close(tfd)
 }
 

@@ -6684,7 +6684,10 @@ typedef struct t2_printer {
         vec(char)         text;
         vec(T2Container)  open;
         bool              failed;
+        bool              clocks;
 } T2Printer;
+
+extern char const *ChronoClockName(i64 clk) __attribute__((weak));
 
 static u32
 new_doc(T2Printer *printer, T2DocKind kind)
@@ -7190,8 +7193,17 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                 text(printer, T2_TOKEN_LITERAL, node->payload ? "true" : "false");
                 break;
         case T2_TYPE_LITERAL_INT:
-                formatted(printer, T2_TOKEN_LITERAL, "%" PRId64, (i64)node->payload);
+        {
+                char const *clock = (printer->clocks && ChronoClockName != NULL)
+                                  ? ChronoClockName((i64)node->payload)
+                                  : NULL;
+                if (clock != NULL) {
+                        formatted(printer, T2_TOKEN_LITERAL, "time::%s", clock);
+                } else {
+                        formatted(printer, T2_TOKEN_LITERAL, "%" PRId64, (i64)node->payload);
+                }
                 break;
+        }
         case T2_TYPE_LITERAL_STRING:
         {
                 T2StringBuffer quoted = { 0 };
@@ -7290,7 +7302,10 @@ doc_type(T2Printer *printer, T2Type type, unsigned depth)
                         text(printer, T2_TOKEN_NOMINAL, info->name);
                 }
 
+                bool clocks = printer->clocks;
+                printer->clocks = (info != NULL) && (strcmp(info->name, "Time") == 0);
                 doc_arguments(printer, node, depth);
+                printer->clocks = clocks;
                 break;
         }
         case T2_TYPE_TYPE_VALUE:

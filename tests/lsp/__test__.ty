@@ -3,7 +3,7 @@ import ty.test.config (configure)
 configure(
     opt-in:       true,
     serial:       true,
-    timeout:      120.0,
-    load-timeout: 120.0,
+    timeout:      2m,
+    load-timeout: 2m,
     tags:         ['lsp']
 )

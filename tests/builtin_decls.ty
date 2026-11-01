@@ -1,3 +1,7 @@
+import path
+import sh
+import ty
+
 pub fn array-methods-are-declared() {
     let xs = [3, 1, 2]
     let r: Int | nil = xs.findr(\_ > 1)
@@ -85,4 +89,19 @@ pub fn member-compound-operators-still-apply() {
     let s = Sync(1)
     s += 2
     assert((n.load(), s + 0) == (3, 3))
+}
+
+fn typeof-in-fresh-process(src: String) -> String {
+    with tmp = path.tempdir() {
+        let file = tmp / 'fresh.ty'
+        file.write(src)
+        sh.run([ty.executable, str(file)], timeout: 30s).stdout.strip()
+    }
+}
+
+pub fn unqualified-imports-see-lazy-declarations() {
+    for name in ['localtime', 'gmtime', 'strftime', 'zonetime'] {
+        let shown = typeof-in-fresh-process("import time ({name})\nprint(typeof({name}))\n")
+        assert(shown != 'Dynamic' && 'Time[time::CLOCK_REALTIME]' in shown, "{name}: {shown}")
+    }
 }

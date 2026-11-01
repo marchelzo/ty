@@ -1,10 +1,13 @@
 import ffi as c (C!)
 import ptr (typed, untyped)
 import date (PlainDate, PlainTime, PlainDateTime, Instant, Duration)
+import time
 
 let libduckdb = c.open('duckdb') ?? throw RuntimeError(
     'failed to load libduckdb'
 )
+
+use WallTime = Time[time::CLOCK_REALTIME]
 
 const duckdb_result      = c.struct(c.u64, c.u64, c.u64, c.ptr, c.ptr, c.ptr)
 const duckdb_date_struct = c.struct(c.i32, c.i8, c.i8)
@@ -640,6 +643,8 @@ fn value(x: _) -> _ {
         t: PlainDateTime => duckdb_create_timestamp(epoch-days(t) * USEC_PER_DAY + time-micros(t)),
         t: Instant       => duckdb_create_timestamp_tz(t.epoch-microseconds),
         d: Duration      => duckdb_create_interval(interval(d)),
+        d: TimeDelta     => duckdb_create_interval((0, 0, d.ns / 1_000)),
+        t: WallTime      => duckdb_create_timestamp_tz(int(t) / 1_000),
         xs: Array        => list-value(xs),
         d: Dict          => map-value(d),
         t: Tuple         => Tuple.named?(t) ? struct-value(members(t)) : list-value([*t]),

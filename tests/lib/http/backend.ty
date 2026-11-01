@@ -12,7 +12,7 @@ fn routes(srv) {
     srv.post('/echo', (req, rsp) -> rsp.write(req.body ?? ''))
     srv.get('/big', (req, rsp) -> rsp.write('k' * 1000000))
     srv.get('/sleep', fn (req, rsp) {
-        http.sleep(0.05)
+        http.sleep(50ms)
         rsp.plain('slept')
     })
     srv.ws('/echo', fn (sock, req) {
@@ -75,7 +75,7 @@ pub fn readiness-backend-timeouts() {
         c.send('GET / HTTP/1.1\r\n')
         assert(c.response().status == 408)
         c.close()
-    }, header-timeout: 0.2)
+    }, header-timeout: 200ms)
 }
 
 pub fn default-backend() {

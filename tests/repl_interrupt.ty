@@ -4,22 +4,22 @@ pub fn timeouts-interrupt-the-cell-and-keep-state() {
     let repl = Repl()
     defer repl.close()
 
-    repl.eval('let kept = 42', 5000)
+    repl.eval('let kept = 42', 5s)
 
-    let spun = repl.eval('let n = 0; while true { n += 1 }', 1000)
+    let spun = repl.eval('let n = 0; while true { n += 1 }', 1s)
     assert(!spun.reset, spun.error)
     assert('interrupted' in (spun.error ?? ''), spun.error)
 
-    assert(repl.eval('kept', 5000).value == '42')
-    assert(repl.eval('n > 0', 5000).value == 'true')
+    assert(repl.eval('kept', 5s).value == '42')
+    assert(repl.eval('n > 0', 5s).value == 'true')
 }
 
 pub fn swallowed-interrupts-are-repeated() {
     let repl = Repl()
     defer repl.close()
 
-    repl.eval('let kept = 1', 5000)
-    let r = repl.eval('try { while true { } } catch _ { () }; while true { }', 1000)
+    repl.eval('let kept = 1', 5s)
+    let r = repl.eval('try { while true { } } catch _ { () }; while true { }', 1s)
     assert(!r.reset, r.error)
-    assert(repl.eval('kept', 5000).value == '1')
+    assert(repl.eval('kept', 5s).value == '1')
 }

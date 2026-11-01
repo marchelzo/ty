@@ -16,12 +16,19 @@ const MONTHS = %{'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5, 'ju
 
 const MAX_COOKIES_PER_DOMAIN = 180
 const MAX_COOKIES            = 3000
+const MAX_LIFETIME           = 400d
+
+use Wall = Time[time::CLOCK_REALTIME]
+
+const EPOCH: Wall = time.time({year: 70, mon: 0, mday: 1}, utc: true)
+
+fn unix(t: Wall) -> Int {
+    int(t) / 1000000000
+}
 
 fn unquote(s: String) -> String {
     s.sub(/^"(.*)"$/, &1)
 }
-
-
 
 /// Formats a `Set-Cookie` value. Throws ValueError for names, values or
 /// attributes that cannot be sent safely; `secure: nil` means "Secure when
@@ -29,8 +36,8 @@ fn unquote(s: String) -> String {
 pub fn format-set-cookie(
     name: String,
     value: String,
-    max-age: Int | nil = nil,
-    expires: Int | Float | nil = nil,
+    max-age: ?Duration = nil,
+    expires: ?Wall = nil,
     path: String | Bool = '/',
     domain: String | nil = nil,
     secure: Bool | nil = nil,
@@ -46,10 +53,10 @@ pub fn format-set-cookie(
     }
     let parts = ["{name}={value}"]
     if max-age != nil {
-        parts.push("Max-Age={max-age}")
+        parts.push("Max-Age={max-age.ns / 1000000000}")
     }
     if expires != nil {
-        parts.push("Expires={http-date(int(expires))}")
+        parts.push("Expires={http-date(unix(expires))}")
     }
     for (attr, v) in [('Path', path), ('Domain', domain)] {
         if v :: String {
@@ -84,7 +91,7 @@ pub fn format-set-cookie(
 }
 
 /// RFC 6265 section 5.1.1 cookie-date parsing; nil when unparseable.
-pub fn parse-cookie-date(s: String) -> Int | nil {
+pub fn parse-cookie-date(s: String) -> ?Wall {
     let hour = nil
     let minute = nil
     let second = nil
@@ -139,7 +146,7 @@ pub fn parse-cookie-date(s: String) -> Int | nil {
         return nil
     }
 
-    time.time({sec: second ?? 0, min: minute ?? 0, hour: h, mday: d, mon: mon, year: y - 1900}, utc: true)
+    time.time({sec: second ?? 0, min: minute ?? 0, hour: h, mday: d, mon: mon, year: min(y, 2261) - 1900}, utc: true)
 }
 
 pub class Cookie {
@@ -147,19 +154,19 @@ pub class Cookie {
     value:       String
     domain:      String
     path:        String
-    expires:     Float | nil
+    expires:     ?Wall
     secure?:     Bool
     http-only?:  Bool
     host-only?:  Bool
     same-site:   String | nil
-    created:     Float = time.utc()
+    created:     Wall = time.time()
 
     init(
         name: String,
         value: String,
         domain: String = '',
         path: String = '/',
-        expires: Int | Float | nil = nil,
+        expires: ?Wall = nil,
         secure: Bool = false,
         http-only: Bool = false,
         host-only: Bool = true,
@@ -169,14 +176,14 @@ pub class Cookie {
         self.value      = value
         self.domain     = domain.lower().comb(/^\./)
         self.path       = path
-        self.expires    = (expires == nil) ? nil : float(expires)
+        self.expires    = expires
         self.secure?    = secure
         self.http-only? = http-only
         self.host-only? = host-only
         self.same-site  = same-site
     }
 
-    expired?(now: Float = time.utc()) -> Bool {
+    expired?(now: Wall = time.time()) -> Bool {
         expires != nil && expires <= now
     }
 
@@ -230,7 +237,7 @@ fn default-path(url: URL) -> String {
 
 /// Parses one `Set-Cookie` value received for `url` (RFC 6265 section 5.2
 /// and 5.3); nil when the cookie must be ignored.
-pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Cookie | nil {
+pub fn parse-set-cookie(header: String, url: URL, now: Wall = time.time()) -> Cookie | nil {
     let parts = header.split(';')
     let pair = parts[0]
     let [_, n, v] = pair.match(/^([^=]*)=(.*)$/) ?? return nil
@@ -304,8 +311,8 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
     }
 
     let expiry = match max-age {
-        nil => (expires == nil) ? nil : float(expires),
-        n   => (n <= 0) ? 0.0 : now + float(n)
+        nil => expires,
+        n   => (n <= 0) ? EPOCH : now + min(n, int(MAX_LIFETIME.secs)) * 1s
     }
 
     Cookie(
@@ -313,7 +320,7 @@ pub fn parse-set-cookie(header: String, url: URL, now: Float = time.utc()) -> Co
         value,
         domain: domain ?? host,
         path: path ?? default-path(url),
-        expires: expiry,
+        expires: expiry && min(expiry, now + MAX_LIFETIME),
         secure: secure,
         http-only: http-only,
         host-only: host-only,
@@ -381,7 +388,7 @@ pub class CookieJar {
     /// `domain`/`path`).
     get(name: String, domain: String | nil = nil, path: String | nil = nil) -> String | nil {
         let ^_ = __lock.lock()
-        let now = time.utc()
+        let now = time.time()
         for ck in __cookies {
             if ck.name == name && !ck.expired?(now) && (domain == nil || ck.domain.ieq?(domain)) && (path == nil || ck.path == path) {
                 return ck.value
@@ -420,7 +427,7 @@ pub class CookieJar {
 
     cookies() -> Array[Cookie] {
         let ^_ = __lock.lock()
-        let now = time.utc()
+        let now = time.time()
         __cookies.filter!(ck -> !ck.expired?(now))
         [*__cookies]
     }
@@ -431,7 +438,7 @@ pub class CookieJar {
             return []
         }
         let u = (url :: URL) ? url : URL(url)
-        let now = time.utc()
+        let now = time.time()
         let ^_ = __lock.lock()
         let out = [ck for ck in __cookies if !ck.expired?(now) && (ck.domain == '' || ck.matches?(u))]
         out.sort!(cmp: fn (a, b) {
@@ -456,7 +463,7 @@ pub class CookieJar {
             xs: Array => xs,
             h         => h.all('set-cookie')
         }
-        let now = time.utc()
+        let now = time.time()
         for v in values {
             if let $ck = parse-set-cookie(v, u, now) {
                 let ^_ = __lock.lock()
@@ -500,7 +507,7 @@ pub class CookieJar {
                 ck.host-only? ? 'FALSE' : 'TRUE',
                 ck.path,
                 ck.secure? ? 'TRUE' : 'FALSE',
-                str(int(ck.expires ?? 0.0)),
+                str(unix(ck.expires ?? EPOCH)),
                 ck.name,
                 ck.value
             ].join('\t'))
@@ -527,7 +534,7 @@ pub class CookieJar {
                 f[6],
                 domain: f[0],
                 path: f[2],
-                expires: (exp == 0) ? nil : exp,
+                expires: (exp == 0) ? nil : EPOCH + exp * 1s,
                 secure: f[3].ieq?('TRUE'),
                 http-only: http-only,
                 host-only: !f[1].ieq?('TRUE')

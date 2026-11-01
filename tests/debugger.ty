@@ -52,7 +52,7 @@ fn wait-for-socket(pid: Int) -> String {
             return sock
         }
 
-        os.usleep(25000)
+        os.sleep(25ms)
     }
 
     throw AssertionError("process {pid} never opened {sock}")
@@ -61,7 +61,7 @@ fn wait-for-socket(pid: Int) -> String {
 fn wait-for-ready(proc: Any) {
     let line = Blob()
 
-    while !line.str().contains?('\n') && os.poll([(proc.stdout, os.POLLIN)], [], 10000) > 0 {
+    while !line.str().contains?('\n') && os.poll([(proc.stdout, os.POLLIN)], [], 10s) > 0 {
         let $chunk = os.read(proc.stdout, 64) or break
         if #chunk == 0 {
             break
@@ -117,8 +117,8 @@ class Dap {
         }).detach()
     }
 
-    __next(ms: Int) -> Dict[String, Any] {
-        match __inbox.recv(ms) {
+    __next(limit: Duration) -> Dict[String, Any] {
+        match __inbox.recv(limit) {
             Some($msg) => msg,
             _          => throw AssertionError('debug adapter went quiet')
         }
@@ -137,7 +137,7 @@ class Dap {
         os.write(__fd, "Content-Length: {#body}\r\n\r\n{body}", all=true)
 
         while true {
-            let msg = __next(10000)
+            let msg = __next(10s)
             if msg['type'] == 'response' && msg['request_seq'] == __seq {
                 return msg
             }
@@ -160,7 +160,7 @@ class Dap {
         }
 
         while true {
-            let msg = __next(10000)
+            let msg = __next(10s)
             if msg['event'] == name {
                 return msg['body'] ?? %{}
             }
@@ -228,7 +228,7 @@ fn reap(proc: Any) {
 
 fn finish(proc: Any, dap: Dap) {
     dap.close()
-    os.sleep(0.1)
+    os.sleep(100ms)
     assert(os.kill(proc.pid, 0) == 0, 'debuggee died after detach')
 }
 
@@ -315,13 +315,12 @@ pub fn debugger-breakpoint-in-hot-jit-loop() {
     finish(proc, dap)
 }
 
-fn read-lines(fd: Int, want: Int, seconds: Float) -> Array[String] {
+fn read-lines(fd: Int, want: Int, limit: Duration) -> Array[String] {
     let out = Blob()
-    let end = time.now() + seconds
+    let end = time.now() + limit
 
     while #[b for b in out if b == 10] < want && time.now() < end {
-        let wait = max(int((end - time.now()) * 1000.0), 1)
-        if os.poll([(fd, os.POLLIN)], [], wait) <= 0 {
+        if os.poll([(fd, os.POLLIN)], [], end) <= 0 {
             break
         }
         let $chunk = os.read(fd, 4096) or break
@@ -343,7 +342,7 @@ pub fn debugger-attach-deopts-hot-loop-with-live-registers() {
     )
     defer reap(proc)
 
-    let before = read-lines(proc.stdout, 3, 30.0)
+    let before = read-lines(proc.stdout, 3, 30s)
     assert(before[;2] == ['ready', 'ok'], "{before}")
 
     let dap = Dap(request-attach(proc.pid))
@@ -351,9 +350,9 @@ pub fn debugger-attach-deopts-hot-loop-with-live-registers() {
     dap.event('initialized')
     dap.ok('attach')
 
-    let during = read-lines(proc.stdout, 1, 30.0)
+    let during = read-lines(proc.stdout, 1, 30s)
     dap.close()
-    let after = read-lines(proc.stdout, 2, 30.0)
+    let after = read-lines(proc.stdout, 2, 30s)
 
     let results = [*before[1;], *during, *after]
     assert(#during >= 1 && #after >= 2, "too few results: {results}")
@@ -389,7 +388,7 @@ pub fn debugger-stepping() {
 
     dap.ok('next', %{'threadId': thread})
     dap.event('stopped')
-    assert(dap.frames(thread)[0]['line'] == line-of('sleep(0.001)'))
+    assert(dap.frames(thread)[0]['line'] == line-of('sleep(1ms)'))
 
     dap.ok('continue', %{'threadId': thread})
     finish(proc, dap)

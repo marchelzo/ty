@@ -5842,6 +5842,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_INTEGER:
         case EXPRESSION_REAL:
+        case EXPRESSION_DURATION:
         case EXPRESSION_BOOLEAN:
         case EXPRESSION_STRING:
         case EXPRESSION_REGEX:
@@ -11673,6 +11674,16 @@ StaticMethod(Ty *ty, Expr const *method)
         return PlainSignature(found);
 }
 
+static Value *
+ChronoConstant(Value v)
+{
+        Value *p = xmA(sizeof *p);
+
+        *p = v;
+
+        return p;
+}
+
 static bool
 IsInert(Expr const *e)
 {
@@ -11680,6 +11691,7 @@ IsInert(Expr const *e)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_INTEGER:
         case EXPRESSION_REAL:
+        case EXPRESSION_DURATION:
         case EXPRESSION_BOOLEAN:
         case EXPRESSION_STRING:
         case EXPRESSION_NIL:
@@ -12146,6 +12158,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_REAL:
                 INSN(REAL);
                 emit_float(ty, e->real);
+                break;
+
+        case EXPRESSION_DURATION:
+                INSN(VALUE);
+                EP((uptr)ChronoConstant(DURATION(e->integer)));
                 break;
 
         case EXPRESSION_STRING:
@@ -13623,9 +13640,142 @@ is_arith(Expr const *e)
         return false;
 }
 
+static bool
+ChronoOperand(Expr const *e, Value *out)
+{
+        switch (e->type) {
+        case EXPRESSION_INTEGER:  *out = INTEGER(e->integer);  return true;
+        case EXPRESSION_REAL:     *out = REAL(e->real);        return true;
+        case EXPRESSION_DURATION: *out = DURATION(e->integer); return true;
+        case EXPRESSION_VALUE:    *out = *e->v;                return IsDelta(e->v);
+        default:                                               return false;
+        }
+}
+
+static bool
+ChronoNegate(Expr const *e, Value *out)
+{
+        Value a;
+        i64   ns;
+
+        if (
+                !ChronoOperand(e->operand, &a)
+             || !IsDelta(&a)
+             || __builtin_sub_overflow(0, a.ns, &ns)
+        ) {
+                return false;
+        }
+
+        *out = TIMEDELTA(ns);
+
+        return true;
+}
+
+static bool
+ChronoArith(Expr const *e, Value *out)
+{
+        Value a;
+        Value b;
+        i64   ns;
+
+        if (
+                !ChronoOperand(e->left, &a)
+             || !ChronoOperand(e->right, &b)
+             || (!IsDelta(&a) && !IsDelta(&b))
+             || (!IsDelta(&a) && e->type != EXPRESSION_STAR)
+        ) {
+                return false;
+        }
+
+        if (!IsDelta(&a)) {
+                SWAP(Value, a, b);
+        }
+
+        bool both = IsDelta(&b);
+        bool dur  = both
+                 && (a.type == VALUE_DURATION)
+                 && (b.type == VALUE_DURATION);
+
+        switch (e->type) {
+        case EXPRESSION_PLUS:
+                if (!both || __builtin_add_overflow(a.ns, b.ns, &ns)) {
+                        return false;
+                }
+                *out = dur ? DURATION(ns) : TIMEDELTA(ns);
+                return true;
+
+        case EXPRESSION_MINUS:
+                if (!both || __builtin_sub_overflow(a.ns, b.ns, &ns)) {
+                        return false;
+                }
+                *out = TIMEDELTA(ns);
+                return true;
+
+        case EXPRESSION_STAR:
+                if (both || ChronoTryScale(a.ns, &b, &ns) != CHRONO_OK) {
+                        return false;
+                }
+                *out = TIMEDELTA(ns);
+                return true;
+
+        case EXPRESSION_DIV:
+                if (both && b.ns != 0) {
+                        *out = REAL((double)a.ns / (double)b.ns);
+                        return true;
+                }
+                if (both || ChronoTryDivide(a.ns, &b, &ns) != CHRONO_OK) {
+                        return false;
+                }
+                *out = TIMEDELTA(ns);
+                return true;
+
+        case EXPRESSION_PERCENT:
+                if (!both || b.ns == 0) {
+                        return false;
+                }
+                *out = dur ? DURATION(a.ns % b.ns) : TIMEDELTA(IntMod(a.ns, b.ns));
+                return true;
+
+        default:
+                return false;
+        }
+}
+
+static Expr *
+ChronoFolded(Expr *e, Value v)
+{
+        switch (v.type) {
+        case VALUE_DURATION:
+                e->type    = EXPRESSION_DURATION;
+                e->integer = v.ns;
+                break;
+
+        case VALUE_REAL:
+                e->type = EXPRESSION_REAL;
+                e->real = v.real;
+                break;
+
+        default:
+                e->type = EXPRESSION_VALUE;
+                e->v    = ChronoConstant(v);
+                break;
+        }
+
+        return e;
+}
+
 static Expr *
 zfold(Expr *e, Scope *scope, void *ctx)
 {
+        Value v;
+        bool  chrono = (e->type == EXPRESSION_PREFIX_MINUS) ? ChronoNegate(e, &v)
+                     : is_arith(e)                          ? ChronoArith(e, &v)
+                     :                                        false;
+
+        if (chrono) {
+                return ChronoFolded(e, v);
+        }
+
         if (
                 (e->type == EXPRESSION_PREFIX_MINUS)
              && (e->operand->type == EXPRESSION_INTEGER)
@@ -13724,11 +13874,13 @@ static bool
 LiteralValue(Ty *ty, Expr const *e, Value *out)
 {
         switch (e->type) {
-        case EXPRESSION_INTEGER: *out = INTEGER(e->integer);                   return true;
-        case EXPRESSION_REAL:    *out = REAL(e->real);                         return true;
-        case EXPRESSION_BOOLEAN: *out = BOOLEAN(e->boolean);                   return true;
-        case EXPRESSION_STRING:  *out = vSs(e->string.data, e->string.length); return true;
-        default:                                                               return false;
+        case EXPRESSION_INTEGER:  *out = INTEGER(e->integer);                   return true;
+        case EXPRESSION_REAL:     *out = REAL(e->real);                         return true;
+        case EXPRESSION_DURATION: *out = DURATION(e->integer);                  return true;
+        case EXPRESSION_BOOLEAN:  *out = BOOLEAN(e->boolean);                   return true;
+        case EXPRESSION_STRING:   *out = vSs(e->string.data, e->string.length); return true;
+        case EXPRESSION_VALUE:    *out = *e->v;                                 return IsDelta(e->v);
+        default:                                                                return false;
         }
 }
 
@@ -15514,7 +15666,7 @@ PendingDeclaration(Symbol const *sym)
         }
 
         for (usize i = 0; i < vN(Declarations); ++i) {
-                if (v_(Declarations, i)->sym == sym) {
+                if (v_(Declarations, i)->sym->symbol == sym->symbol) {
                         return v_(Declarations, i);
                 }
         }
@@ -15532,6 +15684,10 @@ compiler_symbol_declaration(Ty *ty, Symbol *sym)
         Declaration const *pending = PendingDeclaration(sym);
         if (pending == NULL) {
                 return NULL;
+        }
+
+        if (pending->sym != sym) {
+                return sym->expr = compiler_symbol_declaration(ty, pending->sym);
         }
 
         Module *home = DeclarationHome(sym->mod);
@@ -16803,6 +16959,10 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = TAGGED(TyFloat, REAL(e->real));
                 break;
 
+        case EXPRESSION_DURATION:
+                v = TAGGED(TyValue, DURATION(e->integer));
+                break;
+
         case EXPRESSION_BOOLEAN:
                 v = TAGGED(TyBool, BOOLEAN(e->boolean));
                 break;
@@ -18058,6 +18218,12 @@ cexpr(Ty *ty, Value *v)
                 *value = *v;
                 PopTag(value);
                 value->src = 0;
+
+                if (value->type == VALUE_DURATION) {
+                        e->type    = EXPRESSION_DURATION;
+                        e->integer = value->ns;
+                        break;
+                }
 
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
@@ -20718,6 +20884,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                 case EXPRESSION_INTEGER:
                 case EXPRESSION_STRING:
                 case EXPRESSION_REAL:
+                case EXPRESSION_DURATION:
                 case EXPRESSION_OPERATOR:
                 case EXPRESSION_NIL:
                         goto TryFullResolve;

@@ -16,7 +16,7 @@ pub fn run(
         [ty.executable, '--color=never', *args],
         env=%{**__env, 'NO_COLOR': '', **env},
         chdir=chdir ?? str(ROOT),
-        timeout=30
+        timeout=30s
     )
     let status = match result.fate {
         Exit(code)  => code,

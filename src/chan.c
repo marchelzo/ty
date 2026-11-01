@@ -33,6 +33,9 @@ basic(Value const *v)
         case VALUE_BOOLEAN:
         case VALUE_INTEGER:
         case VALUE_REAL:
+        case VALUE_TIME:
+        case VALUE_DURATION:
+        case VALUE_TIMEDELTA:
         case VALUE_NIL:
         case VALUE_TAG:
                 return true;

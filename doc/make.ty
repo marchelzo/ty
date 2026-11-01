@@ -130,7 +130,7 @@ fn highlight-ty(code: String) -> String {
 }
 
 fn run-ty(code: String) -> String | nil {
-    let result = sh('ty -j --color=always -', input: code, combineOutput: true, timeout: 2.5)
+    let result = sh('ty -j --color=always -', input: code, combineOutput: true, timeout: 2.5s)
     (result.fate != Timeout && result.stdout) ? sgr-to-html(result.stdout.comb(/\n$/)) : nil
 }
 
@@ -386,8 +386,8 @@ fn write-js() {
         ''')
 }
 
-fn mtime(p: Path) -> Float {
-    p.exists? ? p.stat.mtime : 0.0
+fn mtime(p: Path) -> Int {
+    p.exists? ? int(p.stat.mtime) : 0
 }
 
 let force-mtime = max(

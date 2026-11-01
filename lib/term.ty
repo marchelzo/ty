@@ -890,7 +890,7 @@ pub class TermIO {
 
     __ti-keys: Dict[String, (String, Int)] = %{}
 
-    __esc-delay: Int
+    __esc-delay: Duration
 
     __saved-termios: _
 
@@ -945,7 +945,7 @@ pub class TermIO {
         focus: Bool = false,
         modify-keys: Int | nil = nil,
         alt-scroll: Bool | nil = nil,
-        esc-delay: Float = 0.05,
+        esc-delay: Duration = 50ms,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
         __fd = fd ?? open(terminal-path(), O_RDWR)
@@ -953,7 +953,7 @@ pub class TermIO {
             throw OSError('TermIO()', ENOTTY)
         }
 
-        __esc-delay = int(esc-delay * 1.0e6)
+        __esc-delay = esc-delay
 
         try {
             let ti = unibi.Term()
@@ -1051,7 +1051,7 @@ pub class TermIO {
         __reader = Thread(__run-reader)
     }
 
-    start(settle: Float = 0.0) {
+    start(settle: Duration = 0s) {
         debug!('main: request start')
         write(__notif-w, 1)
         with __state.lock {
@@ -1059,7 +1059,7 @@ pub class TermIO {
                 __state.cond.wait(__state.lock)
             }
         }
-        if settle > 0.0 {
+        if settle > 0s {
             status-supported?(settle)
         }
         if #__pointer > 0 {
@@ -1141,7 +1141,7 @@ pub class TermIO {
         fn wait-for-resume() {
             for (;;) {
                 trace!('reader: waiting for resume')
-                match poll([__notif-r], -1) {
+                match poll([__notif-r]) {
                     Ok([(fd, ev)]) => {
                         if let $msg = read(fd, 512) and msg[-1] == 1 {
                             __start()
@@ -1155,10 +1155,10 @@ pub class TermIO {
             trace!('reader: resuming')
         }
 
-        fn more(ms: Int = -1) -> Bool {
+        fn more(timeout: ?time::Timeout = nil) -> Bool {
             trace!('reader: polling')
 
-            let fds: _ = while match poll([__notif-r, __fd], ms) {
+            let fds: _ = while match poll([__notif-r, __fd], timeout) {
                 Ok(fds)    => break fds,
                 Err(EINTR) => continue,
                 Err(ec)    => throw OSError('poll()', ec)
@@ -1192,12 +1192,10 @@ pub class TermIO {
 
         fn await() -> Bool {
             let n  = #buf
-            let t1 = time.utime() + __esc-delay
+            let t1 = time.now() + __esc-delay
 
-            while !closed? {
-                let ms = (t1 - time.utime()) / 1000
-                break if ms <= 0
-                more(ms)
+            while !closed? && time.now() < t1 {
+                more(t1)
                 return true if #buf > n
             }
 
@@ -1292,7 +1290,7 @@ pub class TermIO {
         }
     }
 
-    next-event(timeout: Float | nil = nil) -> ?event.Event {
+    next-event(timeout: ?time::Timeout = nil) -> ?event.Event {
         if !open? {
             return event.EOF
         }
@@ -1327,11 +1325,12 @@ pub class TermIO {
         }
     }
 
-    status-supported?(timeout: Float = 0.5) -> Bool {
-        let ^lock = __probe.lock.lock()
+    status-supported?(timeout: time::Timeout = 500ms) -> Bool {
+        let ^lock    = __probe.lock.lock()
+        let deadline = (timeout :: Duration) ? time.now() + timeout : timeout
 
         while __probe.ok? == nil {
-            if !__probe.cond.wait(__probe.lock, timeout) {
+            if !__probe.cond.wait(__probe.lock, deadline) {
                 return __pst != nil
             }
         }
@@ -1408,12 +1407,12 @@ pub class TermIO {
                 break if ev == event.EOF
             },
 
-            None => sleep(0.5)
+            None => sleep(500ms)
         }
     }
 
     events*() -> Generator[Event] {
-        while let Some(ev) = __ev-queue.try-take(0) {
+        while let Some(ev) = __ev-queue.try-take() {
           yield ev
         }
     }

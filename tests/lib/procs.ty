@@ -1,5 +1,6 @@
 import procs (..)
 import os
+import time
 
 pub fn current-process() {
     let p = this()
@@ -11,10 +12,10 @@ pub fn current-process() {
     assert(p.ppid > 0)
     assert(p.uid == os.getuid())
     assert(p.gid == os.getgid())
-    assert(p.started > 0)
-    assert(p.age >= 0)
+    assert(p.started <= time.time())
+    assert(p.age > 0s)
     assert(p.threads > 0)
-    assert(p.cpu.total >= 0)
+    assert(p.cpu.total >= 0s)
     assert(p.memory.resident > 0)
     assert(p.io.read >= 0)
     assert(p.argv)

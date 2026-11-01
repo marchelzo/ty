@@ -57,7 +57,7 @@ fn entry(url: String, base: String, line: String) -> Entry {
 }
 
 /// GETs `url` with the HTTP client, which is loaded only when a remote registry is used.
-fn fetch(url: String, timeout: Float) -> _ {
+fn fetch(url: String, timeout: Duration) -> _ {
     let client = ty.mod.load('http/client')
     let get = client.get
     try {
@@ -94,7 +94,7 @@ fn api(method: String, url: String, token: String, headers: Dict = %{}, %kwargs)
 
 /// Who `token` belongs to on the HTTP registry at `url`: `{user, admin}`.
 pub fn whoami(url: String, token: String) -> Dict {
-    api('GET', "{url}/api/v1/me", token, timeout: 30.0)
+    api('GET', "{url}/api/v1/me", token, timeout: 30s)
 }
 
 /// Uploads a built archive to the HTTP registry at `url`. The result says whether it was
@@ -105,7 +105,7 @@ pub fn upload(url: String, token: String, archive: Path) -> Dict {
         "{url}/api/v1/packages",
         token,
         content: archive,
-        timeout: 300.0,
+        timeout: 5m,
         headers: %{
             'Content-Type':      'application/gzip',
             'X-Checksum-Sha256': sha256-file(archive)
@@ -152,7 +152,7 @@ pub class Registry {
         }
 
         let r = try {
-            fetch("{url}/{rel}", 30.0)
+            fetch("{url}/{rel}", 30s)
         } catch e: TpmError {
             if !cached.file? {
                 throw e
@@ -202,7 +202,7 @@ pub class Registry {
         } else if offline {
             throw TpmError("{art.url}: not in the cache, and --offline was given")
         } else {
-            let r = fetch(art.url, 300.0)
+            let r = fetch(art.url, 5m)
             if r.status-code != 200 {
                 throw TpmError("{art.url}: HTTP {r.status-code}")
             }

@@ -13,7 +13,7 @@ pub CLONE_LINES  = 4
 pub CLONE_SPAN   = 12
 
 let STRING  = %['String', 'SpecialString']
-let LITERAL = %[*STRING, 'Integer', 'Real', 'Nil', 'Boolean', 'Regex']
+let LITERAL = %[*STRING, 'Integer', 'Real', 'Duration', 'Nil', 'Boolean', 'Regex']
 let MACRO   = %['MacroInvocation', 'Region']
 let TABLE   = %[*STRING, *MACRO, 'Array', 'Dict', 'Tuple', 'Set']
 let ORDER   = %['Lt', 'Leq', 'Gt', 'Geq']
@@ -423,15 +423,15 @@ fn default-init(c: Node) -> Diag | nil {
 fn normal(tokens: Array[Token]) -> String {
     let names: Dict[String, Int] = %{}
     tokens.map(t -> match t.kind {
-        'string'         => 'S',
-        'int' or 'float' => 'N',
-        'id'             => "${names[t.text] ?? (names[t.text] = #names)}",
-        _                => t.text,
+        'string'                       => 'S',
+        'int' or 'float' or 'duration' => 'N',
+        'id'                           => "${names[t.text] ?? (names[t.text] = #names)}",
+        _                              => t.text,
     }).join(' ')
 }
 
 fn literal-share(tokens: Array[Token]) -> Float {
-    let lits = tokens.filter(\_.kind in ['string', 'int', 'float'])
+    let lits = tokens.filter(\_.kind in ['string', 'int', 'float', 'duration'])
     #lits / float(max(#tokens, 1))
 }
 

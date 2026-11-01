@@ -27,14 +27,18 @@ pub fn recv-frame(stream: uv.UVStream) -> String | nil {
 
 pub fn poll(ch: Channel) -> _ {
     while true {
-        if let Some(x) = ch.recv(0) {
+        if let Some(x) = ch.recv(0s) {
             return x
         }
-        uv.sleep(2)
+        uv.sleep(2ms)
     }
 }
 
-pub fn churn-gc(every: Int) {
+pub fn jitter(*bounds: Int) -> Duration {
+    abs(rand(*bounds) * 1ms)
+}
+
+pub fn churn-gc(every: Duration) {
     while true {
         uv.sleep(every)
         ty.gc()
@@ -47,7 +51,7 @@ pub fn quiesce() {
         if lp.pending == 0 && #lp.handles() == 0 {
             return
         }
-        uv.sleep(10)
+        uv.sleep(10ms)
     }
     throw RuntimeError("loop did not drain: handles={lp.handles()} pending={lp.pending}")
 }

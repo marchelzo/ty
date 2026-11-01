@@ -10,6 +10,7 @@
 import _http as c
 import log
 import os
+import time
 
 pub const EV_REQUEST  = 1
 pub const EV_BODY     = 2
@@ -213,17 +214,17 @@ pub class Loop {
         }
     }
 
-    timer(seconds: Int | Float, f: () -> _) -> Int {
-        c.timer(core, float(seconds), f)
+    timer(after: time::Timeout, f: () -> _) -> Int {
+        c.timer(core, after, f)
     }
 
     untimer(id: Int) {
         c.untimer(core, id)
     }
 
-    sleep(seconds: Int | Float) {
-        let $t = task() or throw RuntimeError('http.sleep() must be called from a server task')
-        let id = c.timer(core, float(seconds), t)
+    sleep(t: time::Timeout) {
+        let $task = task() or throw RuntimeError('http.sleep() must be called from a server task')
+        let id = c.timer(core, t, task)
         try {
             suspend()
         } finally {
@@ -232,15 +233,15 @@ pub class Loop {
     }
 
     /// Waits for `fd` to become ready for `events` (os.POLLIN / os.POLLOUT);
-    /// false when `seconds` pass first.
-    wait-fd(fd: Int, events: Int, seconds: Float | nil) -> Bool {
+    /// false when `timeout` runs out first.
+    wait-fd(fd: Int, events: Int, timeout: ?time::Timeout) -> Bool {
         let $t = task() or throw RuntimeError('http: wait-fd() must be called from a server task')
         let w = Waiter(t)
         let watch = c.watch(core, fd, events, w)
         if watch < 0 {
             throw OSError("http: cannot watch descriptor {fd}", -watch)
         }
-        let timer = (seconds == nil) ? nil : c.timer(core, seconds, w)
+        let timer = (timeout == nil) ? nil : c.timer(core, timeout, w)
         try {
             suspend() != nil
         } finally {
@@ -327,7 +328,7 @@ pub class Loop {
         running = self
         c.listen(core)
         try {
-            while c.poll(core, 1.0) >= 0 {
+            while c.poll(core, 1s) >= 0 {
                 __dispatch()
             }
             __dispatch()
@@ -400,10 +401,11 @@ fn pool() -> Pool {
     blocking-pool ?? (blocking-pool = Pool(pool-size))
 }
 
-/// Suspends the current task for `seconds` without blocking its loop.
-pub fn sleep(seconds: Int | Float) {
+/// Suspends the current task for a Duration, or until a deadline, without
+/// blocking its loop.
+pub fn sleep(t: time::Timeout) {
     let $l = running or throw RuntimeError('http.sleep() must be called from a server task')
-    l.sleep(seconds)
+    l.sleep(t)
 }
 
 /// Runs `f(*args)` on a worker thread and suspends the current task until it
@@ -420,10 +422,10 @@ pub fn spawn(f: (*_) -> _, *args: _, %kwargs: _) -> Task {
 }
 
 /// Waits until `fd` is ready for `events`: through the loop inside a task,
-/// with poll(2) elsewhere. False when `seconds` pass first.
-pub fn wait-fd(fd: Int, events: Int, seconds: Float | nil) -> Bool {
+/// with poll(2) elsewhere. False when `timeout` runs out first.
+pub fn wait-fd(fd: Int, events: Int, timeout: ?time::Timeout) -> Bool {
     if running && in-task?(running) {
-        return running.wait-fd(fd, events, seconds)
+        return running.wait-fd(fd, events, timeout)
     }
-    c.wait-fd(fd, events, seconds ?? -1.0)
+    c.wait-fd(fd, events, timeout)
 }

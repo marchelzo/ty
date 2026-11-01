@@ -1,4 +1,5 @@
 import os (stat)
+import time
 
 pub class LookError < RuntimeError {
     msg: String
@@ -353,12 +354,12 @@ pub class Looks {
 
 pub class LookFile {
     path:  String
-    mtime: Float
+    mtime: Time[time::CLOCK_REALTIME] | nil
     error: String | nil
 
     init(path: String) {
         self.path = path
-        mtime     = -1.0
+        mtime     = nil
         error     = nil
     }
 

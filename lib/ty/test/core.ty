@@ -21,11 +21,11 @@ pub class SkipTest < BaseException {
 }
 
 pub class TestTimeout < RuntimeError {
-    secs: Float
+    limit: Duration
 
-    init(secs: Float) {
-        super("test exceeded its {secs}s timeout")
-        self.secs = secs
+    init(limit: Duration) {
+        super("test exceeded its {limit} timeout")
+        self.limit = limit
     }
 }
 
@@ -59,7 +59,7 @@ pub class Meta {
     xfail:     ?XFail = nil
     todo:      ?String = nil
     only?:     Bool = false
-    timeout:   ?Float = nil
+    timeout:   ?Duration = nil
     slow?:     Bool = false
     cases:     ?Array[Any] = nil
     retries:   ?Int = nil
@@ -206,8 +206,8 @@ pub fn tags[F](f: F, *names: String) -> F {
     f
 }
 
-pub fn timeout[F](f: F, secs: Int | Float) -> F {
-    meta-of(f, 'timeout').timeout = float(secs)
+pub fn timeout[F](f: F, limit: Duration) -> F {
+    meta-of(f, 'timeout').timeout = limit
     f
 }
 
@@ -287,12 +287,12 @@ pub fn skip-file-unless(cond: Bool, reason: String) {
 pub class StepResult {
     name:    String
     outcome: String
-    dur:     Float
+    dur:     Duration
     error:   Any = nil
     trace:   Any = nil
     reason:  ?String = nil
 
-    init(name: String, outcome: String, dur: Float) {
+    init(name: String, outcome: String, dur: Duration) {
         self.name    = name
         self.outcome = outcome
         self.dur     = dur
@@ -372,15 +372,15 @@ pub class Test {
         let t0 = time.now()
         let r = try {
             f()
-            StepResult(name, 'pass', time.now() - t0)
+            StepResult(name, 'pass', time.since(t0))
         } catch e: SkipTest {
-            let s = StepResult(name, 'skip', time.now() - t0)
+            let s = StepResult(name, 'skip', time.since(t0))
             s.reason = e.reason
             s
         } catch e: TestTimeout {
             throw e
         } catch e {
-            let s = StepResult(name, 'fail', time.now() - t0)
+            let s = StepResult(name, 'fail', time.since(t0))
             s.error = e
             s.trace = ty.trace()
             s

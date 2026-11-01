@@ -65,18 +65,18 @@ fn routes(srv: http.Server) {
         let w = rsp.stream()
         for i in ..5 {
             w.write("line {i}\n")
-            http.sleep(0.01)
+            http.sleep(10ms)
         }
     })
     srv.get('/slow', fn (req, rsp) {
-        http.sleep(1.0)
+        http.sleep(1s)
         rsp.plain('late')
     })
     srv.get('/drip', fn (req, rsp) {
         let w = rsp.stream()
         for i in ..3 {
             w.write('.')
-            http.sleep(0.6)
+            http.sleep(600ms)
         }
     })
     srv.get('/events', fn (req, rsp) {
@@ -145,7 +145,7 @@ pub fn basic-get() {
         assert(r.text == "v1 {client.USER_AGENT}")
         assert(r.header('CONTENT-TYPE') == 'text/plain; charset=utf-8')
         assert(r.headers['content-length'] == str(#r.content))
-        assert(r.elapsed > 0.0)
+        assert(r.elapsed > 0s)
         assert(str(r) == '<Response [200 OK]>')
         assert(r.url == "{srv.url}/")
     })
@@ -405,13 +405,13 @@ pub fn keep-alive-pooling() {
 
 pub fn stale-keep-alive-is-retried() {
     serve(routes, fn (srv) {
-        let c = Client(base-url: srv.url, limits: Limits(keepalive-expiry: 30))
+        let c = Client(base-url: srv.url, limits: Limits(keepalive-expiry: 30s))
         assert(c.get('/').ok?)
-        os.sleep(0.6)
+        os.sleep(600ms)
         assert(c.get('/').ok?)
         assert(c.post('/echo', content: 'again').json()['body'] == 'again')
         c.close()
-    }, idle-timeout: 0.3)
+    }, idle-timeout: 300ms)
 }
 
 pub fn timeouts-and-errors() {
@@ -419,17 +419,17 @@ pub fn timeouts-and-errors() {
         let c = Client(base-url: srv.url)
         let t0 = time.now()
         let kind = try {
-            c.get('/slow', timeout: 0.2)
+            c.get('/slow', timeout: 200ms)
             'none'
         } catch e: client.ReadTimeout {
             'read'
         }
         assert(kind == 'read')
-        assert(time.now() - t0 < 0.9)
+        assert(time.since(t0) < 900ms)
 
-        assert(c.get('/drip', timeout: Timeout(1.0, read: 2.0)).text == '...')
+        assert(c.get('/drip', timeout: Timeout(1s, read: 2s)).text == '...')
         let dripped = try {
-            c.get('/drip', timeout: Timeout(1.0, read: 0.3))
+            c.get('/drip', timeout: Timeout(1s, read: 300ms))
             false
         } catch e: client.ReadTimeout {
             true
@@ -467,7 +467,7 @@ pub fn timeouts-and-errors() {
 
 pub fn pool-timeout() {
     serve(routes, fn (srv) {
-        let c = Client(base-url: srv.url, limits: Limits(max-connections: 1), timeout: Timeout(5, pool: 0.2))
+        let c = Client(base-url: srv.url, limits: Limits(max-connections: 1), timeout: Timeout(5s, pool: 200ms))
         let held = c.stream('GET', '/stream')
         let waited = try {
             c.get('/')
@@ -553,7 +553,7 @@ pub fn authentication() {
 pub fn retry-policy() {
     serve(routes, fn (srv) {
         FLAKY.store(0)
-        let c = Client(base-url: srv.url, retry: Retry(total: 3, backoff: 0.01))
+        let c = Client(base-url: srv.url, retry: Retry(total: 3, backoff: 10ms))
         let r = c.get('/flaky')
         assert(r.text == 'recovered')
         FLAKY.store(0)
@@ -579,7 +579,7 @@ pub fn unix-sockets() {
     routes(srv)
     let t = Thread(srv.run)
     try {
-        os.sleep(0.05)
+        os.sleep(50ms)
         let c = Client(uds: sock)
         assert(c.get('http://localhost/').text.starts?('v1'))
         c.close()
@@ -653,7 +653,7 @@ pub fn url-and-headers() {
 fn pipe(a: Int, b: Int) {
     let buf = Blob()
     while true {
-        let ready = match os.poll([(a, os.POLLIN), (b, os.POLLIN)], 5.0) {
+        let ready = match os.poll([(a, os.POLLIN), (b, os.POLLIN)], 5s) {
             Ok(rs) => rs,
             _      => []
         }
@@ -963,19 +963,19 @@ pub fn http2-many-threads() {
 pub fn http2-timeouts-and-shutdown() {
     serve(routes, fn (srv) {
         let c = Client(base-url: srv.url, verify: CA)
-        let timed-out = try { c.get('/slow', timeout: 0.2); false } catch _: client.ReadTimeout { true }
+        let timed-out = try { c.get('/slow', timeout: 200ms); false } catch _: client.ReadTimeout { true }
         assert(timed-out)
         assert(c.get('/').ok?)
         c.close()
     }, tls: tls())
 
-    let srv = http.Server('127.0.0.1', 0, tls: tls(), shutdown-timeout: 0.2)
+    let srv = http.Server('127.0.0.1', 0, tls: tls(), shutdown-timeout: 200ms)
     routes(srv)
     let t = Thread(srv.run)
-    os.sleep(0.1)
+    os.sleep(100ms)
     let c = Client(base-url: srv.url, verify: CA)
     let r = c.stream('GET', '/drip')
-    Thread(fn () { os.sleep(0.2); srv.stop() }).detach()
+    Thread(fn () { os.sleep(200ms); srv.stop() }).detach()
     let failed = try {
         r.read-all()
         false
@@ -1034,12 +1034,12 @@ pub fn compression-of-streams() {
             assert(r.header('content-encoding') == coding)
             assert(r.text == 'line 0\nline 1\nline 2\nline 3\nline 4\n')
         }
-        with r = http.stream('GET', "{srv.url}/drip", headers: {accept-encoding: 'gzip'}, timeout: 5) {
+        with r = http.stream('GET', "{srv.url}/drip", headers: {accept-encoding: 'gzip'}, timeout: 5s) {
             assert(r.header('content-encoding') == 'gzip')
             let t0 = time.now()
             let first = r.read()
             assert(first == Blob('.'))
-            assert(time.now() - t0 < 0.5)
+            assert(time.since(t0) < 500ms)
             assert(r.read-all() == Blob('..'))
         }
         let es = http.get("{srv.url}/events", headers: {accept-encoding: 'gzip'})
@@ -1064,7 +1064,7 @@ pub fn http2-flow-control-survives-abandoned-streams() {
             s.close()
         }
         for ..12 {
-            let timed-out = try { c.get('/slow', timeout: 0.05); false } catch _: client.ReadTimeout { true }
+            let timed-out = try { c.get('/slow', timeout: 50ms); false } catch _: client.ReadTimeout { true }
             assert(timed-out)
         }
         assert(#c.get('/big').content == 3000000)
@@ -1087,7 +1087,7 @@ pub fn http2-early-response-to-upload() {
         for ..3 {
             let t0 = time.now()
             assert(c.post('/deny', content: huge()).status-code == 413)
-            assert(time.now() - t0 < 2.0)
+            assert(time.since(t0) < 2s)
         }
         assert(c.get('/').ok?)
         c.close()
@@ -1096,7 +1096,7 @@ pub fn http2-early-response-to-upload() {
 
 pub fn extra-bytes-are-not-reused() {
     let s = Canned('HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirstHTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nsmuggled', close?: false)
-    let c = Client(base-url: s.url, timeout: 2)
+    let c = Client(base-url: s.url, timeout: 2s)
     assert(c.get('/a').text == 'first')
     assert(c.get('/b').text == 'first')
     c.close()
@@ -1138,7 +1138,7 @@ pub fn connect-retries-and-redirect-credentials() {
         e
     }
     assert(err != nil && err.request != nil)
-    assert(time.now() - t0 >= 0.9)
+    assert(time.since(t0) >= 900ms)
 
     let seen = []
     let mock = MockTransport(fn (req) {
@@ -1202,7 +1202,7 @@ class TlsProxy {
             }
             let tmp = Blob()
             while true {
-                let ready = match os.poll([(c, os.POLLIN), (up, os.POLLIN)], 5.0) {
+                let ready = match os.poll([(c, os.POLLIN), (up, os.POLLIN)], 5s) {
                     Ok(rs) => rs,
                     _      => []
                 }
@@ -1327,7 +1327,7 @@ pub fn http2-connections-limit() {
         assert(rs.drop(12).all?(r -> #r.content == 3000000))
         let n = spread.transport.pool.connections
         assert(n >= 2 && n <= 3)
-        assert(time.now() - t0 < 3.0)
+        assert(time.since(t0) < 3s)
         spread.close()
     }, tls: tls(), threads: 4)
 }

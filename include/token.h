@@ -37,6 +37,7 @@ enum {
         TOKEN_DYN_REGEX,
         TOKEN_INTEGER,
         TOKEN_REAL,
+        TOKEN_DURATION,
         TOKEN_DICT_OPEN,
         TOKEN_SET_OPEN,
         TOKEN_END,

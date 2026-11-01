@@ -231,7 +231,7 @@ pub fn message-is-plain-under-forced-color() {
         let result = sh.run(
             [ty.executable, '--color=always', str(file)],
             env=env,
-            timeout=30
+            timeout=30s
         )
         assert(result.fate == Exit(0), result.stderr)
         assert(result.stdout.strip() == 'plain', result.stdout)

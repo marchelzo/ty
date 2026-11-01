@@ -76,7 +76,7 @@ pub fn test-condvar-broadcast() {
         with mtx {
             break if arrived == N
         }
-        sleep(0.001)
+        sleep(1ms)
     }
     with mtx { go = true }
     cv.broadcast()
@@ -88,7 +88,7 @@ pub fn test-condvar-timed-wait() {
     let mtx = Mutex()
     let cv = CondVar()
     mtx.lock()
-    let ok = cv.wait(mtx, 0.01)
+    let ok = cv.wait(mtx, 10ms)
     assert(!ok)
     mtx.unlock()
 }
@@ -152,7 +152,7 @@ pub fn test-thread-pool-many-tasks() {
 
 pub fn test-future-cancel() {
     let pool = ThreadPool(1, fn (x) {
-        sleep(0.02)
+        sleep(20ms)
         x
     })
     let f1 = pool.submit(1)
@@ -180,21 +180,21 @@ pub fn test-note-notify-is-idempotent() {
 pub fn test-note-wait-already-notified() {
     let n = thread.note()
     thread.notify(n)
-    assert(thread.wait-note(n, 100))
+    assert(thread.wait-note(n, 100ms))
 }
 
 pub fn test-note-wait-timeout() {
     let n = thread.note()
-    assert(!thread.wait-note(n, 10))
+    assert(!thread.wait-note(n, 10ms))
 }
 
 pub fn test-note-cross-thread() {
     let n = thread.note()
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.notify(n)
     })
-    assert(thread.wait-note(n, 2000))
+    assert(thread.wait-note(n, 2000ms))
     assert(thread.notified?(n))
     t.join()
 }
@@ -202,9 +202,9 @@ pub fn test-note-cross-thread() {
 pub fn test-note-multiple-waiters() {
     let n = thread.note()
     let threads = [Thread(fn () {
-        thread.wait-note(n, 2000)
+        thread.wait-note(n, 2000ms)
     }) for _ in ..4]
-    sleep(0.001)
+    sleep(1ms)
     thread.notify(n)
     for t in threads { t.join() }
     assert(thread.notified?(n))
@@ -225,13 +225,13 @@ pub fn test-counter-add() {
 
 pub fn test-counter-wait-already-zero() {
     let c = thread.counter(0)
-    let v = thread.count-wait(c, 100)
+    let v = thread.count-wait(c, 100ms)
     assert(v == 0)
 }
 
 pub fn test-counter-wait-timeout() {
     let c = thread.counter(1)
-    let v = thread.count-wait(c, 10)
+    let v = thread.count-wait(c, 10ms)
     assert(v != 0)
 }
 
@@ -239,10 +239,10 @@ pub fn test-counter-wait-cross-thread() {
     let N = 4
     let c = thread.counter(N)
     let threads = [Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.count-add(c, -1)
     }) for _ in ..N]
-    let v = thread.count-wait(c, 2000)
+    let v = thread.count-wait(c, 2000ms)
     assert(v == 0)
     for t in threads { t.join() }
 }
@@ -254,7 +254,7 @@ pub fn test-counter-as-join-barrier() {
         results.push(i)
         thread.count-add(c, -1)
     }) for i in ..3]
-    let v = thread.count-wait(c, 2000)
+    let v = thread.count-wait(c, 2000ms)
     assert(v == 0)
     assert(#results == 3)
     for t in threads { t.join() }
@@ -263,14 +263,14 @@ pub fn test-counter-as-join-barrier() {
 pub fn test-wait-any-single-note-notified() {
     let n = thread.note()
     thread.notify(n)
-    let idx = thread.wait-any([n], 100)
+    let idx = thread.wait-any([n], 100ms)
     assert(idx == 0)
 }
 
 pub fn test-wait-any-timeout() {
     let n1 = thread.note()
     let n2 = thread.note()
-    let idx = thread.wait-any([n1, n2], 10)
+    let idx = thread.wait-any([n1, n2], 10ms)
     assert(idx == nil)
 }
 
@@ -278,20 +278,20 @@ pub fn test-wait-any-second-note() {
     let n1 = thread.note()
     let n2 = thread.note()
     thread.notify(n2)
-    let idx = thread.wait-any([n1, n2], 100)
+    let idx = thread.wait-any([n1, n2], 100ms)
     assert(idx == 1)
 }
 
 pub fn test-wait-any-counter-at-zero() {
     let c = thread.counter(0)
-    let idx = thread.wait-any([c], 100)
+    let idx = thread.wait-any([c], 100ms)
     assert(idx == 0)
 }
 
 pub fn test-wait-any-mixed-types() {
     let n = thread.note()
     let c = thread.counter(0)
-    let idx = thread.wait-any([n, c], 100)
+    let idx = thread.wait-any([n, c], 100ms)
     assert(idx == 1)
 }
 
@@ -299,10 +299,10 @@ pub fn test-wait-any-cross-thread() {
     let n1 = thread.note()
     let n2 = thread.note()
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.notify(n2)
     })
-    let idx = thread.wait-any([n1, n2], 2000)
+    let idx = thread.wait-any([n1, n2], 2000ms)
     assert(idx == 1)
     t.join()
 }
@@ -312,12 +312,12 @@ pub fn test-wait-any-multiple-ready() {
     let n2 = thread.note()
     thread.notify(n1)
     thread.notify(n2)
-    let idx = thread.wait-any([n1, n2], 100)
+    let idx = thread.wait-any([n1, n2], 100ms)
     assert(idx == 0 || idx == 1)
 }
 
 pub fn test-wait-any-empty-array() {
-    let idx = thread.wait-any([], 10)
+    let idx = thread.wait-any([], 10ms)
     assert(idx == nil)
 }
 
@@ -325,10 +325,10 @@ pub fn test-wait-any-counter-cross-thread() {
     let c = thread.counter(1)
     let n = thread.note()
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.count-add(c, -1)
     })
-    let idx = thread.wait-any([n, c], 2000)
+    let idx = thread.wait-any([n, c], 2000ms)
     assert(idx == 1)
     t.join()
 }
@@ -337,10 +337,10 @@ pub fn test-wait-any-note-before-counter() {
     let c = thread.counter(1)
     let n = thread.note()
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.notify(n)
     })
-    let idx = thread.wait-any([n, c], 2000)
+    let idx = thread.wait-any([n, c], 2000ms)
     assert(idx == 0)
     t.join()
 }
@@ -351,10 +351,10 @@ pub fn test-wait-any-many-mixed() {
     let c1 = thread.counter(5)
     let c2 = thread.counter(1)
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.count-add(c2, -1)
     })
-    let idx = thread.wait-any([n1, c1, n2, c2], 2000)
+    let idx = thread.wait-any([n1, c1, n2, c2], 2000ms)
     assert(idx == 3)
     t.join()
 }
@@ -363,14 +363,14 @@ pub fn test-wait-any-mixed-both-ready() {
     let n = thread.note()
     let c = thread.counter(0)
     thread.notify(n)
-    let idx = thread.wait-any([n, c], 100)
+    let idx = thread.wait-any([n, c], 100ms)
     assert(idx == 0 || idx == 1)
 }
 
 pub fn test-wait-any-mixed-timeout() {
     let n = thread.note()
     let c = thread.counter(3)
-    let idx = thread.wait-any([n, c], 10)
+    let idx = thread.wait-any([n, c], 10ms)
     assert(idx == nil)
 }
 
@@ -380,13 +380,13 @@ pub fn test-wait-any-condvar-signaled() {
     let ready = false
     thread.lock(mu)
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.lock(mu)
         ready = true
         thread.unlock(mu)
         thread.signal-cond(cv)
     })
-    let idx = thread.wait-any([cv], 2000, mu)
+    let idx = thread.wait-any([cv], 2000ms, mu)
     assert(idx == 0)
     assert(ready)
     thread.unlock(mu)
@@ -397,10 +397,10 @@ pub fn test-wait-any-condvar-vs-note() {
     let cv = thread.cond()
     let n = thread.note()
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.notify(n)
     })
-    let idx = thread.wait-any([n, cv], 2000)
+    let idx = thread.wait-any([n, cv], 2000ms)
     assert(idx == 0)
     t.join()
 }
@@ -409,10 +409,10 @@ pub fn test-wait-any-condvar-vs-counter() {
     let cv = thread.cond()
     let c = thread.counter(1)
     let t = Thread(fn () {
-        sleep(0.001)
+        sleep(1ms)
         thread.count-add(c, -1)
     })
-    let idx = thread.wait-any([cv, c], 2000)
+    let idx = thread.wait-any([cv, c], 2000ms)
     assert(idx == 1)
     t.join()
 }
@@ -428,7 +428,7 @@ pub fn test-wait-any-condvar-fires-in-mixed() {
         thread.unlock(mu)
         thread.signal-cond(cv)
     })
-    let idx = thread.wait-any([n, cv, c], 2000, mu)
+    let idx = thread.wait-any([n, cv, c], 2000ms, mu)
     assert(idx == 1)
     thread.unlock(mu)
     t.join()
@@ -444,7 +444,7 @@ pub fn test-wait-any-two-condvars() {
         thread.unlock(mu)
         thread.signal-cond(cv2)
     })
-    let idx = thread.wait-any([cv1, cv2], 2000, mu)
+    let idx = thread.wait-any([cv1, cv2], 2000ms, mu)
     assert(idx == 1)
     thread.unlock(mu)
     t.join()
@@ -460,7 +460,7 @@ pub fn test-note-with-mutex-handoff() {
         }
         thread.notify(done)
     })
-    thread.wait-note(done, 2000)
+    thread.wait-note(done, 2000ms)
     with mtx {
         assert(result == 42)
     }
@@ -476,7 +476,7 @@ pub fn test-counter-fan-out-fan-in() {
         with mtx { total += i }
         thread.count-add(c, -1)
     }) for i in ..N]
-    let v = thread.count-wait(c, 2000)
+    let v = thread.count-wait(c, 2000ms)
     assert(v == 0)
     with mtx {
         assert(total == N * (N - 1) / 2)

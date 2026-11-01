@@ -80,7 +80,7 @@ pub fn returns-false() {
 pub fn tagged() {
 }
 
-@timeout(0.5)
+@timeout(500ms)
 pub fn spins() {
     while true {}
 }

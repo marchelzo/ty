@@ -4,7 +4,7 @@ import term (event)
 class AfterApp < ink.Component {
     fired: Int = 0
     mount() {
-        after(1.0, -> do { fired += 1 })
+        after(1s, -> do { fired += 1 })
     }
     render() { <ink.Text>fired={fired}</ink.Text> }
 }
@@ -12,7 +12,7 @@ class AfterApp < ink.Component {
 class EveryApp < ink.Component {
     fired: Int = 0
     mount() {
-        every(0.5, -> do { fired += 1 })
+        every(500ms, -> do { fired += 1 })
     }
     render() { <ink.Text>fired={fired}</ink.Text> }
 }
@@ -21,7 +21,7 @@ class CancelApp < ink.Component {
     fired: Int = 0
     __timer: _ = nil
     mount() {
-        __timer = after(1.0, -> do { fired += 1 })
+        __timer = after(1s, -> do { fired += 1 })
     }
     cancel() {
         if __timer { __timer.cancel() }
@@ -31,7 +31,7 @@ class CancelApp < ink.Component {
 
 class TickApp < ink.Component {
     ticks: Int = 0
-    interval -> Float { 0.1 }
+    interval -> Duration { 100ms }
     tick() { ticks += 1 }
     render() { <ink.Text>ticks={ticks}</ink.Text> }
 }
@@ -40,9 +40,9 @@ pub fn after-fires-once() {
     let app = AfterApp()
     let h = ink.TestHarness(app, cols=40, rows=10)
     assert(app.fired == 0)
-    h.advance(1.0)
+    h.advance(1s)
     assert(app.fired == 1)
-    h.advance(1.0)
+    h.advance(1s)
     assert(app.fired == 1)
 }
 
@@ -50,11 +50,11 @@ pub fn every-repeats() {
     let app = EveryApp()
     let h = ink.TestHarness(app, cols=40, rows=10)
     assert(app.fired == 0)
-    h.advance(0.5)
+    h.advance(500ms)
     assert(app.fired == 1)
-    h.advance(0.5)
+    h.advance(500ms)
     assert(app.fired == 2)
-    h.advance(0.5)
+    h.advance(500ms)
     assert(app.fired == 3)
 }
 
@@ -63,7 +63,7 @@ pub fn cancel-prevents-fire() {
     let h = ink.TestHarness(app, cols=40, rows=10)
     assert(app.fired == 0)
     app.cancel()
-    h.advance(2.0)
+    h.advance(2s)
     assert(app.fired == 0)
 }
 
@@ -71,15 +71,15 @@ pub fn component-interval-tick() {
     let app = TickApp()
     let h = ink.TestHarness(app, cols=40, rows=10)
     assert(app.ticks == 0)
-    h.advance(0.1)
+    h.advance(100ms)
     assert(app.ticks == 1)
-    h.advance(0.1)
+    h.advance(100ms)
     assert(app.ticks == 2)
 }
 
 pub fn advance-no-overshoot() {
     let app = EveryApp()
     let h = ink.TestHarness(app, cols=40, rows=10)
-    h.advance(0.3)
+    h.advance(300ms)
     assert(app.fired == 0)
 }

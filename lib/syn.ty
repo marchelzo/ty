@@ -513,7 +513,7 @@ let ALIASES = %{
     'Lit':      'Literal',
 }
 
-let LITERALS = %['Integer', 'Real', 'String', 'SpecialString', 'Boolean', 'Nil', 'Regex']
+let LITERALS = %['Integer', 'Real', 'Duration', 'String', 'SpecialString', 'Boolean', 'Nil', 'Regex']
 
 pub fn kind-name(raw: String, stmt: Bool) -> String {
     if raw.match?(/[a-z]/) {

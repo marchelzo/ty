@@ -259,6 +259,8 @@ pub class FileInfo {
     noflush=(on: Bool)       { __set(7, on) }
 }
 
+pub use Stamp = Time[time::CLOCK_REALTIME]
+
 pub class Operations {
     getattr(path: String, fh: _) -> _                                    { throw FUSEError(ENOSYS) }
     readlink(path: String) -> String                                     { throw FUSEError(ENOSYS) }
@@ -291,7 +293,7 @@ pub class Operations {
     start(conn: ConnInfo, config: ?Config)                               { throw FUSEError(ENOSYS) }
     stop()                                                               { throw FUSEError(ENOSYS) }
     access(path: String, mode: Int) -> Bool                              { throw FUSEError(ENOSYS) }
-    utimens(path: String, atime: ?Float, mtime: ?Float, fh: _)           { throw FUSEError(ENOSYS) }
+    utimens(path: String, atime: ?Stamp, mtime: ?Stamp, fh: _)           { throw FUSEError(ENOSYS) }
     flock(path: String, fh: _, op: Int)                                  { throw FUSEError(ENOSYS) }
     fallocate(path: String, mode: Int, offset: Int, length: Int, fh: _)  { throw FUSEError(ENOSYS) }
     lseek(path: String, offset: Int, whence: Int, fh: _) -> Int          { throw FUSEError(ENOSYS) }
@@ -302,21 +304,17 @@ pub class Operations {
     }
 }
 
-fn timespec(t: _) -> (Int, Int) {
-    match t {
-        nil         => (0, 0),
-        t: Int      => (t, 0),
-        t: Float    => (int(t.floor), int((t - t.floor) * 1.0e9)),
-        {sec, nsec} => (sec, nsec),
-    }
+fn timespec(t: ?Stamp) -> (Int, Int) {
+    let n = (t == nil) ? 0 : int(t)
+    (n / 1000000000, n % 1000000000)
 }
 
-fn seconds(ts: Ptr[_]) -> Float | nil {
+fn stamp(ts: Ptr[_]) -> ?Stamp {
     let t = Timespec(ts)
     match t.nsec {
         ::UTIME_OMIT => nil,
-        ::UTIME_NOW  => time.utc(),
-        nsec         => float(t.sec) + float(nsec) / 1.0e9
+        ::UTIME_NOW  => time.time(),
+        nsec         => Time(t.sec * 1000000000 + nsec, time.CLOCK_REALTIME)
     }
 }
 
@@ -673,7 +671,7 @@ class Bridge {
     }
 
     utimens(path: Ptr[_], tv: Ptr[_], fi: ?Ptr[_]) -> CInt {
-        __done('utimens', c.str(path), seconds(tv), seconds(tv + 16), __handle(fi))
+        __done('utimens', c.str(path), stamp(tv), stamp(tv + 16), __handle(fi))
     }
 
     flock(path: Ptr[_], fi: ?Ptr[_], op: CInt) -> CInt {

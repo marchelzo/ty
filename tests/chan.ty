@@ -20,10 +20,10 @@ class IsolatedWorker {
 pub fn chan() {
     let ch = Channel()
     Thread(isolated=true, fn () {
-        sleep(0.05)
+        sleep(50ms)
         ch.send('hello')
     })
-    assert(ch.recv(0) == None)
+    assert(ch.recv(0s) == None)
     assert(ch.recv() == Some('hello'))
 
     // Composite message headers must not point into the sender's GC heap.

@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include "chrono.h"
 #include "http.h"
 #include "vm.h"
 #include "functions.h"
@@ -431,17 +432,18 @@ TY_BUILTIN(http_send_file)
         return BOOLEAN(true);
 }
 
-// _http.keepalive(loop: Ptr, id: Int, seconds: Float) -> nil
+// _http.keepalive(loop: Ptr, id: Int, idle: Duration) -> nil
 TY_BUILTIN(http_keepalive)
 {
-        Loop *L = LoopArg(ty, _name__, loop);
-        Xch *x  = XchGet(L, id);
+        Loop *L  = LoopArg(ty, _name__, loop);
+        Xch *x   = XchGet(L, id);
+        i64  ms  = ChronoMsCeil(ChronoDuration(ty, _name__, &idle));
 
-        if (!open_xch(x) || seconds <= 0) {
+        if (!open_xch(x) || ms <= 0) {
                 return NIL;
         }
 
-        x->ka    = (i64)(seconds * 1000.0);
+        x->ka    = ms;
         x->ka_at = L->now + x->ka;
         x->last  = L->now;
 

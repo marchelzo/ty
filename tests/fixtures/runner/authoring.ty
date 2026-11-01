@@ -93,7 +93,7 @@ pub fn no-yield(never: Int) {
 pub fn teardown-fails(bad-teardown: Int) {
 }
 
-@timeout(0.3)
+@timeout(300ms)
 pub fn setup-times-out(slow-setup: Int) {
 }
 

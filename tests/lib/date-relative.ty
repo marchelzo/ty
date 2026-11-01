@@ -1,4 +1,4 @@
-import date (..)
+import date hiding (Duration)
 
 fn rejects(operation: () -> Any) -> nil {
     try {
@@ -55,7 +55,7 @@ pub fn precision-and-grouping() {
 pub fn singular-and-plural() {
     let start = PlainDateTime(2024, 1, 1)
     for (unit, duration) in [
-        ('year', Duration(years: 1)), ('month', Duration(months: 1)),
+        ('year', date.Duration(years: 1)), ('month', date.Duration(months: 1)),
         ('week', WEEK), ('day', DAY), ('hour', HOUR), ('minute', MINUTE), ('second', SEC)
     ] {
         between(start, start + duration, "1 {unit}")

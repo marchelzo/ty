@@ -1042,7 +1042,7 @@ fn tracer(tty: String, skip: Int) {
     let out = []
     let live = true
     while live {
-        os.poll(fds, out, 0.05)
+        os.poll(fds, out, 50ms)
         for (fd, _) in out if fd == 0 {
             live = (os.read(0, 4096) ?? Blob()).size() > 0
         }
@@ -1051,7 +1051,7 @@ fn tracer(tty: String, skip: Int) {
         }
     }
 
-    os.usleep(20000)
+    os.sleep(20ms)
     for record in ring.drain() {
         frame.put(frame.CALL, record)
     }
@@ -2360,7 +2360,7 @@ pub fn digest(state: Dict[String, _]) -> String {
 }
 
 class Timeline {
-    __t0:     Float
+    __t0:     Time[time::CLOCK_MONOTONIC]
     __screen: Screen
     __shown:  Dict[String, _]
     __bells:  Int
@@ -2382,12 +2382,16 @@ class Timeline {
         __t0 = time.now()
     }
 
-    us(t: Float = time.now()) -> Int {
-        iround((t - __t0) * 1.0e6)
+    us(t: Time[time::CLOCK_MONOTONIC] = time.now()) -> Int {
+        iround((t - __t0) / 1us)
+    }
+
+    at(us: Int) -> Time[time::CLOCK_MONOTONIC] {
+        __t0 + us * 1us
     }
 
     since(nanos: Int) -> Int {
-        iround(nanos / 1000.0 - __t0 * 1.0e6)
+        iround((nanos - int(__t0)) / 1000.0)
     }
 
     event(type: String, fields: Dict[String, _] = %{}) -> Dict[String, _] {
@@ -3054,7 +3058,7 @@ class Tracer {
         [__sock, *__peers.keys()]
     }
 
-    wait-ready(timeout: Float) -> Bool {
+    wait-ready(timeout: time::Timeout) -> Bool {
         true
     }
 
@@ -3085,11 +3089,11 @@ class Tracer {
         }
     }
 
-    finish(timeout: Float = 3.0) {
+    finish(timeout: Duration = 3s) {
         let deadline = time.now() + timeout
         let ready    = []
         while #__peers > 0 && time.now() < deadline {
-            break if os.poll([(it, os.POLLIN) for fds], ready, 0.05) == 0
+            break if os.poll([(it, os.POLLIN) for fds], ready, 50ms) == 0
             for (fd, _) in ready {
                 pump(fd)
             }
@@ -3173,10 +3177,10 @@ class Tracer {
         error == nil && lost == nil
     }
 
-    wait-ready(timeout: Float) -> Bool {
-        let deadline = time.now() + timeout
+    wait-ready(timeout: time::Timeout) -> Bool {
+        let deadline = (timeout :: Duration) ? time.now() + timeout : timeout
         while !ready? && alive? && time.now() < deadline {
-            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            os.poll([(__out, os.POLLIN)], [], deadline)
             pump(__out)
         }
         ready?
@@ -3202,18 +3206,18 @@ class Tracer {
 
     __stderr() -> String {
         let ready = []
-        if os.poll([(__err, os.POLLIN)], ready, 1.0) > 0 {
+        if os.poll([(__err, os.POLLIN)], ready, 1s) > 0 {
             (os.read(__err, 4096) ?? Blob()).str().lines().filter(\#_ > 0)[-1] ?? ''
         } else {
             ''
         }
     }
 
-    finish(timeout: Float = 3.0) {
+    finish(timeout: Duration = 3s) {
         os.close(__in)
         let deadline = time.now() + timeout
         while lost == nil && time.now() < deadline {
-            os.poll([(__out, os.POLLIN)], [], deadline - time.now())
+            os.poll([(__out, os.POLLIN)], [], deadline)
             pump(__out)
         }
         os.close(__out)
@@ -3232,8 +3236,8 @@ class Tracer {
 }
 #|]
 
-const SETTLE    = 0.02
-const SYNC_WAIT = 1.0
+const SETTLE    = 20ms
+const SYNC_WAIT = 1s
 const SIGNALS   = [os.SIGWINCH, os.SIGCHLD, os.SIGTERM, os.SIGHUP, os.SIGINT, os.SIGQUIT]
 
 use Options = {
@@ -3303,7 +3307,7 @@ class SignalQueue {
     }
 
     take() -> Array[Int] {
-        let sigs    = [it.ident for __kq.poll(0.0)]
+        let sigs    = [it.ident for __kq.poll(0s)]
         let pending = os.Signals.pending
         for sigs {
             if it in pending {
@@ -3370,7 +3374,7 @@ class Capture {
     __signals:  SignalQueue
     __stdin?:   Bool
     __dirty?:   Bool
-    __quiet:    Float
+    __quiet:    Time[time::CLOCK_MONOTONIC]
     __termios:  _
     __started:  String
     __script:   Array[(Int, String)]
@@ -3420,11 +3424,11 @@ class Capture {
     __start-tracer() {
         let failure = try {
             let t = Tracer(__pty.name)
-            if t.wait-ready(10.0) {
+            if t.wait-ready(10s) {
                 __tracer = t
                 return
             }
-            t.finish(0.5)
+            t.finish(500ms)
             t.error ?? 'tracer did not become ready'
         } catch e: RuntimeError | OSError {
             "{e}"
@@ -3504,10 +3508,10 @@ class Capture {
         }
     }
 
-    __timeout() -> Float {
-        let wait = __dirty? ? SETTLE : 0.1
+    __timeout() -> time::Timeout {
+        let wait = __dirty? ? SETTLE : 100ms
         match __script {
-            [(at, _), *] => max(0.0, min(wait, (at - __tl.us()) / 1.0e6)),
+            [(at, _), *] => min(time.now() + wait, __tl.at(at)),
             _            => wait
         }
     }
@@ -3537,7 +3541,7 @@ class Capture {
 
     __drain() {
         let ready = []
-        while os.poll([(__pty.master, os.POLLIN)], ready, 0.05) > 0 {
+        while os.poll([(__pty.master, os.POLLIN)], ready, 50ms) > 0 {
             break if !__on-output()
         }
         __reap(0)

@@ -1,5 +1,5 @@
 import ffi as c (C!)
-import fuse (FUSEError, FileInfo, Operations)
+import fuse (FUSEError, FileInfo, Operations, Stamp)
 import errno (EINVAL)
 import os (AT_FDCWD, AT_SYMLINK_NOFOLLOW, O_CREAT)
 
@@ -14,10 +14,10 @@ fn sys(rc: Int) -> Int {
     (rc == -1) ? throw OSError() : rc
 }
 
-fn timespec(t: ?Float) -> (Int, Int) {
+fn timespec(t: ?Stamp) -> (Int, Int) {
     match t {
         nil => (0, UTIME_OMIT),
-        t   => (int(t.floor), int((t - t.floor) * 1.0e9))
+        t   => (int(t) / 1000000000, int(t) % 1000000000)
     }
 }
 
@@ -99,7 +99,7 @@ class Loopback < Operations {
         sys(os.rename(__(old), __(new)))
     }
 
-    utimens(path: String, atime: ?Float, mtime: ?Float, _) {
+    utimens(path: String, atime: ?Stamp, mtime: ?Stamp, _) {
         let times = c.new-auto(c.i64, 4)
 
         (times[0], times[1]) = timespec(atime)

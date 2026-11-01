@@ -99,7 +99,7 @@ pub fn batches(q) {
     q.close()
     q.put([43])
     assert(q.take() == [43])
-    assert(q.try-take(1.0) == None)
+    assert(q.try-take(1s) == None)
 }
 
 pub fn handoff(make) {

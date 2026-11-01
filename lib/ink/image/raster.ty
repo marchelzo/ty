@@ -26,9 +26,9 @@ kernel! pub fn alpha-box(src: Blob, w: Int, h: Int, floor: Int, out: Array[Int])
 
 pub class Frame {
     rgba:  Blob
-    delay: Float
+    delay: Duration
 
-    init(rgba: Blob, delay: Float = 0.0) {
+    init(rgba: Blob, delay: Duration = 0s) {
         self.rgba  = rgba
         self.delay = delay
     }

@@ -3,6 +3,7 @@ import ffi as c (C!)
 import os
 import path (Path)
 import sh
+import time
 import ty
 
 pub class GitError < RuntimeError {
@@ -705,11 +706,12 @@ pub class Signature {
     init(
         name: String,
         email: String,
-        date: ZonedDateTime | Instant = Now.zoned-date-time-iso()
+        date: ZonedDateTime | Instant | Time[time::CLOCK_REALTIME] = Now.zoned-date-time-iso()
     ) {
         let (instant, offset-nanos) = match date {
             d: ZonedDateTime => (d.to-instant(), d.offset-nanoseconds),
             i: Instant       => (i, 0),
+            t                => (Instant.of(t), 0),
         }
         if offset-nanos % 60000000000 != 0 {
             throw ValueError('git signatures require a whole-minute UTC offset')

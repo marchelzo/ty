@@ -38,7 +38,7 @@ fn compiled(source: String) -> sh.CmdResult {
     file.write(source)
     defer dir.rmtree(quiet: true)
 
-    sh.run([ty.executable, '-c', str(file)], timeout=30, combineOutput=true)
+    sh.run([ty.executable, '-c', str(file)], timeout=30s, combineOutput=true)
 }
 
 pub fn clap-automatic-shorts-yield-to-explicit-ones() {

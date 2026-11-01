@@ -1,5 +1,6 @@
 import path (Path)
 import os
+import time
 
 #|if __linux__
 import inotify
@@ -47,7 +48,7 @@ pub class Watcher {
     dir -> Path { __dir }
     open? -> Bool { !__closed }
 
-    events*(timeout: Float = -1.0) {
+    events*(timeout: ?time::Timeout = nil) {
         for ev in __ino.events(timeout) {
             let $name = ev.name or continue
             let $dir = __wd-to-dir[ev.wd] or continue
@@ -183,7 +184,7 @@ pub class Watcher {
     dir -> Path { __dir }
     open? -> Bool { !__closed }
 
-    events*(timeout: Float = -1.0) {
+    events*(timeout: ?time::Timeout = nil) {
         for ev in __kq.events(timeout) {
             let fd = ev.ident
             let ff = ev.fflags
@@ -226,7 +227,7 @@ pub class Watcher {
 
 #|]
 
-pub fn watch*(dir: String | Path, recursive: Bool = false, timeout: Float = -1.0) {
+pub fn watch*(dir: String | Path, recursive: Bool = false, timeout: ?time::Timeout = nil) {
     let ^w = Watcher(dir, recursive)
     yield *w.events(timeout)
 }

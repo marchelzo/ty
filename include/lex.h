@@ -7,6 +7,26 @@
 
 typedef struct token Token;
 
+typedef enum {
+        NUM_OK,
+        NUM_TOO_LONG,
+        NUM_ERRNO,
+        NUM_BAD_BASE,
+        NUM_TRAILING,
+        NUM_DURATION_RANGE
+} NumError;
+
+typedef struct {
+        NumError err;
+        int      errnum;
+        bool     real;
+        bool     duration;
+        intmax_t k;
+        double   x;
+        i64      ns;
+        isize    n;
+} NumLit;
+
 typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX,
@@ -103,6 +123,9 @@ lex_push(Ty *ty, LexState const *st);
 
 bool
 lex_pop(Ty *ty);
+
+void
+ScanNumber(char const *s, char const *end, bool float_ok, NumLit *out);
 
 #endif
 

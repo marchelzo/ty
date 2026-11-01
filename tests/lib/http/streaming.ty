@@ -43,7 +43,7 @@ pub fn chunked-streaming-and-keep-alive() {
         c.send('POST /all HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n')
         for i in ..20 {
             c.send("1000\r\n{'q' * 4096}\r\n")
-            os.sleep(0.005)
+            os.sleep(5ms)
         }
         c.send('0\r\n\r\n')
         assert(c.response().body == str(20 * 4096))

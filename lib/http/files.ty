@@ -19,14 +19,17 @@ fn directory?(st: os.Stat) -> Bool {
     (st.mode & S_IFMT) == S_IFDIR
 }
 
+fn unix(t: Time[time::CLOCK_REALTIME]) -> Int {
+    int(t) / 1000000000
+}
+
 fn etag-of(st: os.Stat, suffix: String) -> String {
-    let nanos = int(st.mtime * 1000000000.0)
-    "W/\"{st.size:x}-{nanos:x}{suffix}\""
+    "W/\"{st.size:x}-{int(st.mtime):x}{suffix}\""
 }
 
 fn parse-date(s: String) -> Int | nil {
     try {
-        time.time(time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT'), utc: true)
+        unix(time.time(time.strptime(s, '%a, %d %b %Y %H:%M:%S GMT'), utc: true))
     } catch _ {
         nil
     }
@@ -119,7 +122,7 @@ pub fn send-file(
     path: String,
     download: String | Bool | nil = nil,
     content-type: String | nil = nil,
-    max-age: Int | nil = nil,
+    max-age: ?Duration = nil,
     immutable: Bool = false,
     precompressed: Bool = false,
     etag: Bool = true,
@@ -146,7 +149,7 @@ pub fn send-file(
         rsp.header('Vary', 'Accept-Encoding')
     }
 
-    let mtime = int(st.mtime)
+    let mtime = unix(st.mtime)
     let et = etag-of(st, (coding == nil) ? '' : "-{coding}")
 
     rsp.content-type = content-type ?? mime-of(path)
@@ -160,7 +163,7 @@ pub fn send-file(
         rsp.header('Last-Modified', c.date(mtime))
     }
     if max-age != nil {
-        rsp.header('Cache-Control', "public, max-age={max-age}{immutable ? ', immutable' : ''}")
+        rsp.header('Cache-Control', "public, max-age={max-age.ns / 1000000000}{immutable ? ', immutable' : ''}")
     }
     if coding != nil {
         rsp.header('Content-Encoding', coding)

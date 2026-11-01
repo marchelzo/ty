@@ -888,8 +888,8 @@ pub ns run-loop {
         CFRunLoopGetCurrent()
     }
 
-    pub fn run(timeout: Float = 1.0) -> Int {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, 1)
+    pub fn run(timeout: Duration = 1s) -> Int {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout.secs, 1)
     }
 
     pub fn stop() {
@@ -1434,7 +1434,7 @@ pub class AudioQueue {
             rl-ready.put(CFRunLoopGetCurrent())
             for (;;) {
                 if CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1e9, 0) == CF.kCFRunLoopRunFinished {
-                    os.sleep(0.001)
+                    os.sleep(1ms)
                 }
             }
         }, isolated=true)
@@ -1809,7 +1809,7 @@ C! libsystem fn {
 
 pub use DirectoryEntryStat = {
     dev: Int, ino: Int, mode: Int, nlink: Int, uid: Int,
-    size: Int, mtime: Float, blocks: Int
+    size: Int, mtime: Time[time::CLOCK_REALTIME], blocks: Int
 }
 
 pub use DirectoryEntry = {
@@ -1895,8 +1895,7 @@ pub fn bulk-directory-entries(path: String, buffer-size: Int = 262144)
                     nlink: dir? ? 1 : c.load(c.u32, record + 76),
                     uid: c.load(c.u32, record + 56),
                     size: dir? ? 0 : c.load(c.i64, record + 88),
-                    mtime: float(c.load(c.i64, record + 40))
-                         + float(c.load(c.i64, record + 48)) / 1.0e9,
+                    mtime: Time(c.load(c.i64, record + 40) * 1000000000 + c.load(c.i64, record + 48), time.CLOCK_REALTIME),
                     blocks: max(0, allocation) / 512
                 }
             }

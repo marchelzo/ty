@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
+#include "chrono.h"
 #include "http.h"
 #include "vm.h"
 #include "functions.h"
@@ -1928,11 +1929,12 @@ h2_ready(H2C *h, H2S *st, int what)
         return true;
 }
 
-// _http.h2-wait(h2: Ptr, sid: Int, what: Int, timeout: Float = -1.0) -> Bool
+// _http.h2-wait(h2: Ptr, sid: Int, what: Int, timeout: ?time::Timeout = nil) -> Bool
 TY_BUILTIN(http_h2_wait)
 {
         H2C *h    = PtrArg(ty, _name__, "h2", h2);
-        u64 until = TyThreadGetTime() + (u64)(max(timeout, 0.0) * 1e9);
+        i64  ns   = ChronoTimeout(ty, _name__, &timeout);
+        u64 until = TyThreadGetTime() + (u64)max(ns, 0);
 
         UnlockTy();
         TyMutexLock(&h->mu);
@@ -1941,7 +1943,7 @@ TY_BUILTIN(http_h2_wait)
 
         while (!h2_ready(h, h2s_find(h, sid), what)) {
                 u64 now = TyThreadGetTime();
-                if (timeout < 0) {
+                if (ns < 0) {
                         TyCondVarWait(&h->cv, &h->mu);
                 } else if (
                         (now >= until)

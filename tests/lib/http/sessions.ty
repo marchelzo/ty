@@ -1,6 +1,7 @@
 import http
 import http.session as session
 import os
+import time
 import json
 import _client (serve, Client)
 
@@ -12,7 +13,7 @@ fn raw-headers(port: Int, path: String, cookie: String | nil = nil) -> (Int, Arr
     c.request('GET', path, nil, h)
     let fd = c.fd
     let buf = Blob()
-    os.sleep(0.15)
+    os.sleep(150ms)
     os.read(fd, buf, 65536)
     c.close()
     let text = buf.str!()
@@ -52,8 +53,8 @@ pub fn set-cookie-attributes() {
     serve(fn (srv) {
         srv.get('/set', fn (req, rsp) {
             rsp.set-cookie('a', '1')
-            rsp.set-cookie('b', 'two', max-age: 60, path: '/x', domain: 'example.com', same-site: 'Strict', secure: true)
-            rsp.set-cookie('c', 'x', http-only: false, same-site: false, expires: 0)
+            rsp.set-cookie('b', 'two', max-age: 1m, path: '/x', domain: 'example.com', same-site: 'Strict', secure: true)
+            rsp.set-cookie('c', 'x', http-only: false, same-site: false, expires: time.time({year: 70, mon: 0, mday: 1}, utc: true))
             rsp.clear-cookie('old')
             rsp.plain('ok')
         })
@@ -114,9 +115,9 @@ fn session-routes(srv) {
 pub fn cookie-store-sessions() {
     let srv = http.Server('127.0.0.1', 0, threads: 2)
     session-routes(srv)
-    srv.sessions(SECRET, max-age: 3600)
+    srv.sessions(SECRET, max-age: 1h)
     let t = Thread(srv.run)
-    os.sleep(0.1)
+    os.sleep(100ms)
     let p = srv.port
 
     let (_, none, body0) = raw-headers(p, '/peek')
@@ -160,7 +161,7 @@ pub fn memory-store-sessions() {
     session-routes(srv)
     srv.sessions([SECRET, 'previous secret value!!'], store: store)
     let t = Thread(srv.run)
-    os.sleep(0.1)
+    os.sleep(100ms)
     let p = srv.port
 
     let (_, l1, _) = raw-headers(p, '/inc')

@@ -12,7 +12,7 @@ pub fn setting() -> String {
     'real'
 }
 
-pub fn stamp() -> Float {
+pub fn stamp() -> Time[time::CLOCK_MONOTONIC] {
     time.now()
 }
 

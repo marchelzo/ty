@@ -1777,6 +1777,7 @@ builtin_nominal_arity(int class_id)
         case CLASS_ARRAY:
         case CLASS_SET:
         case CLASS_HEAP:
+        case CLASS_TIME:
         case CLASS_PTR:
         case CLASS_QUEUE:
         case CLASS_SHARED_QUEUE:
@@ -5576,12 +5577,13 @@ static T2Type
 constant_default_type(T2Checker *checker, Expr const *value)
 {
         switch (value->type) {
-        case EXPRESSION_NIL:     return t2_primitive(checker->universe, T2_TYPE_NIL);
-        case EXPRESSION_BOOLEAN: return t2_primitive(checker->universe, T2_TYPE_BOOL);
-        case EXPRESSION_INTEGER: return t2_primitive(checker->universe, T2_TYPE_INT);
-        case EXPRESSION_REAL:    return t2_primitive(checker->universe, T2_TYPE_FLOAT);
-        case EXPRESSION_STRING:  return t2_primitive(checker->universe, T2_TYPE_STRING);
-        default:                 return T2_TYPE_INVALID;
+        case EXPRESSION_NIL:      return t2_primitive(checker->universe, T2_TYPE_NIL);
+        case EXPRESSION_BOOLEAN:  return t2_primitive(checker->universe, T2_TYPE_BOOL);
+        case EXPRESSION_INTEGER:  return t2_primitive(checker->universe, T2_TYPE_INT);
+        case EXPRESSION_REAL:     return t2_primitive(checker->universe, T2_TYPE_FLOAT);
+        case EXPRESSION_STRING:   return t2_primitive(checker->universe, T2_TYPE_STRING);
+        case EXPRESSION_DURATION: return nominal_application(checker, CLASS_DURATION, "Duration", NULL, 0, value);
+        default:                  return T2_TYPE_INVALID;
         }
 }
 
@@ -8957,7 +8959,7 @@ instantiate_type(T2Checker *checker, T2Type type, Expr const *site, char const *
 }
 
 static T2Type
-infer_call_types(
+infer_call_types_x(
         T2Checker         *checker,
         T2Type             callee,
         T2Type const      *arguments,
@@ -9540,6 +9542,59 @@ infer_call_types(
         }
 
         return t2_primitive(checker->universe, T2_TYPE_ERROR);
+}
+
+static T2Type
+pin_time_clock(T2Checker *checker, T2Type type, Expr const *site)
+{
+        T2Universe *u       = checker->universe;
+        T2Nominal  *nominal = nominal_from_type(checker, type);
+
+        if (nominal == NULL || nominal->class_id != CLASS_TIME) {
+                return type;
+        }
+
+        T2Type meta  = t2_type_child(u, type, 0);
+        T2Type clock = resolved_operation_type(checker, meta, T2_PREFER_LOWER_BOUND);
+
+        if (
+                (t2_type_kind(u, meta)  != T2_TYPE_META)
+             || (t2_type_kind(u, clock) != T2_TYPE_LITERAL_INT)
+        ) {
+                return type;
+        }
+
+        (void)constrain_type(checker, site, meta, clock, "clock-mismatch", "a Time stays on its clock");
+
+        return nominal_application(checker, CLASS_TIME, "Time", &clock, 1, site);
+}
+
+static T2Type
+infer_call_types(
+        T2Checker         *checker,
+        T2Type             callee,
+        T2Type const      *arguments,
+        usize              argument_count,
+        T2Type const      *keyword_arguments,
+        char const *const *keywords,
+        usize              keyword_count,
+        Expr const        *site,
+        bool               diagnose
+)
+{
+        T2Type result = infer_call_types_x(
+                checker,
+                callee,
+                arguments,
+                argument_count,
+                keyword_arguments,
+                keywords,
+                keyword_count,
+                site,
+                diagnose
+        );
+
+        return (result == T2_TYPE_INVALID) ? result : pin_time_clock(checker, result, site);
 }
 
 static T2Type
@@ -18585,6 +18640,7 @@ template_value_type(T2TemplateScan *scan, Expr const *value)
         case EXPRESSION_NIL:
         case EXPRESSION_INTEGER:
         case EXPRESSION_REAL:
+        case EXPRESSION_DURATION:
         case EXPRESSION_BOOLEAN:
         case EXPRESSION_STRING:
         case EXPRESSION_VALUE:
@@ -18882,6 +18938,9 @@ infer_expression(T2Checker *checker, Expr const *source)
         }
         case EXPRESSION_REAL:
                 result = t2_primitive(checker->universe, T2_TYPE_FLOAT);
+                break;
+        case EXPRESSION_DURATION:
+                result = nominal_application(checker, CLASS_DURATION, "Duration", NULL, 0, expression);
                 break;
         case EXPRESSION_NIL:
                 result = known_nil_type(checker);
@@ -20820,6 +20879,7 @@ expression_is_expansive(Expr const *source)
         case EXPRESSION_BOOLEAN:
         case EXPRESSION_STRING:
         case EXPRESSION_REAL:
+        case EXPRESSION_DURATION:
         case EXPRESSION_NIL:
         case EXPRESSION_IDENTIFIER:
                 return false;
@@ -22432,6 +22492,10 @@ literal_pattern_type(T2Checker *checker, Expr const *pattern)
 
         if (operand != NULL && operand->type == EXPRESSION_REAL) {
                 return t2_primitive(checker->universe, T2_TYPE_FLOAT);
+        }
+
+        if (operand != NULL && operand->type == EXPRESSION_DURATION) {
+                return nominal_application(checker, CLASS_TIMEDELTA, "TimeDelta", NULL, 0, pattern);
         }
 
         return T2_TYPE_INVALID;
@@ -34802,6 +34866,12 @@ check_nominal_value(
         }
 
         switch (class) {
+        case CLASS_TIME:
+        {
+                Value clock = INTEGER(value->clk);
+                return check_value(ty, stack, t2_type_child(universe, type, 0), &clock);
+        }
+
         case CLASS_REGEX:
         case CLASS_REGEXV:
         {

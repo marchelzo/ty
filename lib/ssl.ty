@@ -548,11 +548,13 @@ pub fn connect(
 /// `(cert, key)`. Intended for development servers and tests.
 pub fn self-signed(
     cn: String = 'localhost',
-    days: Int = 30,
+    lifetime: Duration = 30d,
     san: Array[String] = ['DNS:localhost', 'IP:127.0.0.1', 'IP:::1']
 ) -> (String, String) {
     need()
-    match x.self-signed(cn, days, san.join(','), (os.getpid() << 16) ^ int(time.utc())) {
+    let days   = int((lifetime + 1d - 1ns) / 1d)
+    let serial = (os.getpid() << 16) ^ (int(time.time()) / 1000000000)
+    match x.self-signed(cn, days, san.join(','), serial) {
         what: String => throw SSLError(what),
         pair         => pair
     }

@@ -4,7 +4,7 @@ fn values(cells: Array[String]) -> Array[String | nil] {
     let repl = Repl()
     defer repl.close()
 
-    cells.map(c -> repl.eval(c, 30000)).map(r -> r.error ?? r.value)
+    cells.map(c -> repl.eval(c, 30s)).map(r -> r.error ?? r.value)
 }
 
 pub fn realiasing-a-module-keeps-the-first-alias() {

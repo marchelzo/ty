@@ -117,7 +117,7 @@ fn main() {
         http1: (opts['h2c'] != true),
         http2: (opts['http1'] != true),
         verify: (opts['insecure'] != true),
-        timeout: Timeout(float(values['timeout'] ?? '30')),
+        timeout: Timeout(abs(float(values['timeout'] ?? '30') * 1s)),
         follow-redirects: (opts['follow'] == true),
         proxy: values['proxy'],
         decode: (opts['raw'] != true),

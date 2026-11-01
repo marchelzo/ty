@@ -1,5 +1,6 @@
 import path
 import os
+import time
 import ty
 import ty.parse as parse
 import ty.test (assert-throws)
@@ -317,7 +318,8 @@ pub fn stat-test() {
         let st = file.stat
         assert(st.size :: Int)
         assert(st.mode :: Int)
-        assert((st.mtime :: Int) || (st.mtime :: Float))
+        assert(st.mtime :: Time[time::CLOCK_REALTIME])
+        assert(time.since(st.mtime) < 1m)
         file.unlink()
     }
 }

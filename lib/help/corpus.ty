@@ -727,7 +727,7 @@ pub fn cache-file() -> Path {
 
 pub fn stamp() -> String {
     let files = [*library-modules().values(), *tour-pages(), Path(ty.executable).resolve]
-    let times = files.map(\_.stat.mtime)
+    let times = files.map(\int(_.stat.mtime))
     "{VERSION}|{#files}|{times.max()}|{times.sum()}"
 }
 
@@ -740,7 +740,7 @@ fn dump(name: String, scratch: Path) -> Array[_] {
     for [[], ['--static']] {
         let result = run(
             [ty.executable, '--color=never', str(worker()), name, str(out), *it],
-            timeout: 60
+            timeout: 60s
         )
         if result.fate == Success && out.exists? {
             return json.parse(out.read-text()) ?? []

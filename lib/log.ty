@@ -18,7 +18,7 @@
  * `critical!`. A disabled call costs one comparison and evaluates none of
  * its arguments. After the message come `name: value` fields; a bare
  * identifier is shorthand for `name: name`. `err: e` attaches an exception
- * together with the trace of the throw being handled. `@every: secs`
+ * together with the trace of the throw being handled. `@every: 5s`
  * rate-limits a call site (the next record carries `suppressed=N`) and
  * `@once` lets it fire a single time.
  *
@@ -200,7 +200,7 @@ pub class LogRecord {
     msg:    String
     fields: Array[(String, _)]
     spans:  Array[String]
-    time:   Int
+    time:   Time[tm::CLOCK_REALTIME]
     thread: Int
     tname:  String
     file:   String | nil
@@ -226,7 +226,7 @@ pub class LogRecord {
         self.msg    = msg
         self.fields = fields
         self.spans  = spans
-        self.time   = tm.utime()
+        self.time   = tm.time()
         self.thread = Thread.id()
         self.tname  = thread-label()
         self.file   = file
@@ -395,13 +395,13 @@ class Site {
     file:    String | nil
     line:    Int | nil
     keys:    Array[String]
-    every:   Float | nil
+    every:   Duration | nil
     once:    Bool
-    next:    Float
+    next:    Time[Any] | nil
     skipped: Int
     fired:   Bool
 
-    init(route: LogRoute, level: Int, file: String | nil, line: Int | nil, keys: Array[String], every: Float | nil, once: Bool) {
+    init(route: LogRoute, level: Int, file: String | nil, line: Int | nil, keys: Array[String], every: Duration | nil, once: Bool) {
         self.route   = route
         self.level   = level
         self.file    = file
@@ -409,7 +409,7 @@ class Site {
         self.keys    = keys
         self.every   = every
         self.once    = once
-        self.next    = 0.0
+        self.next    = nil
         self.skipped = 0
         self.fired   = false
     }
@@ -465,26 +465,31 @@ fn thread-label() -> String {
     s
 }
 
-fn clock(sec: Int) {
+fn clock(t: Time[tm::CLOCK_REALTIME]) {
+    let sec = int(t) / 1000000000
     if sec == clock-sec && UTC == clock-utc {
         return
     }
     clock-sec = sec
     clock-utc = UTC
     if UTC {
-        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', tm.gmtime(sec))
+        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', tm.gmtime(t))
         clock-zone = 'Z'
     } else {
-        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', sec)
-        let z = tm.strftime('%z', sec)
+        clock-iso  = tm.strftime('%Y-%m-%dT%H:%M:%S', t)
+        let z = tm.strftime('%z', t)
         clock-zone = (#z == 5) ? "{z[0;3]}:{z[3;5]}" : z
     }
     clock-text = clock-iso.replace('T', ' ')
 }
 
-fn timestamp(us: Int) -> String {
-    clock(us / 1000000)
-    "{clock-iso}.{MILLIS[(us / 1000) % 1000]}{clock-zone}"
+fn millis(t: Time[tm::CLOCK_REALTIME]) -> String {
+    MILLIS[int(t) / 1000000 % 1000]
+}
+
+fn timestamp(t: Time[tm::CLOCK_REALTIME]) -> String {
+    clock(t)
+    "{clock-iso}.{millis(t)}{clock-zone}"
 }
 
 fn resolve(r: LogRoute) {
@@ -576,7 +581,7 @@ fn write-all(fd: Int, data: Blob) -> Bool {
         }
         if e == errno.EAGAIN && stalls < 20 {
             stalls += 1
-            os.poll([(fd, os.POLLOUT)], 0.1)
+            os.poll([(fd, os.POLLOUT)], 100ms)
             continue
         }
         return false
@@ -671,8 +676,8 @@ fn fmt-console(rec: LogRecord, color: Bool, source: Bool) -> Blob {
     let b = Blob()
     let lv = rec.level
     let label = (lv >= 0 && lv < #LABELS) ? LABELS[lv] : "L{lv}   "
-    clock(rec.time / 1000000)
-    let stamp = "{clock-text}.{MILLIS[(rec.time / 1000) % 1000]}"
+    clock(rec.time)
+    let stamp = "{clock-text}.{millis(rec.time)}"
     let scope = (#rec.spans == 0) ? rec.module : "{rec.module}[{rec.spans.join('.')}]"
     let lines = rec.msg.strip-right().split("\n")
 
@@ -874,9 +879,8 @@ fn fmt-journal(rec: LogRecord, identifier: String) -> Blob {
 }
 
 fn fmt-syslog(rec: LogRecord, identifier: String, facility: Int) -> Blob {
-    let sec = rec.time / 1000000
     let pri = facility * 8 + priority(rec.level)
-    let when = UTC ? tm.strftime('%b %e %H:%M:%S', tm.gmtime(sec)) : tm.strftime('%b %e %H:%M:%S', sec)
+    let when = tm.strftime('%b %e %H:%M:%S', UTC ? tm.gmtime(rec.time) : rec.time)
     let scope = (#rec.spans == 0) ? rec.module : "{rec.module}[{rec.spans.join('.')}]"
     Blob("<{pri}>{when} {identifier}[{PID}]: {scope}: {clean(summary(rec).replace("\n", ' | '))}")
 }
@@ -1433,15 +1437,11 @@ class Writer {
         }
     }
 
-    drain(timeout: Float = 5.0) {
+    drain(timeout: Duration = 5s) {
         thread.lock(__mtx.inner)
         let deadline = tm.now() + timeout
-        while #__queue > 0 || __busy {
-            let left = deadline - tm.now()
-            if left <= 0.0 {
-                break
-            }
-            __idle.wait(__mtx, left)
+        while (#__queue > 0 || __busy) && tm.now() < deadline {
+            __idle.wait(__mtx, deadline)
         }
         thread.unlock(__mtx.inner)
     }
@@ -1542,7 +1542,7 @@ fn emit-site(site: Site, func: _, msg: _, *vals: _) {
 #|else
         let now = tm.now(tm.CLOCK_MONOTONIC)
 #|]
-        if now < site.next {
+        if now < (site.next ?? now) {
             site.skipped += 1
             return
         }
@@ -1965,10 +1965,11 @@ fn parse-args() -> {msg: _, keys: Array[String], vals: Array[_], opts: Dict[Stri
     {msg, keys, vals, opts, line: open.start.line + 1}
 }
 
-fn static-float(e: _) -> Float | nil {
-    match e {
-        nil => nil,
-        _   => float(ty.eval(e))
+fn static-duration(e: _) -> Duration | nil {
+    match (e == nil) ? nil : ty.eval(e) {
+        nil         => nil,
+        d: Duration => d,
+        x           => parse.fail("`@every` expects a Duration such as `5s` but got `{x}`")
     }
 }
 
@@ -1985,7 +1986,7 @@ fn call(level: Int) -> _ {
         file,
         args.line,
         args.keys,
-        static-float(args.opts['every']),
+        static-duration(args.opts['every']),
         args.opts['once'] != nil
     )
     let msg = args.msg ?? ty.String('')

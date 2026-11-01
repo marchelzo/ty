@@ -3,6 +3,7 @@ import ty
 import json
 import net
 import os
+import time
 
 fn reply(fd: Int, body: String | Blob = '', status: Int = 200, headers = %{}) {
     let reason = match status {
@@ -37,7 +38,7 @@ fn trickle(fd: Int, body: String, content-type: String) {
     while i < #bytes {
         let n = min(3, #bytes - i)
         os.write(fd, bytes[i;i + n], all=true)
-        os.sleep(0.005)
+        os.sleep(5ms)
         i += n
     }
 }
@@ -117,7 +118,7 @@ fn handle-client(fd: Int) {
         reply(fd, "User-agent: *\nDisallow: /private\n",
               headers=%{'Content-Type': 'text/plain'})
     } else if request.method == 'GET' && path == '/delay' {
-        os.sleep(2.0)
+        os.sleep(2s)
         reply(fd)
     } else if request.method == 'POST' && path == '/anything' {
         let value = try { json.parse(request.body)! } ?? %{}
@@ -229,11 +230,33 @@ pub fn test-url-builder() {
 
 pub fn test-timeout() {
     try {
-        let resp = get("{server-url}/delay", timeout=1, proxy='')
+        let resp = get("{server-url}/delay", timeout=1s, proxy='')
         assert(false, 'Should have timed out')
     } catch e: CURLError {
         assert(e.code == CURLE_OPERATION_TIMEDOUT)
     }
+}
+
+pub fn test-deadline() {
+    let t0 = time.now()
+    try {
+        get("{server-url}/delay", timeout=t0 + 200ms, proxy='')
+        assert(false, 'Should have timed out')
+    } catch e: CURLError {
+        assert(e.code == CURLE_OPERATION_TIMEDOUT)
+        assert(time.since(t0) < 1s)
+    }
+}
+
+pub fn test-cookie-expiry() {
+    let line   = ".example.com\tTRUE\t/\tFALSE\t2000000000\tsid\tabc"
+    let cookie = Cookie.parse(line)!
+    assert(int(cookie.expires ?? time.time()) == 2000000000 * 1000000000)
+    assert(cookie.to-netscape() == line)
+    assert('Expires=Wed, 18 May 2033 03:33:20 GMT' in cookie.to-header())
+    assert(cookie.matches('www.example.com', '/', false))
+    assert(Cookie.parse(line.replace('2000000000', '0'))!.expires == nil)
+    assert(!Cookie('a', 'b', expires=time.time() - 1s).matches('', '/', false))
 }
 
 pub fn test-version() {
@@ -255,7 +278,8 @@ pub fn test-sse-parser() {
     events = [*parser.feed("id: 42\nretry: 5000\ndata: test\n\n")]
     assert(#events == 1)
     assert(events[0].id == '42')
-    assert(events[0].retry == 5000)
+    assert(events[0].retry == 5s)
+    assert("retry: 5000" in str(events[0]))
     assert(parser.last-id == '42')
 
     events = [*parser.feed(": this is a comment\ndata: after comment\n\n")]

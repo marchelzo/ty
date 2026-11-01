@@ -1,6 +1,6 @@
 import os (..)
 import chalk (..)
-import time (now)
+import time (now, since)
 import math (sin, cos)
 
 const FPS = 60
@@ -202,7 +202,7 @@ class PulseAnimation {
     color2: (Int, Int, Int)
     p1: (Float, Float)
     p2: (Float, Float)
-    rate: Float
+    period: Duration
 
     init(width: Int = 40, color1: String = '#ff8aa6', color2: String = '#d32773') {
         self.width = width
@@ -210,12 +210,12 @@ class PulseAnimation {
         self.color2 = hex-to-rgb(color2)
         self.p1 = (0.2, 0.6)
         self.p2 = (0.2, 0.9)
-        self.rate = 1.0
+        self.period = 1s
     }
 
-    render(elapsed: Float) -> Text {
+    render(elapsed: Duration) -> Text {
         let bar = Blob()
-        let t = (rate * elapsed) % 1.0
+        let t = (elapsed % period) / period
 
         for ..width {
             let x-norm = float(it) / width
@@ -235,7 +235,7 @@ class TaskInfo {
     id: Int
     desc: String
     total: Int | nil
-    start-time: Float
+    start-time: Time[time::CLOCK_MONOTONIC]
     _current: Atomic
 
     init(id: Int, desc: String = '', total: Int | nil = nil) {
@@ -258,8 +258,8 @@ class TaskInfo {
         total ? (current / float(total)) : nil
     }
 
-    elapsed() -> Float {
-        now() - start-time
+    elapsed() -> Duration {
+        since(start-time)
     }
 }
 
@@ -322,7 +322,7 @@ pub class Tqdm[T] : Iterable[T] {
 
     static _render-loop() {
         let buf = Blob()
-        let frame-time = 1.0 / FPS
+        let frame-time = abs(1s / FPS)
 
         for (;;) {
             with _render-mutex {
@@ -430,7 +430,7 @@ pub class Tqdm[T] : Iterable[T] {
             }
         }
 
-        parts.push(chalk" [#5e5e5e]{elapsed:4.1}s[/]")
+        parts.push(chalk" [#5e5e5e]{elapsed.secs:4.1}s[/]")
 
         let line = parts.join()
 

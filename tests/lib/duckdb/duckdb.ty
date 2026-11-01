@@ -1,6 +1,7 @@
 import duckdb
 import date (PlainDate, PlainTime, PlainDateTime, Instant, Duration)
 import path (Path)
+import time
 
 fn throws?(f: () -> _, kind: Class) -> Bool {
     try {
@@ -103,6 +104,17 @@ pub fn temporal-parameters() {
         Duration(months: 1, days: 2, hours: 3)
     ).fetchone()
     assert(row == ('1999-12-31', '23:59:58.5', '2000-01-02 03:04:05', 86400.0, '1 month 2 days 03:00:00'))
+}
+
+pub fn builtin-time-parameters() {
+    let con = duckdb.connect()
+    let epoch = time.time({year: 70, mon: 0, mday: 1}, utc: true)
+    let row: _ = con.execute(
+        "SELECT epoch(?), ?::VARCHAR",
+        epoch + 1d,
+        90m + 1500ms
+    ).fetchone()
+    assert(row == (86400.0, '01:30:01.5'))
 }
 
 pub fn nested-types() {

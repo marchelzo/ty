@@ -30,7 +30,7 @@ fn run(source: String, checker: String) -> String {
     setenv('TY_TYPES2', checker)
     defer setenv('TY_TYPES2', '')
 
-    sh.run([ty.executable, str(file)], timeout=30).stdout.trim()
+    sh.run([ty.executable, str(file)], timeout=30s).stdout.trim()
 }
 
 const EXPECTED = 'none, schema <class Int>, one, two, schema <class Int>\nfalse, false, true, false\npair, other, other, other'

@@ -92,7 +92,7 @@ pub fn patterns-are-rejected() {
         'let (a, b) = (nil, nil); (a, b) ?= (1, 2)',
         'let a = nil; let b = nil; a, b ?= 1, 2'
     ] {
-        let result = sh.run([ty.executable, '-e', source], timeout=30)
+        let result = sh.run([ty.executable, '-e', source], timeout=30s)
         assert(!result.ok?, source)
         assert(result.stderr.match?(/\?= takes a single variable, member, or subscript, not a pattern/), result.stderr)
     }

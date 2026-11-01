@@ -4,11 +4,15 @@ import ssl
 
 const MAX_COOKIE = 4000
 
+fn unix(t: Time[time::CLOCK_REALTIME]) -> Int {
+    int(t) / 1000000000
+}
+
 pub use SessionData = Dict[String, _];
 
 pub trait Store {
     load(id: String) -> SessionData | nil;
-    save(id: String, data: SessionData, ttl: Float);
+    save(id: String, data: SessionData, ttl: Duration);
     destroy(id: String);
 }
 
@@ -18,7 +22,7 @@ pub class MemoryStore : Store {
     max-sessions: Int = 100000
 
     __mtx:  Mutex = Mutex()
-    __data: Dict[String, (Float, String)] = %{}
+    __data: Dict[String, (Time[time::CLOCK_MONOTONIC], String)] = %{}
     __ops:  Int = 0
 
     size -> Int {
@@ -29,14 +33,14 @@ pub class MemoryStore : Store {
     load(id: String) -> SessionData | nil {
         let ^_ = __mtx.lock()
         let (expires, text) = __data[id] ?? return nil
-        if expires < time.utc() {
+        if expires < time.now() {
             __data.remove(id)
             return nil
         }
         json.parse(text)
     }
 
-    save(id: String, data: SessionData, ttl: Float) {
+    save(id: String, data: SessionData, ttl: Duration) {
         let text = json.encode(data)
         let ^_ = __mtx.lock()
         __ops += 1
@@ -46,7 +50,7 @@ pub class MemoryStore : Store {
         if #__data >= max-sessions && __data[id] == nil {
             throw RuntimeError('http: session store is full')
         }
-        __data[id] = (time.utc() + ttl, text)
+        __data[id] = (time.now() + ttl, text)
     }
 
     destroy(id: String) {
@@ -55,7 +59,7 @@ pub class MemoryStore : Store {
     }
 
     __purge() {
-        let now = time.utc()
+        let now = time.now()
         let stale = [id for id, (exp, _) in __data if exp < now]
         for id in stale {
             __data.remove(id)
@@ -174,7 +178,7 @@ pub class Sessions {
     secrets:   Array[String]
     store:     Store | nil
     name:      String
-    max-age:   Int
+    max-age:   Duration
     path:      String
     domain:    String | nil
     secure:    Bool | nil
@@ -185,7 +189,7 @@ pub class Sessions {
         secret: String | Array[String],
         store: Store | nil = nil,
         name: String = 'session',
-        max-age: Int = 14 * 24 * 3600,
+        max-age: Duration = 14d,
         path: String = '/',
         domain: String | nil = nil,
         secure: Bool | nil = nil,
@@ -213,7 +217,7 @@ pub class Sessions {
         if store == nil {
             let $blob = ssl.b64url-decode(value) or return (nil, nil)
             let payload = try { json.parse(blob.str!()) } catch _ { nil }
-            if payload :: Dict && (payload['exp'] ?? 0) > time.utc() {
+            if payload :: Dict && (payload['exp'] ?? 0) > unix(time.time()) {
                 return (nil, payload['data'])
             }
             (nil, nil)
@@ -264,7 +268,7 @@ pub class Sessions {
         }
 
         if store == nil {
-            let payload = json.encode(%{'exp': time.utc() + max-age, 'data': s.data})
+            let payload = json.encode(%{'exp': unix(time.time() + max-age), 'data': s.data})
             let value = sign(ssl.b64url(payload), secrets)
             if value.size() + name.size() > MAX_COOKIE {
                 throw RuntimeError("http: session cookie too large ({value.size()} bytes); use a server-side store")
@@ -282,7 +286,7 @@ pub class Sessions {
 
         let id = s.id ?? new-id()
         s.id = id
-        store.save(id, s.data, float(max-age))
+        store.save(id, s.data, max-age)
         __cookie(rsp, sign(id, secrets))
     }
 

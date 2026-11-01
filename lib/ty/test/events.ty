@@ -48,6 +48,26 @@ pub fn get-float(ev: ?Event, key: String) -> ?Float {
     }
 }
 
+pub fn get-duration(ev: ?Event, key: String) -> ?Duration {
+    let $x = get-float(ev, key) or return nil
+    abs(x * 1s)
+}
+
+pub fn secs(t: Time[Any] | TimeDelta) -> Float {
+    int(t) / 1.0e9
+}
+
+fn opt-secs(d: ?Duration) -> ?Float {
+    (d == nil) ? nil : d.secs
+}
+
+pub fn parse-duration(s: String) -> ?Duration {
+    match s {
+        /^\d+(\.\d+)?$/ => abs(float(s) * 1s),
+        _               => try { Duration(s) } catch _: ValueError { nil },
+    }
+}
+
 pub fn get-bool(ev: ?Event, key: String) -> Bool {
     (ev ?? %{})[key] == true
 }
@@ -86,7 +106,7 @@ pub fn get-strs(ev: ?Event, key: String) -> Array[String] {
 }
 
 fn mk(name: String, fields: Event) -> Event {
-    let ev: Event = %{'v': SCHEMA, 'ev': name, 't': time.now()}
+    let ev: Event = %{'v': SCHEMA, 'ev': name, 't': secs(time.now())}
     for k, v in fields {
         ev[k] = v
     }
@@ -112,7 +132,7 @@ pub fn run-start(
         'root': root,
         'mode': mode,
         'ty':   info ?? ty-info(),
-        'time': time.utime() / 1.0e6,
+        'time': secs(time.time()),
     })
 }
 
@@ -138,7 +158,7 @@ pub fn collect-test(
     xfail: ?Event = nil,
     todo: ?String = nil,
     only?: Bool = false,
-    timeout: ?Float = nil
+    timeout: ?Duration = nil
 ) -> Event {
     %{
         'id':       id,
@@ -150,7 +170,7 @@ pub fn collect-test(
         'xfail':    xfail,
         'todo':     todo,
         'only':     only?,
-        'timeout':  timeout,
+        'timeout':  opt-secs(timeout),
     }
 }
 
@@ -270,7 +290,7 @@ pub fn truncate(s: String, limit: Int = OUTPUT_LIMIT) -> String {
 pub fn test-end(
     id: String,
     outcome: String,
-    dur: Float = 0.0,
+    dur: Duration = 0s,
     reason: ?String = nil,
     failure: ?Event = nil,
     output: String = '',
@@ -284,7 +304,7 @@ pub fn test-end(
     let ev = mk('test-end', %{
         'id':      id,
         'outcome': outcome,
-        'dur':     dur,
+        'dur':     dur.secs,
         'reason':  reason,
         'failure': failure,
         'output':  truncate(output),
@@ -306,7 +326,7 @@ pub fn step-result(
     id: String,
     name: String,
     outcome: String,
-    dur: Float = 0.0,
+    dur: Duration = 0s,
     reason: ?String = nil,
     failure: ?Event = nil
 ) -> Event {
@@ -314,7 +334,7 @@ pub fn step-result(
         'id':      id,
         'name':    name,
         'outcome': outcome,
-        'dur':     dur,
+        'dur':     dur.secs,
         'reason':  reason,
         'failure': failure,
     }
@@ -349,14 +369,14 @@ pub fn status(
     %{'kind': kind, 'code': code, 'signal': signal, 'phase': phase}
 }
 
-pub fn rusage(utime: Float, stime: Float, maxrss: ?Int = nil) -> Event {
-    %{'utime': utime, 'stime': stime, 'maxrss': maxrss}
+pub fn rusage(utime: Duration, stime: Duration, maxrss: ?Int = nil) -> Event {
+    %{'utime': utime.secs, 'stime': stime.secs, 'maxrss': maxrss}
 }
 
 pub fn file-done(
     file: String,
     status: Event,
-    dur: Float = 0.0,
+    dur: Duration = 0s,
     rusage: ?Event = nil,
     stdout-tail: String = '',
     stderr-tail: String = '',
@@ -365,7 +385,7 @@ pub fn file-done(
     mk('file-done', %{
         'file':        file,
         'status':      status,
-        'dur':         dur,
+        'dur':         dur.secs,
         'rusage':      rusage,
         'stdout_tail': stdout-tail,
         'stderr_tail': stderr-tail,
@@ -376,7 +396,7 @@ pub fn file-done(
 pub fn run-end(
     counts: Dict[String, Int],
     files: ?Dict[String, Int] = nil,
-    dur: Float = 0.0,
+    dur: Duration = 0s,
     cpu: ?Dict[String, Float] = nil,
     rc: Int = 0,
     interrupted?: Bool = false
@@ -384,7 +404,7 @@ pub fn run-end(
     mk('run-end', %{
         'counts':      counts,
         'files':       files,
-        'dur':         dur,
+        'dur':         dur.secs,
         'cpu':         cpu,
         'rc':          rc,
         'interrupted': interrupted?,

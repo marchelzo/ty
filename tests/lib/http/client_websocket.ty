@@ -38,7 +38,7 @@ fn routes(srv) {
     })
 
     srv.ws('/later', fn (sock, req) {
-        http.sleep(0.6)
+        http.sleep(600ms)
         sock.send('still here')
         sock.recv()
     })
@@ -111,9 +111,9 @@ pub fn closes-from-the-client() {
 pub fn pings-are-answered() {
     serve(routes, fn (srv) {
         let s = client.websocket(url(srv, '/later'))
-        assert(s.recv(timeout: 3) == 'still here')
+        assert(s.recv(timeout: 3s) == 'still here')
         s.close()
-    }, ws-ping-interval: 0.05, ws-idle-timeout: 0.3)
+    }, ws-ping-interval: 50ms, ws-idle-timeout: 300ms)
 }
 
 pub fn refusals() {
@@ -179,7 +179,7 @@ class RawServer {
         os.write(c, head ?? ws.handshake-response(key, nil), all=true)
         script(c)
         let reply = Blob()
-        let deadline = time.now() + 2.0
+        let deadline = time.now() + 2s
         while #reply < 6 && time.now() < deadline && (xread(c, reply, 4096) ?? 0) > 0 {
         }
         got.put(reply)
@@ -191,20 +191,20 @@ class RawServer {
 pub fn fragments-wait-across-timeouts() {
     let raw = RawServer(fn (c) {
         os.write(c, ws.frame(ws.OP_TEXT, 'one-', fin: false), all=true)
-        os.sleep(0.3)
+        os.sleep(300ms)
         os.write(c, ws.frame(ws.OP_PING, 'there?'), all=true)
         os.write(c, ws.frame(ws.OP_CONT, 'two', fin: true), all=true)
     })
     let s = client.websocket("ws://127.0.0.1:{raw.port}/")
     try {
-        s.recv(timeout: 0.05)
+        s.recv(timeout: 50ms)
         assert(false)
     } catch _: ReadTimeout {
     }
-    assert(s.recv(timeout: 2) == 'one-two')
+    assert(s.recv(timeout: 2s) == 'one-two')
     let pong = raw.got.take()
     assert(pong[0] == (0x80 | ws.OP_PONG) && (pong[1] & 0x80) != 0)
-    s.close(timeout: 0)
+    s.close(timeout: 0s)
 }
 
 pub fn protocol-violations-close-the-socket() {
@@ -213,7 +213,7 @@ pub fn protocol-violations-close-the-socket() {
     })
     let s = client.websocket("ws://127.0.0.1:{raw.port}/")
     try {
-        s.recv(timeout: 2)
+        s.recv(timeout: 2s)
         assert(false)
     } catch e: ProtocolError {
         assert(str(e).contains?('masked'))

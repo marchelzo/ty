@@ -192,7 +192,7 @@ class Control {
     height:  Int
     x:       Int
     y:       Int
-    delay:   Float
+    delay:   Duration
     dispose: Int
     blend:   Int
 
@@ -202,7 +202,7 @@ class Control {
         x       = u32(b, 12)
         y       = u32(b, 16)
         let den = u16(b, 22)
-        delay   = float(u16(b, 20)) / float(den == 0 ? 100 : den)
+        delay   = abs(1s * u16(b, 20) / (den == 0 ? 100 : den))
         dispose = b[24]
         blend   = b[25]
     }

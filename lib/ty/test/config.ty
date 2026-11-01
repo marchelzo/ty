@@ -13,8 +13,8 @@ fn emit(conf: Dict[String, Any]) {
 }
 
 pub fn configure(
-    timeout: ?Float = nil,
-    load-timeout: ?Float = nil,
+    timeout: ?Duration = nil,
+    load-timeout: ?Duration = nil,
     tags: Array[String] = [],
     opt-in: Bool | String | nil = nil,
     serial: ?Bool = nil,
@@ -25,8 +25,8 @@ pub fn configure(
 ) {
     let conf: Dict[String, Any] = %{}
     let opts: Array[(String, Any)] = [
-        ('timeout',      timeout),
-        ('load-timeout', load-timeout),
+        ('timeout',      timeout.?secs),
+        ('load-timeout', load-timeout.?secs),
         ('opt-in',       opt-in),
         ('serial',       serial),
     ]

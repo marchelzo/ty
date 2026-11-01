@@ -61,12 +61,12 @@ fn benchmark(iterations: Int) {
         let result = template(users)
     }
 
-    return time.now() - start
+    return time.since(start)
 }
 
 fn main() {
     let t = benchmark(500)
-    print("Warmup: {t * 1000:.2}ms")
+    print("Warmup: {t.ms:.2}ms")
 
     let times = []
     for ..10 {

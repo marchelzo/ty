@@ -197,7 +197,7 @@ class Decoder {
     global:      Blob | nil
     frames:      Array[Frame]
     loops:       Int
-    delay:       Float
+    delay:       Duration
     dispose:     Int
     transparent: Int
     prefix:      Array[Int]
@@ -218,7 +218,7 @@ class Decoder {
         canvas      = zeros(width * height * 4)
         frames      = []
         loops       = 0
-        delay       = 0.1
+        delay       = 100ms
         dispose     = 0
         transparent = -1
         prefix      = [0 for ..4096]
@@ -247,7 +247,7 @@ class Decoder {
             0xF9 and #body >= 4 => {
                 dispose     = (body[0] >> 2) & 7
                 let cs      = body[1] | (body[2] << 8)
-                delay       = (cs < 2) ? 0.1 : float(cs) / 100.0
+                delay       = (cs < 2) ? 100ms : abs(cs * 10ms)
                 transparent = ((body[0] & 1) != 0) ? body[3] : -1
             },
             0xFF and body[;11].str!() == 'NETSCAPE2.0' && #body >= 14 => {
@@ -283,7 +283,7 @@ class Decoder {
             _ => ()
         }
         dispose     = 0
-        delay       = 0.1
+        delay       = 100ms
         transparent = -1
     }
 }

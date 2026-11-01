@@ -24,7 +24,7 @@ fn send-all(sock: uv.UVSocket) -> Int {
         sock.write("TO {dst} {seq} {w.payload(me, dst, seq)}\n")
         sent += 1
         if rand(8) == 0 {
-            uv.sleep(rand(3))
+            uv.sleep(w.jitter(3))
         }
     }
     sent
@@ -50,7 +50,7 @@ fn receive-all(sock: uv.UVSocket, log: Blob) -> Int {
 
 fn main() {
     let worker = Thread(crunch, me)
-    let gc     = uv.spawn(w.churn-gc, 7)
+    let gc     = uv.spawn(w.churn-gc, 7ms)
     let sock   = uv.dial('127.0.0.1', port)
     let log    = Blob()
 
@@ -60,7 +60,7 @@ fn main() {
     }
 
     let counts = []
-    with uv.timeout(120000) {
+    with uv.timeout(2m) {
         counts = uv.gather([
             -> send-all(sock),
             -> receive-all(sock, log),

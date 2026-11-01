@@ -24,7 +24,7 @@ pub fn handler-fires() {
         fired = true
     })
     Thread.kill(SIGUSR1)
-    sleep(0.01)
+    sleep(10ms)
     assert(fired, "signal handler should have executed")
     signal(SIGUSR1, SIG_DFL)
 }
@@ -42,7 +42,7 @@ pub fn suspend-waits-unblocked() {
             exit(0)
         },
         pid => {
-            sleep(0.01)
+            sleep(10ms)
             kill(pid, SIGUSR2)
             if let Some((_, st)) = wait() {
                 assert(st == 0, "child should exit cleanly")
@@ -66,12 +66,12 @@ pub fn kill-delivers-to-target() {
             signal(SIGUSR1, fn () {
                 caught = true
             })
-            sleep(0.15)
+            sleep(150ms)
             assert(caught, "child should receive SIGUSR1 from parent")
             exit(0)
         },
         pid => {
-            sleep(0.05)
+            sleep(50ms)
             kill(pid, SIGUSR1)
             wait(pid)
         }

@@ -165,8 +165,8 @@ pub fn broadcast-from-other-threads() {
     }, fn (srv) {
         let clients = [WsClient(srv.port, '/sub') for ..6]
         let t0 = time.now()
-        while time.now() - t0 < 2.0 && do { let ^_ = lock.lock(); #socks } < 6 {
-            os.sleep(0.01)
+        while time.since(t0) < 2s && do { let ^_ = lock.lock(); #socks } < 6 {
+            os.sleep(10ms)
         }
 
         let senders = [Thread(fn () {
@@ -196,15 +196,15 @@ pub fn server-ping-keepalive-and-idle-timeout() {
         let t0 = time.now()
         let code = c.close-code()
         assert(code == nil || code == ws.CLOSE_ABNORMAL)
-        assert(time.now() - t0 < 3.0)
+        assert(time.since(t0) < 3s)
         c.close()
-    }, ws-ping-interval: 0.2, ws-idle-timeout: 0.6)
+    }, ws-ping-interval: 200ms, ws-idle-timeout: 600ms)
 }
 
 pub fn slow-reader-backpressure() {
     serve(routes, fn (srv) {
         let c = WsClient(srv.port, '/flood')
-        os.sleep(0.3)
+        os.sleep(300ms)
         let n = 0
         while n < 200 {
             let $m = c.recv() or break
@@ -220,7 +220,7 @@ pub fn shutdown-sends-going-away() {
     let srv = http.Server('127.0.0.1', 0, threads: 1)
     routes(srv)
     let t = Thread(srv.run)
-    os.sleep(0.1)
+    os.sleep(100ms)
     let c = WsClient(srv.port, '/echo')
     c.send('x')
     assert(c.recv() == 'x')

@@ -9,6 +9,11 @@ clap! Args {
     files: [String], pos: true, repeat: true, min: 1
 }
 
+clap! Timed {
+    every: Duration, short: 'e', default: 5s
+    within: Duration, short: 'w'
+}
+
 fn forked(f) {
     let (r, w) = os.pipe()
     let pid = os.fork()
@@ -50,6 +55,18 @@ pub fn clap-options-stop-at-trailing-positionals() {
         assert(opts.output == 'out.txt')
         assert(opts.files == ['a', '-v', '--output', 'x', 'b'])
         assert(#rest == 0)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-durations() {
+    let (code, err) = forked(fn () {
+        let (opts, _) = Timed.parse(['prog', '-w', '1.5ms'])
+        assert(opts.every == 5s)
+        assert(opts.within == 1500us)
+        let (opts, _) = Timed.parse(['prog', '--every', '90s'])
+        assert(opts.every == 90s)
+        assert(opts.within == nil)
     })
     assert(code == 0, "exit {code}: {err}")
 }

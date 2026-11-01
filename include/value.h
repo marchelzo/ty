@@ -53,6 +53,9 @@ enum {
         CLASS_TUPLE,
         CLASS_QUEUE,
         CLASS_HEAP,
+        CLASS_TIME,
+        CLASS_DURATION,
+        CLASS_TIMEDELTA,
         CLASS_SHARED_QUEUE,
         CLASS_WORK_QUEUE,
         CLASS_MODULE,
@@ -277,6 +280,9 @@ TypeName(Ty const *ty, int t0)
         case VALUE_QUEUE:               return "Queue";
         case VALUE_SHARED_QUEUE:        return "SharedQueue";
         case VALUE_HEAP:                return "Heap";
+        case VALUE_TIME:                return "Time";
+        case VALUE_DURATION:            return "Duration";
+        case VALUE_TIMEDELTA:           return "TimeDelta";
         case VALUE_OBJECT:              return "Object";
         case VALUE_BOOLEAN:             return "Bool";
         case VALUE_REGEX:               return "Regex";
@@ -956,6 +962,9 @@ enum : u64 {
         GC_INERT_VALUES = (1ULL << VALUE_ZERO)
                         | (1ULL << VALUE_INTEGER)
                         | (1ULL << VALUE_REAL)
+                        | (1ULL << VALUE_TIME)
+                        | (1ULL << VALUE_DURATION)
+                        | (1ULL << VALUE_TIMEDELTA)
                         | (1ULL << VALUE_BOOLEAN)
                         | (1ULL << VALUE_NIL)
                         | (1ULL << VALUE_NONE)
@@ -1252,9 +1261,6 @@ OffsetString(Value const *v, i32 n)
 
         return str;
 }
-
-struct timespec
-tuple_timespec(Ty *ty, char const *func, Value const *v);
 
 static inline Value
 (RawObject)(Ty *ty, int c)
@@ -1585,6 +1591,9 @@ ClassOf(Value const *v)
         case VALUE_BLOB:              return CLASS_BLOB;
         case VALUE_QUEUE:             return CLASS_QUEUE;
         case VALUE_HEAP:              return CLASS_HEAP;
+        case VALUE_TIME:              return CLASS_TIME;
+        case VALUE_DURATION:          return CLASS_DURATION;
+        case VALUE_TIMEDELTA:         return CLASS_TIMEDELTA;
         case VALUE_SHARED_QUEUE:      return v->shared_queue->work ? CLASS_WORK_QUEUE : CLASS_SHARED_QUEUE;
         case VALUE_ARRAY:             return CLASS_ARRAY;
         case VALUE_DICT:              return CLASS_DICT;
@@ -1850,64 +1859,6 @@ static inline Value *
         return ObjectMember(*v, v__(class->fields.ids, off));
 }
 
-inline static i64
-TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
-{
-        struct timespec spec;
-
-        switch (t->type) {
-        case VALUE_REAL:
-                return (factor * t->real);
-
-        case VALUE_INTEGER:
-                return t->z;
-
-        case VALUE_TUPLE:
-                spec = tuple_timespec(ty, ctx, t);
-                return (factor * (TY_1e9*spec.tv_sec + spec.tv_nsec)) / TY_1e9;
-
-        case VALUE_NIL:
-                return -1;
-
-        default:
-                zP("%s: invalid timespec: %s", ctx, VSC(t));
-        }
-}
-
-#define NSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000000)
-#define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
-#define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
-
-inline static i64
-MsecTimeout(double seconds)
-{
-        if (seconds <= 0.0) {
-                return 0;
-        }
-
-        double ms = 1000.0 * seconds;
-
-        if (ms >= (double)INT64_MAX) {
-                return INT64_MAX;
-        }
-
-        i64 whole = (i64)ms;
-
-        return whole + (whole < ms);
-}
-
-#define MSEC_TIMEOUT_ARG(i) (                               \
-        (ARG_T(i) == VALUE_REAL) ? MsecTimeout(ARG(i).real) \
-      : (ARG_T(i) == VALUE_NONE) ? (u64)-1                  \
-      : MSEC_ARG(i)                                         \
-)
-
-#define NSEC_TIMEOUT_ARG(i) (                          \
-        (ARG_T(i) == VALUE_REAL) ? max(NSEC_ARG(i), 0) \
-      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
-      : NSEC_ARG(i)                                    \
-)
-
 Value
 TyPathValue(Ty *ty, char const *ctx, char const *name, Value v);
 
@@ -2027,6 +1978,9 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_REAL:             return (v->real != 0.0);
         case VALUE_BOOLEAN:          return v->boolean;
         case VALUE_INTEGER:          return (v->z != 0);
+        case VALUE_DURATION:         return (v->ns != 0);
+        case VALUE_TIMEDELTA:        return (v->ns != 0);
+        case VALUE_TIME:             return true;
         case VALUE_STRING:           return (sN(*v) != 0);
         case VALUE_ARRAY:            return (vN(*v->array) != 0);
         case VALUE_TUPLE:            return (v->count != 0);

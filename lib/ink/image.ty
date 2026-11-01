@@ -401,7 +401,7 @@ pub class Image < Component {
         if !(animate? ?? true) || !pic.animated? {
             return
         }
-        let delay = max(pic.frames[__frame % #pic.frames].delay, 0.02)
+        let delay = max(pic.frames[__frame % #pic.frames].delay, 20ms)
         after(delay, () -> __advance())
     }
 

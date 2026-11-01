@@ -4,6 +4,7 @@ import os
 import ty
 import ty.coro as co
 import stdio
+import time
 
 let libuv = c.open('uv')
 
@@ -353,6 +354,11 @@ pub class CanceledError < RuntimeError {
 
 tag Running;
 
+fn _ms(t: time::Timeout) -> Int {
+    let d = (t :: Duration) ? t : time.until(t)
+    (int(d) + 999999) / 1000000
+}
+
 fn fileno(hnd) {
     let fd = static!(c.box(c.int))
     let err = uv_fileno(hnd, fd)
@@ -459,8 +465,8 @@ pub class UVTimer < UVHandle {
         __fire_cb
     }
 
-    start(msecs: Int, repeat: Int = 0) {
-        loop.timer-start(self, msecs, repeat)
+    start(after: time::Timeout, repeat: Duration = 0s) {
+        loop.timer-start(self, after, repeat)
     }
 
     stop() {
@@ -1085,9 +1091,9 @@ pub class UV {
         UVTimer(self, hnd)
     }
 
-    timer-start(timer: UVTimer, msecs: Int, repeat: Int = 0) {
+    timer-start(timer: UVTimer, after: time::Timeout, repeat: Duration = 0s) {
         __ticking[timer.handle] = timer
-        let err = uv_timer_start(timer.handle, __on_timer, msecs, repeat)
+        let err = uv_timer_start(timer.handle, __on_timer, _ms(after), _ms(repeat))
         if err != 0 {
             __ticking.remove(timer.handle)
             throw UVError('uv_timer_start()', err)
@@ -1111,7 +1117,7 @@ pub class UV {
         }
     }
 
-    sleep(msecs: Int) {
+    sleep(t: time::Timeout) {
         let timer = timer()
         defer {
             timer.close()
@@ -1123,7 +1129,7 @@ pub class UV {
             timer.stop()
             resume()
         }
-        timer.start(msecs)
+        timer.start(t)
         while !fired {
             suspend(nop)
         }
@@ -1218,8 +1224,8 @@ pub class UV {
         )
     }
 
-    now() -> Int {
-        uv_now(__loop)
+    now() -> Time[time::CLOCK_MONOTONIC] {
+        Time(uv_now(__loop) * 1000000, time.CLOCK_MONOTONIC)
     }
 
     stop() {
@@ -1295,8 +1301,8 @@ pub fn getrusage() -> os.RUsage {
     let ru = uv_rusage_t()
     uv_getrusage(ru)
     return {
-        utime:    ru.ru_utime_sec + ru.ru_utime_usec / 1.0e6,
-        stime:    ru.ru_stime_sec + ru.ru_stime_usec / 1.0e6,
+        utime:    abs(ru.ru_utime_sec * 1s + ru.ru_utime_usec * 1us),
+        stime:    abs(ru.ru_stime_sec * 1s + ru.ru_stime_usec * 1us),
         maxrss:   ru.ru_maxrss,
         ixrss:    ru.ru_ixrss,
         idrss:    ru.ru_idrss,
@@ -1351,7 +1357,7 @@ pub fn getaddrinfo(
     loop().getaddrinfo(host, service, family, socktype, protocol)
 }
 
-pub fn race(fns: _, stagger: Int = 0) {
+pub fn race(fns: _, stagger: Duration = 0s) {
     if #fns == 0 { throw RuntimeError('race: empty') }
     if #fns == 1 { return fns[0]()                   }
 
@@ -1516,7 +1522,7 @@ pub fn dial(
     host: String,
     service: Int | String,
     family: Int = os.AF_UNSPEC,
-    stagger: Int = 250
+    stagger: Duration = 250ms
 ) -> UVSocket {
     let addrs = match loop().getaddrinfo(host, service, family, os.SOCK_STREAM) {
         Ok(addrs) => interleave-families(addrs),
@@ -1569,8 +1575,8 @@ pub fn socket() -> UVSocket {
     loop().tcp-socket()
 }
 
-pub fn sleep(msecs: Int) {
-    loop().sleep(msecs)
+pub fn sleep(t: time::Timeout) {
+    loop().sleep(t)
 }
 
 pub fn write(stream: UVStream, data: String | Blob) {
@@ -1634,11 +1640,11 @@ pub fn spit(path: Any, data: String | Blob) {
 }
 
 pub class UVDeadline {
-    __msec:  Int
+    __after: time::Timeout
     __timer: UVTimer | nil
 
-    init(msec: Int) {
-        __msec  = msec
+    init(after: time::Timeout) {
+        __after = after
         __timer = nil
     }
 
@@ -1651,7 +1657,7 @@ pub class UVDeadline {
             task.raise(TimeoutError())
         }
 
-        timer.start(__msec)
+        timer.start(__after)
         __timer = timer
 
         self
@@ -1665,6 +1671,6 @@ pub class UVDeadline {
     }
 }
 
-pub fn timeout(msec: Int) {
-    UVDeadline(msec)
+pub fn timeout(after: time::Timeout) {
+    UVDeadline(after)
 }

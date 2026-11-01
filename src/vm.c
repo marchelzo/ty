@@ -5058,6 +5058,12 @@ BuiltinMember:
                 n = CLASS_FLOAT;
                 goto ClassLookup;
 
+        case VALUE_TIME:
+        case VALUE_DURATION:
+        case VALUE_TIMEDELTA:
+                n = ClassOf(&v);
+                goto ClassLookup;
+
         case VALUE_BOOLEAN:
                 n = CLASS_BOOL;
                 goto ClassLookup;
@@ -5652,6 +5658,12 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
                 class = CLASS_FLOAT;
                 goto ClassLookup;
 
+        case VALUE_TIME:
+        case VALUE_DURATION:
+        case VALUE_TIMEDELTA:
+                class = ClassOf(&value);
+                goto ClassLookup;
+
         case VALUE_BOOLEAN:
                 class = CLASS_BOOL;
                 goto ClassLookup;
@@ -5922,6 +5934,15 @@ name(Ty *ty)                                                                    
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):                             \
                 v = BOOLEAN(top()[-1].real op top()[0].z);                      \
                 break;                                                          \
+        case PAIR_OF(VALUE_DURATION):                                           \
+        case PAIR_OF(VALUE_TIMEDELTA):                                          \
+        case PACK_TYPES(VALUE_DURATION, VALUE_TIMEDELTA):                       \
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):                       \
+                v = BOOLEAN(top()[-1].ns op top()[0].ns);                       \
+                break;                                                          \
+        case PAIR_OF(VALUE_TIME):                                               \
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) op 0);          \
+                break;                                                          \
         case PAIR_OF(VALUE_SET):                                                \
                 z = set_order(ty, top()[-1].set, top()[0].set);                 \
                 v = BOOLEAN((z != SET_UNRELATED) && (z op 0));                  \
@@ -6017,6 +6038,8 @@ DoNeg(Ty *ty, bool exec)
                 put(INTEGER(-v.z));
         } else if (v.type == VALUE_REAL) {
                 put(REAL(-v.real));
+        } else if (IsDelta(&v)) {
+                put(TIMEDELTA(ChronoSub(ty, 0, v.ns)));
         } else {
                 CallMethod(ty, OP_NEG, 0, 0, false, exec);
         }

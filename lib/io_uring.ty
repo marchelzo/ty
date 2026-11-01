@@ -3,6 +3,7 @@ import os (mmap, munmap)
 import jit (kernel!)
 import atomic
 import errno
+import time
 
 C! fn {
     long syscall(long number, long a, long b, long c, long d, long e, long f);
@@ -160,9 +161,27 @@ pub class IoUringError < OSError {
     }
 }
 
-fn timespec(seconds: Int | Float) -> (Int, Int) {
-    let sec = int(seconds)
-    (sec, int((seconds - sec) * 1000000000))
+fn timespec(t: TimeDelta | Time[Any]) -> (Int, Int) {
+    (int(t) / 1000000000, int(t) % 1000000000)
+}
+
+fn relative(t: time::Timeout) -> Duration {
+    (t :: Duration) ? t : time.until(t)
+}
+
+fn clock-flags(clock: Int) -> Int {
+    match clock {
+        time::CLOCK_REALTIME => IORING_TIMEOUT_REALTIME,
+        time::CLOCK_BOOTTIME => IORING_TIMEOUT_BOOTTIME,
+        _                    => 0
+    }
+}
+
+fn timeout-flags(t: time::Timeout) -> Int {
+    match t {
+        _: Duration => 0,
+        t           => IORING_TIMEOUT_ABS | clock-flags(t.clock)
+    }
 }
 
 fn io-uring-setup(entries: Int, params: io_uring_params) -> Int {
@@ -217,11 +236,11 @@ pub class IoUring {
     __wait-ts:  Ptr
     __wait-arg: Ptr
 
-    init(entries: Int = 64, flags: Int = 0, cq-size: ?Int = nil, sq-idle-ms: Int = 0) {
+    init(entries: Int = 64, flags: Int = 0, cq-size: ?Int = nil, sq-idle: Duration = 0s) {
         let params = io_uring_params()
         params.flags          = flags | ((cq-size == nil) ? 0 : IORING_SETUP_CQSIZE)
         params.cq_entries     = cq-size ?? 0
-        params.sq_thread_idle = sq-idle-ms
+        params.sq_thread_idle = int(sq-idle) / 1000000
 
         fd = io-uring-setup(entries, params)
         if fd < 0 {
@@ -295,11 +314,11 @@ pub class IoUring {
         }
     }
 
-    __enter(to-submit: Int, wait-nr: Int, flags: Int, timeout: ?(Int | Float)) -> Int {
+    __enter(to-submit: Int, wait-nr: Int, flags: Int, timeout: ?time::Timeout) -> Int {
         let (arg, argsz) = (0, 0)
 
         if timeout != nil {
-            c.store(TS_T, __wait-ts, timespec(timeout))
+            c.store(TS_T, __wait-ts, timespec(relative(timeout)))
             (arg, argsz) = (int(__wait-arg), ARG_SIZE)
             flags |= IORING_ENTER_EXT_ARG
         }
@@ -382,9 +401,9 @@ pub class IoUring {
         __sq-tail & __sq-mask
     }
 
-    __stash-ts(seconds: Int | Float) -> Ptr {
+    __stash-ts(t: time::Timeout) -> Ptr {
         let p = __slot-ts + __next-slot()
-        c.store(TS_T, p, timespec(seconds))
+        c.store(TS_T, p, timespec(t))
         p
     }
 
@@ -416,7 +435,7 @@ pub class IoUring {
         __enter(n, 0, wakeup, nil)
     }
 
-    submit-and-wait(n: Int = 1, timeout: ?(Int | Float) = nil) -> Int {
+    submit-and-wait(n: Int = 1, timeout: ?time::Timeout = nil) -> Int {
         let submitted = __enter(__flush-sq(), n, IORING_ENTER_GETEVENTS | __sq-wakeup(), timeout)
 
         if timeout == nil && __cq-ready() < n {
@@ -426,7 +445,7 @@ pub class IoUring {
         submitted
     }
 
-    wait(n: Int = 1, timeout: ?(Int | Float) = nil) -> Int {
+    wait(n: Int = 1, timeout: ?time::Timeout = nil) -> Int {
         __enter(0, n, IORING_ENTER_GETEVENTS, timeout)
     }
 
@@ -458,7 +477,7 @@ pub class IoUring {
         n
     }
 
-    wait-cqe(timeout: ?(Int | Float) = nil) -> ?CQE {
+    wait-cqe(timeout: ?time::Timeout = nil) -> ?CQE {
         if __cq-pending() == 0 {
             wait(1, timeout)
         }
@@ -555,16 +574,16 @@ pub class IoUring {
         __push(IORING_OP_STATX, dirfd, path, mask, buf, flags, user, sqe-flags)
     }
 
-    prep-timeout(seconds: Int | Float, count: Int = 0, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {
-        __push(IORING_OP_TIMEOUT, addr: __stash-ts(seconds), len: 1, off: count, op-flags: flags, user: user, sqe-flags: sqe-flags)
+    prep-timeout(t: time::Timeout, count: Int = 0, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {
+        __push(IORING_OP_TIMEOUT, addr: __stash-ts(t), len: 1, off: count, op-flags: flags | timeout-flags(t), user: user, sqe-flags: sqe-flags)
     }
 
     prep-timeout-remove(target: Int, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {
         __push(IORING_OP_TIMEOUT_REMOVE, addr: target, op-flags: flags, user: user, sqe-flags: sqe-flags)
     }
 
-    prep-link-timeout(seconds: Int | Float, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {
-        __push(IORING_OP_LINK_TIMEOUT, addr: __stash-ts(seconds), len: 1, op-flags: flags, user: user, sqe-flags: sqe-flags)
+    prep-link-timeout(t: time::Timeout, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {
+        __push(IORING_OP_LINK_TIMEOUT, addr: __stash-ts(t), len: 1, op-flags: flags | timeout-flags(t), user: user, sqe-flags: sqe-flags)
     }
 
     prep-cancel(target: Int, flags: Int = 0, user: Int = 0, sqe-flags: Int = 0) {

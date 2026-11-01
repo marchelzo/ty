@@ -149,7 +149,7 @@ pub fn dot-suite-mode() {
 }
 
 pub fn dot-wraps-at-width() {
-    let evs = [events.test-end("t.ty::t{it}", 'pass', dur: 0.001) for ..100]
+    let evs = [events.test-end("t.ty::t{it}", 'pass', dur: 1ms) for ..100]
     let out: Array[String] = []
     let r = report.make('dot', color?: false, width: 30, write: s -> out.push(s))
     for evs {
@@ -327,7 +327,7 @@ pub fn render-summary-directly() {
     let s = render.summary(
         %{'pass': 2, 'error': 1},
         files: %{'total': 3, 'failed': 1, 'skipped': 1, 'empty': 0},
-        wall: 1.5,
+        wall: 1.5s,
         seed: 9,
         warnings: 2,
         rerun: ['tests/m.ty::adds[zero]', "it's"],
@@ -355,7 +355,7 @@ pub fn render-failure-directly() {
         op: '==',
         operands: [('a', "[1,\n 2]"), ('b', '3')]
     )
-    let ev = events.test-end('x.ty::eq', 'fail', dur: 0.002, failure: f, output: "o1\no2\n")
+    let ev = events.test-end('x.ty::eq', 'fail', dur: 2ms, failure: f, output: "o1\no2\n")
     let want = [
         'FAIL x.ty::eq (2.00ms)',
         '  x.ty:4: assertion failed',
@@ -371,7 +371,7 @@ pub fn render-failure-directly() {
 }
 
 pub fn events-follow-schema-v1() {
-    let ev = events.test-end('f.ty::x', 'crash', dur: 0.5, signal: 'SIGSEGV', output: 'partial')
+    let ev = events.test-end('f.ty::x', 'crash', dur: 500ms, signal: 'SIGSEGV', output: 'partial')
     assert(ev['v'] == 1)
     assert(ev['ev'] == 'test-end')
     assert(ev['t'] :: Float)

@@ -26,7 +26,7 @@ fn unchecked(source: String) -> String {
     setenv('TY_TYPES2', 'off')
     defer setenv('TY_TYPES2', '')
 
-    sh.run([ty.executable, str(file)], timeout=30).stdout.trim()
+    sh.run([ty.executable, str(file)], timeout=30s).stdout.trim()
 }
 
 pub fn a-class-is-not-a-trait() {

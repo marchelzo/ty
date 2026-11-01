@@ -2,12 +2,14 @@ import base64
 import errno
 import json
 import os
-import time (now, CLOCK_MONOTONIC)
+import time
 import ty
 
 const OUTPUT_LIMIT = 65536
-const GRACE = 5.0
+const GRACE = 5s
 const FRAME_LIMIT = 64 * 1024 * 1024
+
+use Instant = Time[time::CLOCK_MONOTONIC]
 
 #|if __apple__
 const SEND_FLAGS = 0
@@ -165,7 +167,7 @@ class Kernel {
 
     poll(writing?: Bool) {
         let events = os.POLLIN | (writing? ? os.POLLOUT : 0)
-        match os.poll([(__fd, events), __stderr], 0.05) {
+        match os.poll([(__fd, events), __stderr], 50ms) {
             Ok(_) or Err(errno.EINTR) => (),
             Err(error)                => throw OSError('poll Ty REPL', error)
         }
@@ -185,15 +187,19 @@ class Kernel {
     }
 }
 
+fn instant(stamp: Int) -> Instant {
+    Time(stamp, time.CLOCK_MONOTONIC)
+}
+
 class Cell {
     id:         Int
     request:    Blob
     output      = Blob()
     truncated?  = false
-    began       = now(CLOCK_MONOTONIC)
+    began       = time.now()
     stopping:   String | nil = nil
-    deadline    = 0.0
-    nudged      = 0.0
+    deadline    = began
+    nudged      = began - 1s
 
     init(id: Int, code: String) {
         self.id = id
@@ -203,13 +209,16 @@ class Cell {
     stop(why: String) {
         if stopping == nil {
             stopping = why
-            deadline = now(CLOCK_MONOTONIC) + GRACE
+            deadline = time.now() + GRACE
         }
     }
 
     handoff() -> _ {
         return {
-            id, began, stopping, deadline, nudged,
+            id, stopping,
+            began: int(began),
+            deadline: int(deadline),
+            nudged: int(nudged),
             request: base64.encode(request),
             output: base64.encode(output),
             truncated: truncated?
@@ -221,10 +230,10 @@ class Cell {
         cell.request = base64.decode(state.request)
         cell.output = base64.decode(state.output)
         cell.truncated? = state.truncated
-        cell.began = state.began
+        cell.began = instant(state.began)
         cell.stopping = state.stopping
-        cell.deadline = state.deadline
-        cell.nudged = state.nudged
+        cell.deadline = instant(state.deadline)
+        cell.nudged = instant(state.nudged)
         cell
     }
 }
@@ -255,8 +264,8 @@ pub class Repl {
         __kernel.?pid
     }
 
-    running-for -> Float {
-        __cell ? now(CLOCK_MONOTONIC) - __cell.began : 0.0
+    running-for -> Duration {
+        __cell ? time.since(__cell.began) : 0s
     }
 
     partial -> String {
@@ -304,7 +313,7 @@ pub class Repl {
         __cell = Cell(__next, code)
     }
 
-    pump(until: Float) -> Result | nil {
+    pump(until: Instant) -> Result | nil {
         let $cell = __cell or throw RuntimeError('no Ty REPL cell is running')
         try {
             let result = exchange(cell, until)
@@ -324,31 +333,31 @@ pub class Repl {
     stop(why: String) -> Result {
         let $cell = __cell or throw RuntimeError('no Ty REPL cell is running')
         cell.stop(why)
-        pump(now(CLOCK_MONOTONIC) + GRACE * 2) ?? throw RuntimeError('the Ty REPL cell did not stop')
+        pump(time.now() + GRACE * 2) ?? throw RuntimeError('the Ty REPL cell did not stop')
     }
 
-    eval(code: String, timeout-ms: Int = 30000) -> Result {
-        if timeout-ms <= 0 {
-            throw ValueError('timeout-ms must be positive')
+    eval(code: String, timeout: Duration = 30s) -> Result {
+        if timeout == 0s {
+            throw ValueError('timeout must be positive')
         }
         start(code)
-        pump(now(CLOCK_MONOTONIC) + timeout-ms / 1000.0) ?? stop("Timed out after {timeout-ms / 1000}s")
+        pump(time.now() + timeout) ?? stop("Timed out after {timeout}")
     }
 
-    exchange(cell: Cell, until: Float) -> Result | nil {
+    exchange(cell: Cell, until: Instant) -> Result | nil {
         let $kernel = __kernel or throw RuntimeError('Ty REPL is not running')
         while true {
             if __canceled?() {
                 cell.stop('Canceled')
             }
-            let clock = now(CLOCK_MONOTONIC)
+            let clock = time.now()
             if let $why = cell.stopping and clock >= cell.deadline {
                 throw RuntimeError("{why}; the cell did not stop, so the Ty REPL state was discarded")
             }
             if cell.stopping == nil && clock >= until {
                 return nil
             }
-            if cell.stopping && clock - cell.nudged >= 1.0 {
+            if cell.stopping && clock - cell.nudged >= 1s {
                 kernel.interrupt()
                 cell.nudged = clock
             }

@@ -26,8 +26,8 @@ pub fn sh-cpu-time() {
     if not __windows__ {
         let result = sh('printf based')
         assert(#result.rusage == 16)
-        assert(result.rusage.utime >= 0.0)
-        assert(result.rusage.stime >= 0.0)
+        assert(result.rusage.utime >= 0s)
+        assert(result.rusage.stime >= 0s)
         assert(result.rusage.maxrss >= 0)
         assert(result.rusage.nvcsw >= 0)
         assert(result.rusage.nivcsw >= 0)
@@ -36,7 +36,7 @@ pub fn sh-cpu-time() {
 
 pub fn sh-timeout() {
     if __windows__ {
-        let result = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeout: 0.1)
+        let result = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeout: 100ms)
         assert(result.fate == Timeout)
         assert(!result.ok?)
         return
@@ -44,7 +44,7 @@ pub fn sh-timeout() {
 
     let result = sh(
         "printf early; {BLOCK}",
-        timeout=0.01,
+        timeout=10ms,
         hook=(out, _, _, fd) -> fd != nil || #out < 5
     )
 
@@ -72,7 +72,7 @@ pub fn sh-hook-restarts-timer() {
             ticks < 3
         }
 
-        let result = sh(BLOCK, timeout=0.01, hook=tick)
+        let result = sh(BLOCK, timeout=10ms, hook=tick)
 
         assert(result.fate == Timeout)
         assert(ticks == 3)
@@ -123,7 +123,7 @@ pub fn result-patterns() {
         assert(classify(sh('printf yes').fate) == 'ok')
         assert(classify(sh('exit 4').fate) == 'exit:4')
         assert(classify(sh('kill -9 $$').fate) == 'sig:9')
-        assert(classify(sh('sleep 5', timeout=0.05).fate) == 'timeout')
+        assert(classify(sh('sleep 5', timeout=50ms).fate) == 'timeout')
     }
 }
 
@@ -136,7 +136,7 @@ pub fn run-rlimits() {
 
 pub fn run-cpu-limit() {
     if not __windows__ {
-        let result = sh('while :; do :; done', rlimits: %{os.RLIMIT_CPU: (1, 2)}, timeout: 10)
+        let result = sh('while :; do :; done', rlimits: %{os.RLIMIT_CPU: (1, 2)}, timeout: 10s)
         assert(result.fate == Killed(os.SIGXCPU), "{result.fate}")
     }
 }

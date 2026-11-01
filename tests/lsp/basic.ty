@@ -30,7 +30,7 @@ fn send(msg) {
     server-in.flush()
 }
 
-let RECV_TIMEOUT = 10.0
+let RECV_TIMEOUT = 10s
 
 tag Closed, BadHeader;
 
@@ -60,7 +60,7 @@ fn recv() {
         Some(Closed)            => throw 'server closed connection',
         Some(BadHeader(header)) => throw "bad header: {header}",
         Some(msg)               => msg,
-        None                    => throw "no message from server after {RECV_TIMEOUT}s"
+        None                    => throw "no message from server after {RECV_TIMEOUT}"
     }
 }
 

@@ -310,6 +310,9 @@ enum {
         VALUE_QUEUE            ,
         VALUE_SHARED_QUEUE     ,
         VALUE_HEAP             ,
+        VALUE_TIME             ,
+        VALUE_DURATION         ,
+        VALUE_TIMEDELTA        ,
         VALUE_SENTINEL         ,
         VALUE_INDEX            ,
         VALUE_NONE             ,
@@ -467,6 +470,10 @@ struct value {
                         imax i;
                         ptrdiff_t off;
                         int nt;
+                };
+                struct {
+                        i64 ns;
+                        i64 clk;
                 };
                 struct {
                         i32 count;
@@ -1542,6 +1549,9 @@ MoveValue(Value *dst, Value const *src)
 #define DICT(d)                  ValueWords(VALUE_DICT,           VWP(Dict, d),                       0,                     0)
 #define SET(s)                   ValueWords(VALUE_SET,            VWP(Set, s),                        0,                     0)
 #define HEAP(h)                  ValueWords(VALUE_HEAP,           VWP(Heap, h),                       0,                     0)
+#define TIME(n, c)               ValueWords(VALUE_TIME,           (i64)(n),                           (i64)(c),              0)
+#define DURATION(n)              ValueWords(VALUE_DURATION,       (i64)(n),                           0,                     0)
+#define TIMEDELTA(n)             ValueWords(VALUE_TIMEDELTA,      (i64)(n),                           0,                     0)
 #define HEAP_VIEW(h)             ValueWords(VALUE_ARRAY,          VWP(Array, &(h)->xs),               0,                     0)
 #define REGEX(r)                 ValueWords(VALUE_REGEX,          VWP(Regex const, r),                0,                     0)
 #define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                 .tags = 0 })

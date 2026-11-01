@@ -6,7 +6,7 @@ import ty
 
 pub const ROOT = Path(__file__).parent.parent.parent.parent
 
-pub const TIMEOUT = float(getenv('LSP_TEST_TIMEOUT') ?? '30')
+pub const TIMEOUT = abs(float(getenv('LSP_TEST_TIMEOUT') ?? '30') * 1s)
 
 tag Closed, BadHeader;
 
@@ -108,7 +108,7 @@ pub class Server {
             Some(Closed)       => throw 'tyd closed the connection',
             Some(BadHeader(h)) => throw "bad header from tyd: {h}",
             Some(msg)          => msg,
-            None               => throw "tyd hung: no message after {TIMEOUT}s"
+            None               => throw "tyd hung: no message after {TIMEOUT}"
         }
     }
 

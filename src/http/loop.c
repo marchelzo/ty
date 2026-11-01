@@ -13,6 +13,7 @@
 #include <sys/random.h>
 #endif
 
+#include "chrono.h"
 #include "http.h"
 #include "vm.h"
 #include "functions.h"
@@ -1331,10 +1332,9 @@ read_config(Ty *ty, Config *cfg, Dict *d)
 } while (0)
 #define T(f, k) do {                                                             \
         Value *v = dict_get_member(ty, d, k);                                    \
-        cfg->f = (v == NULL)                ? cfg->f                             \
-               : (v->type == VALUE_REAL)    ? (i64)(v->real * 1000.0)            \
-               : (v->type == VALUE_INTEGER) ? v->z * 1000                        \
-               :                              cfg->f;                            \
+        cfg->f = (v == NULL)                 ? cfg->f                            \
+               : (v->type == VALUE_DURATION) ? ChronoMsCeil(v->ns)               \
+               :                               cfg->f;                           \
 } while (0)
 #define B(f, k) do {                                                             \
         Value *v = dict_get_member(ty, d, k);                                    \
@@ -1540,7 +1540,7 @@ TY_BUILTIN(http_listen)
         return NIL;
 }
 
-// _http.poll(loop: Ptr, timeout: Float = -1.0) -> Int
+// _http.poll(loop: Ptr, timeout: ?time::Timeout = nil) -> Int
 TY_BUILTIN(http_poll)
 {
         Loop *L = LoopArg(ty, _name__, loop);
@@ -1561,7 +1561,11 @@ TY_BUILTIN(http_poll)
                 return INTEGER((vN(*L->evs) > 0) ? (i64)vN(*L->evs) / 4 : -1);
         }
 
-        i64 ms = (timeout < 0) ? 1000 : (i64)(timeout * 1000.0);
+        i64 ms = ChronoMsCeil(ChronoTimeout(ty, _name__, &timeout));
+
+        if (ms < 0) {
+                ms = 1000;
+        }
 
         if (vN(L->heap) > 0) {
                 ms = min(ms, max(v__(L->heap, 0).at - L->now, 0));
@@ -1619,11 +1623,12 @@ TY_BUILTIN(http_stopping)
         return BOOLEAN(L->stopping || atomic_load(&L->stop));
 }
 
-// _http.wait-fd(fd: Int, events: Int, timeout: Float = -1.0) -> Bool
+// _http.wait-fd(fd: Int, events: Int, timeout: ?time::Timeout = nil) -> Bool
 TY_BUILTIN(http_wait_fd)
 {
-        struct pollfd p = { .fd = fd, .events = events };
-        int ms = (timeout < 0) ? -1 : (int)min(timeout * 1000.0, INT32_MAX);
+        struct pollfd p  = { .fd = fd, .events = events };
+        i64           ns = ChronoTimeout(ty, _name__, &timeout);
+        int           ms = (ns < 0) ? -1 : (int)min(ChronoMsCeil(ns), INT32_MAX);
         int rc;
 
         UnlockTy();
@@ -1734,7 +1739,7 @@ TY_BUILTIN(http_count)
         return NIL;
 }
 
-// _http.timer(loop: Ptr, seconds: Float, token: _) -> Int
+// _http.timer(loop: Ptr, after: time::Timeout, token: _) -> Int
 TY_BUILTIN(http_timer)
 {
         Loop *L = LoopArg(ty, _name__, loop);
@@ -1755,7 +1760,7 @@ TY_BUILTIN(http_timer)
         pin_at(L, L->tokens, 2 * slot, token);
 
         L->now = clock_ms();
-        Arm(L, TK_USER, slot, u->gen, 0, L->now + max((i64)(seconds * 1000.0), 0));
+        Arm(L, TK_USER, slot, u->gen, 0, L->now + max(ChronoMsCeil(ChronoTimeout(ty, _name__, &after)), 0));
 
         return INTEGER(((i64)u->gen << 32) | slot);
 }

@@ -1936,6 +1936,19 @@ prefix_real(Ty *ty)
         return e;
 }
 
+static Expr *
+prefix_duration(Ty *ty)
+{
+        expect(TOKEN_DURATION);
+
+        Expr *e = mkxpr(DURATION);
+        e->integer = tok()->integer;
+
+        consume(TOKEN_DURATION);
+
+        return e;
+}
+
 static Bytes
 astrcat(Ty *ty, Bytes s1, Bytes s2)
 {
@@ -6058,6 +6071,7 @@ get_prefix_parser(Ty *ty)
         switch (T0) {
         case TOKEN_INTEGER:             return prefix_integer;
         case TOKEN_REAL:                return prefix_real;
+        case TOKEN_DURATION:            return prefix_duration;
         case TOKEN_STRING:              return prefix_string;
         case TOKEN_REGEX:               return prefix_regex;
         case TOKEN_UNTERMINATED_REGEX:  return prefix_unterminated_regex;

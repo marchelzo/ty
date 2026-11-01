@@ -13,6 +13,7 @@
 #include "value.h"
 #include "xd.h"
 #include "vm.h"
+#include "chrono.h"
 
 #define     look(i) (&STACK.items[STACK.count - 1] + i)
 #define COMPLETE(x) do { Value x__ = x; STACK.items[--STACK.count - 1] = x__; return true; } while (0)
@@ -29,6 +30,21 @@ op_builtin_add(Ty *ty)
         Value v;
 
         switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_DURATION):
+                COMPLETE(DURATION(ChronoAdd(ty, left->ns, right->ns)));
+
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                COMPLETE(TIMEDELTA(ChronoAdd(ty, left->ns, right->ns)));
+
+        case PACK_TYPES(VALUE_DURATION,  VALUE_TIME):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_TIME):
+                SWAP(Value const *, left, right);
+        case PACK_TYPES(VALUE_TIME, VALUE_DURATION):
+        case PACK_TYPES(VALUE_TIME, VALUE_TIMEDELTA):
+                COMPLETE(TIME(ChronoAdd(ty, left->ns, right->ns), left->clk));
+
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z + right->z));
 
@@ -153,6 +169,17 @@ op_builtin_mul(Ty *ty)
         Value v;
 
         switch (PACK_TYPES(left->type, right->type)) {
+        case PACK_TYPES(VALUE_INTEGER, VALUE_DURATION):
+        case PACK_TYPES(VALUE_INTEGER, VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_REAL,    VALUE_DURATION):
+        case PACK_TYPES(VALUE_REAL,    VALUE_TIMEDELTA):
+                SWAP(Value const *, left, right);
+        case PACK_TYPES(VALUE_DURATION,  VALUE_INTEGER):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_INTEGER):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_REAL):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_REAL):
+                COMPLETE(TIMEDELTA(ChronoScale(ty, left->ns, right)));
+
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z * right->z));
 
@@ -259,6 +286,21 @@ op_builtin_div(Ty *ty)
         Value const *right = look(0);
 
         switch (PACK_TYPES(left->type, right->type)) {
+        case PACK_TYPES(VALUE_DURATION,  VALUE_INTEGER):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_INTEGER):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_REAL):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_REAL):
+                COMPLETE(TIMEDELTA(ChronoDivide(ty, left->ns, right)));
+
+        case PAIR_OF(VALUE_DURATION):
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                if (right->ns == 0) {
+                        ZeroDividePanic(ty);
+                }
+                COMPLETE(REAL((double)left->ns / (double)right->ns));
+
         case PAIR_OF(VALUE_INTEGER):
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
@@ -303,6 +345,19 @@ op_builtin_sub(Ty *ty)
         ffi_type *t;
 
         switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_DURATION):
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                COMPLETE(TIMEDELTA(ChronoSub(ty, left->ns, right->ns)));
+
+        case PACK_TYPES(VALUE_TIME, VALUE_DURATION):
+        case PACK_TYPES(VALUE_TIME, VALUE_TIMEDELTA):
+                COMPLETE(TIME(ChronoSub(ty, left->ns, right->ns), left->clk));
+
+        case PAIR_OF(VALUE_TIME):
+                COMPLETE(TIMEDELTA(ChronoSpan(ty, left, right)));
+
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z - right->z));
 
@@ -382,6 +437,20 @@ op_builtin_mod(Ty *ty)
         Value const *right = look(0);
 
         switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_DURATION):
+                if (right->ns == 0) {
+                        ZeroDividePanic(ty);
+                }
+                COMPLETE(DURATION(left->ns % right->ns));
+
+        case PAIR_OF(VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_DURATION,  VALUE_TIMEDELTA):
+        case PACK_TYPES(VALUE_TIMEDELTA, VALUE_DURATION):
+                if (right->ns == 0) {
+                        ZeroDividePanic(ty);
+                }
+                COMPLETE(TIMEDELTA(IntMod(left->ns, right->ns)));
+
         case PACK_TYPES(VALUE_INTEGER, VALUE_INTEGER):
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
