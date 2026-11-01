@@ -163,10 +163,69 @@ TyCondVarWait(TyCondVar *cv, TyMutex *m)
         return SleepConditionVariableCS(cv, m, INFINITE);
 }
 
-inline static bool
-TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
+typedef i64 TyInstant;
+
+#define TY_NO_DEADLINE INT64_MAX
+#define TY_WAIT_CLOCK  CLOCK_MONOTONIC
+
+inline static TyInstant
+TyTimeNow(void)
 {
-        return SleepConditionVariableCS(cv, m, nMs);
+        return (TyInstant)TyThreadGetTime();
+}
+
+inline static TyInstant
+TyInstantFromNs(i64 ns)
+{
+        return ns;
+}
+
+inline static TyInstant
+TyTimeAdd(TyInstant t0, i64 delta)
+{
+        return (delta > TY_NO_DEADLINE - t0) ? TY_NO_DEADLINE : t0 + delta;
+}
+
+inline static TyInstant
+TyTimeAddMs(TyInstant t0, i64 msecs)
+{
+        return TyTimeAdd(t0, msecs * (i64)TY_1e6);
+}
+
+inline static TyInstant
+TyClockNow(int clock)
+{
+        struct timespec t;
+
+        if (clock == TY_WAIT_CLOCK) {
+                return TyTimeNow();
+        }
+
+        clock_gettime(clock, &t);
+
+        return (i64)TY_1e9 * t.tv_sec + t.tv_nsec;
+}
+
+inline static DWORD
+TyWaitMs(int clock, TyInstant deadline)
+{
+        i64 left = deadline - TyClockNow(clock);
+
+        return (deadline == TY_NO_DEADLINE) ? INFINITE
+             : (left <= 0)                  ? 0
+             :                                (DWORD)min((left + (i64)TY_1e6 - 1) / (i64)TY_1e6, INFINITE - 1);
+}
+
+inline static bool
+TyCondVarTimedWaitClock(TyCondVar *cv, TyMutex *m, int clock, TyInstant deadline)
+{
+        return SleepConditionVariableCS(cv, m, TyWaitMs(clock, deadline));
+}
+
+inline static bool
+TyCondVarTimedWait(TyCondVar *cv, TyMutex *m, TyInstant deadline)
+{
+        return TyCondVarTimedWaitClock(cv, m, TY_WAIT_CLOCK, deadline);
 }
 
 inline static bool
@@ -269,7 +328,10 @@ inline static bool
 TyNoteIsNotified(TyNote n) { (void)n; return false; }
 
 inline static bool
-TyNoteWait(TyNote n, u64 ms) { (void)n; (void)ms; return false; }
+TyNoteWaitClock(TyNote n, int clock, TyInstant deadline) { (void)n; (void)clock; (void)deadline; return false; }
+
+inline static bool
+TyNoteWait(TyNote n, TyInstant deadline) { return TyNoteWaitClock(n, TY_WAIT_CLOCK, deadline); }
 
 inline static TyCounter
 TyCounterNew(u32 v) { (void)v; return NULL; }
@@ -284,13 +346,16 @@ inline static u32
 TyCounterValue(TyCounter c) { (void)c; return 0; }
 
 inline static u32
-TyCounterWait(TyCounter c, u64 ms) { (void)c; (void)ms; return 0; }
+TyCounterWaitClock(TyCounter c, int clock, TyInstant deadline) { (void)c; (void)clock; (void)deadline; return 0; }
+
+inline static u32
+TyCounterWait(TyCounter c, TyInstant deadline) { return TyCounterWaitClock(c, TY_WAIT_CLOCK, deadline); }
 
 inline static int
-TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
-          TyMutex **locks, int nlocks)
+TyWaitAnyClock(TyWaitable *items, int count, int clock, TyInstant deadline, void *scratch,
+               TyMutex **locks, int nlocks)
 {
-        (void)items; (void)count; (void)timeout_ms; (void)scratch;
+        (void)items; (void)count; (void)clock; (void)deadline; (void)scratch;
         (void)locks; (void)nlocks;
         return count;
 }
@@ -322,6 +387,8 @@ typedef i64           TyTimeDelta;
 #define TY_RWLOCK_INIT  NSYNC_MU_INIT
 #define TY_THREAD_OK    NULL
 #define TY_ONCE_INIT    NSYNC_ONCE_INIT
+#define TY_NO_DEADLINE  nsync_time_no_deadline
+#define TY_WAIT_CLOCK   CLOCK_MONOTONIC
 
 #define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
 
@@ -463,19 +530,15 @@ TyCondVarWait(TyCondVar *cv, TyMutex *m)
 }
 
 inline static bool
-TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
+TyCondVarTimedWaitClock(TyCondVar *cv, TyMutex *m, int clock, TyInstant deadline)
 {
-        nsync_time abs_deadline = nsync_time_add(
-                nsync_time_now(),
-                nsync_time_ms((unsigned)nMs)
-        );
-        return nsync_cv_wait_with_deadline(cv, m, abs_deadline, NULL) == 0;
+        return nsync_cv_wait_with_deadline(cv, m, clock, deadline, NULL) == 0;
 }
 
 inline static bool
 TyCondVarTimedWait(TyCondVar *cv, TyMutex *m, TyInstant deadline)
 {
-        return nsync_cv_wait_with_deadline(cv, m, deadline, NULL) == 0;
+        return TyCondVarTimedWaitClock(cv, m, TY_WAIT_CLOCK, deadline);
 }
 
 inline static bool
@@ -563,7 +626,7 @@ TyRwLockWrUnlock(TyRwLock *m)
 inline static TyNote
 TyNoteNew(void)
 {
-        return nsync_note_new(NULL, nsync_time_no_deadline);
+        return nsync_note_new(NULL, TY_WAIT_CLOCK, nsync_time_no_deadline);
 }
 
 inline static void
@@ -585,12 +648,18 @@ TyNoteIsNotified(TyNote n)
 }
 
 inline static bool
-TyNoteWait(TyNote n, u64 ms)
+TyNoteWaitClock(TyNote n, int clock, TyInstant deadline)
 {
-        nsync_time deadline = (ms == (u64)-1)
-                ? nsync_time_no_deadline
-                : nsync_time_add(nsync_time_now(), nsync_time_ms((unsigned)ms));
-        return nsync_note_wait(n, deadline) != 0;
+        struct nsync_waitable_s  w  = { n, &nsync_note_waitable_funcs };
+        struct nsync_waitable_s *pw = &w;
+
+        return nsync_wait_n(NULL, NULL, NULL, clock, deadline, 1, &pw) == 0;
+}
+
+inline static bool
+TyNoteWait(TyNote n, TyInstant deadline)
+{
+        return TyNoteWaitClock(n, TY_WAIT_CLOCK, deadline);
 }
 
 /*
@@ -622,12 +691,15 @@ TyCounterValue(TyCounter c)
 }
 
 inline static u32
-TyCounterWait(TyCounter c, u64 ms)
+TyCounterWaitClock(TyCounter c, int clock, TyInstant deadline)
 {
-        nsync_time deadline = (ms == (u64)-1)
-                ? nsync_time_no_deadline
-                : nsync_time_add(nsync_time_now(), nsync_time_ms((unsigned)ms));
-        return nsync_counter_wait(c, deadline);
+        return nsync_counter_wait(c, clock, deadline);
+}
+
+inline static u32
+TyCounterWait(TyCounter c, TyInstant deadline)
+{
+        return TyCounterWaitClock(c, TY_WAIT_CLOCK, deadline);
 }
 
 inline static nsync_time
@@ -652,7 +724,7 @@ TyTimeDeltaNanos(i64 msecs)
         return msecs;
 }
 
-inline TyInstant
+inline static TyInstant
 TyTimeAddMs(TyInstant t0, i64 msecs)
 {
         return TyTimeAdd(t0, msecs * TY_1e6);
@@ -661,7 +733,13 @@ TyTimeAddMs(TyInstant t0, i64 msecs)
 inline static TyInstant
 TyTimeNow(void)
 {
-        return nsync_time_now();
+        return nsync_time_now(TY_WAIT_CLOCK);
+}
+
+inline static TyInstant
+TyInstantFromNs(i64 ns)
+{
+        return (ns <= 0) ? nsync_time_zero : nsync_time_s_ns(ns / TY_1e9, ns % TY_1e9);
 }
 
 /*
@@ -704,8 +782,8 @@ TyWaitMuUnlock(void *v)
 }
 
 inline static int
-TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
-          TyMutex **locks, int nlocks)
+TyWaitAnyClock(TyWaitable *items, int count, int clock, TyInstant deadline, void *scratch,
+               TyMutex **locks, int nlocks)
 {
         struct nsync_waitable_s *w = scratch;
         struct nsync_waitable_s **pw = (struct nsync_waitable_s **)((char *)scratch + count * sizeof *w);
@@ -733,15 +811,11 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
                 pw[i] = &w[i];
         }
 
-        nsync_time deadline = (timeout_ms == (u64)-1)
-                ? nsync_time_no_deadline
-                : nsync_time_add(nsync_time_now(), nsync_time_ms((u32)timeout_ms));
-
         int idx;
 
         if (nlocks == 1) {
                 idx = nsync_wait_n(locks[0], &TyWaitMuLock, &TyWaitMuUnlock,
-                                    deadline, count, pw);
+                                    clock, deadline, count, pw);
         } else if (nlocks > 1) {
                 TyWaitMuSet mus;
                 mus.n = nlocks > 16 ? 16 : nlocks;
@@ -749,9 +823,9 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
                         mus.mu[i] = locks[i];
                 }
                 idx = nsync_wait_n(&mus, &TyWaitMuSetLock, &TyWaitMuSetUnlock,
-                                    deadline, count, pw);
+                                    clock, deadline, count, pw);
         } else {
-                idx = nsync_wait_n(NULL, NULL, NULL, deadline, count, pw);
+                idx = nsync_wait_n(NULL, NULL, NULL, clock, deadline, count, pw);
         }
 
         return (idx < count) ? idx : -1;
@@ -780,6 +854,20 @@ TyBarrierWait(TyBarrier *b)
 }
 
 #endif /* _WIN32 */
+
+typedef struct {
+        int       clock;
+        TyInstant at;
+} TyDeadline;
+
+#define TY_FOREVER ((TyDeadline) { TY_WAIT_CLOCK, TY_NO_DEADLINE })
+
+inline static int
+TyWaitAny(TyWaitable *items, int count, TyInstant deadline, void *scratch,
+          TyMutex **locks, int nlocks)
+{
+        return TyWaitAnyClock(items, count, TY_WAIT_CLOCK, deadline, scratch, locks, nlocks);
+}
 
 #endif
 

@@ -1003,15 +1003,18 @@ TY_BUILTIN_RAW(float)
 {
         ASSERT_ARGC("float()", 1);
 
-        Value v = ARGx(0, VALUE_INTEGER, VALUE_REAL, VALUE_STRING);
+        Value v = ARG(0);
 
         double x;
         char *end;
         char const *s;
 
         switch (v.type) {
-        case VALUE_INTEGER: x = (double)v.z; break;
-        case VALUE_REAL:    x = v.real;      break;
+        case VALUE_REAL:      x = v.real;              break;
+        case VALUE_INTEGER:   x = (double)v.z;         break;
+        case VALUE_TIME:      x = v.ns / (double)TY_S; break;
+        case VALUE_DURATION:  x = v.ns / (double)TY_S; break;
+        case VALUE_TIMEDELTA: x = v.ns / (double)TY_S; break;
 
         case VALUE_STRING:
                 s = (char const *)ss(v);
@@ -1020,6 +1023,18 @@ TY_BUILTIN_RAW(float)
                         return NIL;
                 }
                 break;
+
+        default:
+                (void)ARGx(
+                        0,
+                        VALUE_REAL,
+                        VALUE_INTEGER,
+                        VALUE_STRING,
+                        VALUE_TIME,
+                        VALUE_TIMEDELTA,
+                        VALUE_DURATION
+                );
+                UNREACHABLE();
         }
 
         return REAL(x);
@@ -4803,12 +4818,12 @@ TY_BUILTIN_RAW(thread_join)
 
                 return t->v;
         } else {
-                i64 timeoutMs = TIMEOUT_MS_ARG(1);
+                TyDeadline d = DEADLINE_ARG(1);
 
                 UnlockTy();
                 TyMutexLock(&t->mutex);
                 while (t->alive) {
-                        if (!TyCondVarTimedWaitRelative(&t->cond, &t->mutex, timeoutMs)) {
+                        if (!TyCondVarTimedWaitClock(&t->cond, &t->mutex, d.clock, d.at)) {
                                 TyMutexUnlock(&t->mutex);
                                 LockTy();
                                 return None;
@@ -4881,9 +4896,9 @@ TY_BUILTIN_RAW(thread_cond_wait)
         bool ok;
 
         if (argc == 3 && !IsNil(ARG(2))) {
-                i64 msec = TIMEOUT_MS_ARG(2);
+                TyDeadline d = DEADLINE_ARG(2);
                 UnlockTy();
-                ok = TyCondVarTimedWaitRelative(cond, mtx, msec);
+                ok = TyCondVarTimedWaitClock(cond, mtx, d.clock, d.at);
                 LockTy();
         } else {
                 UnlockTy();
@@ -4939,11 +4954,11 @@ TY_BUILTIN_RAW(thread_wait_note)
 {
         ASSERT_ARGC("thread.waitNote()", 1, 2);
 
-        TyNote *np = PTR_ARG(0);
-        u64 ms = (argc == 2) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
+        TyNote    *np = PTR_ARG(0);
+        TyDeadline d  = DEADLINE_OPT(1);
 
         UnlockTy();
-        bool ok = TyNoteWait(*np, ms);
+        bool ok = TyNoteWaitClock(*np, d.clock, d.at);
         LockTy();
 
         return BOOLEAN(ok);
@@ -4981,10 +4996,10 @@ TY_BUILTIN_RAW(thread_count_wait)
         ASSERT_ARGC("thread.count-wait()", 1, 2);
 
         TyCounter *cp = PTR_ARG(0);
-        u64 ms = (argc == 2) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
+        TyDeadline d  = DEADLINE_OPT(1);
 
         UnlockTy();
-        u32 v = TyCounterWait(*cp, ms);
+        u32 v = TyCounterWaitClock(*cp, d.clock, d.at);
         LockTy();
 
         return INTEGER(v);
@@ -4999,8 +5014,8 @@ TY_BUILTIN_RAW(thread_wait_any)
 {
         ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
 
-        Value objects = ARGx(0, VALUE_ARRAY);
-        u64 timeout = (argc > 1) ? (u64)TIMEOUT_MS_ARG(1) : (u64)-1;
+        Value      objects = ARGx(0, VALUE_ARRAY);
+        TyDeadline d       = DEADLINE_OPT(1);
 
         usize n = vN(*objects.array);
 
@@ -5048,7 +5063,7 @@ TY_BUILTIN_RAW(thread_wait_any)
         }
 
         UnlockTy();
-        int idx = TyWaitAny(items, n, timeout, scratch, vv(locks), vN(locks));
+        int idx = TyWaitAnyClock(items, n, d.clock, d.at, scratch, vv(locks), vN(locks));
         LockTy();
 
         SCRATCH_RESTORE();
@@ -5210,7 +5225,7 @@ TY_BUILTIN_RAW(thread_recv)
 
         bool ok = (argc == 1)
                 ? chan_recv(ty, chan, &v)
-                : chan_try_recv(ty, chan, &v, TIMEOUT_MS_ARG(1));
+                : chan_try_recv(ty, chan, &v, DEADLINE_ARG(1));
 
         return ok ? Some(v) : None;
 }
@@ -9011,6 +9026,43 @@ TY_BUILTIN_RAW(time_gmtime)
         return tm_record(ty, &r);
 }
 
+static Value
+TimeText(Ty *ty, Value const *v, void const *spec, usize n, bool strf)
+{
+        byte_vector buf = {0};
+        Value       str = NIL;
+        bool        ok;
+
+        WITH_SCRATCH {
+                if (strf) {
+                        ChronoStrftime(ty, &buf, spec, n, v->ns, v->clk);
+                        ok = true;
+                } else {
+                        ok = ChronoFormat(ty, &buf, v, spec, n);
+                }
+                if (ok) {
+                        str = vSs(vv(buf), vN(buf));
+                }
+        }
+
+        if (!ok) {
+                zP("time.format(): bad format spec for %s: %.*s", VSC(v), (int)n, (char const *)spec);
+        }
+
+        return str;
+}
+
+// time.format(x: TimeDelta | Time[Any], spec: String = '') -> String
+TY_BUILTIN_RAW(time_format)
+{
+        ASSERT_ARGC("time.format()", 1, 2);
+
+        Value x    = ARGx(0, VALUE_TIME, VALUE_DURATION, VALUE_TIMEDELTA);
+        Value spec = (argc == 2) ? ARGx(1, VALUE_STRING) : STRING_EMPTY;
+
+        return TimeText(ty, &x, ss(spec), sN(spec), false);
+}
+
 // time.strftime(
 //     fmt: String,
 //     t: Time[time::CLOCK_REALTIME] | {?sec: Int, ?min: Int, ?hour: Int, ?mday: Int, ?mon: Int, ?year: Int, ?wday: Int, ?yday: Int, ?isdst: Int | Bool, ?gmtoff: Int, ?zone: ?String} | nil = nil
@@ -9026,8 +9078,7 @@ TY_BUILTIN_RAW(time_strftime)
         if (argc == 2) {
                 Value v = ARG(1);
                 if (v.type == VALUE_TIME) {
-                        time_t sec = EpochSeconds(ty, "time.strftime()", argc, 1);
-                        localtime_r(&sec, &t);
+                        return TimeText(ty, &v, ss(fmt), sN(fmt), true);
                 } else if (v.type == VALUE_TUPLE) {
                         Value *vp;
                         if ((vp = tget_t(&v, "sec", VALUE_INTEGER)) != NULL)

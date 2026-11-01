@@ -158,12 +158,9 @@ queue_park(Ty *ty, SharedQueue *q, u32 epoch, u64 deadline)
                         TyCondVarWait(&q->ready, &q->park);
                         continue;
                 }
-                u64 now = TyMonotonicTime();
-                if (now >= deadline) {
+                if (!TyCondVarTimedWait(&q->ready, &q->park, TyInstantFromNs(deadline))) {
                         break;
                 }
-                u64 ms = min((deadline - now + TY_1e6 - 1) / TY_1e6, UINT_MAX);
-                TyCondVarTimedWaitRelative(&q->ready, &q->park, ms);
         }
         TyMutexUnlock(&q->park);
 #endif
@@ -428,10 +425,8 @@ shared_queue_try_take(Ty *ty, Value *self, int argc, Value *kwargs)
         if (argc == 0) {
                 found = queue_take(ty, self->shared_queue, &v, 1, false) != 0;
         } else {
-                i64 ns       = ChronoTimeout(ty, "SharedQueue.try-take()", &ARG(0));
-                u64 now      = TyMonotonicTime();
-                u64 deadline = (ns < 0 || (u64)ns > UINT64_MAX - now) ? UINT64_MAX : now + ns;
-                found = queue_wait(ty, self->shared_queue, &v, false, deadline);
+                i64 ns = ChronoDeadline(ty, "SharedQueue.try-take()", &ARG(0), CLOCK_MONOTONIC);
+                found  = queue_wait(ty, self->shared_queue, &v, false, (ns < 0) ? UINT64_MAX : (u64)ns);
         }
         return found ? Some(v) : None;
 }

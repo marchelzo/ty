@@ -2085,6 +2085,18 @@ class Blob : Iterable[Int], IntoPtr[Int], PathLike {
     clear(i: Int = 0, n: ?Int = nil) -> Blob;
 }
 
+fn time-fmt(x: TimeDelta | Time[Any], spec: String, w: Int, parts: Regex[2]) -> String {
+    if spec.match?(/\?$/) {
+        return fmt("%{spec}", w if '*' in spec, x)
+    }
+
+    match spec.match(parts) {
+        [_, '', body: String]          => time.format(x, body),
+        [_, pad: String, body: String] => time.format(x, body).__fmt__(pad, w),
+        _                              => time.format(x, spec)
+    }
+}
+
 class TimeDelta {
     init(nsecs: Int);
     init(text: String);
@@ -2093,6 +2105,10 @@ class TimeDelta {
     us   -> Float { int(self) / 1.0e3  }
     ms   -> Float { int(self) / 1.0e6  }
     secs -> Float { int(self) / 1.0e9  }
+
+    __fmt__(spec: String, w: Int) -> String {
+        time-fmt(self, spec, w, /^(.*?)((?:\.\d+)?(?:ns|us|ms|s|m|h|d)?)$/)
+    }
 }
 
 class Duration < TimeDelta {
@@ -2104,6 +2120,10 @@ class Time[C] {
     init(nsecs: Int, clock: C) where C: time::ClockID;
 
     clock -> C { time.clock(self) }
+
+    __fmt__(spec: String, w: Int) -> String {
+        time-fmt(self, spec, w, /^([^%]*?)((?:\.\d+)?|%.*)$/)
+    }
 }
 
 class Bool {

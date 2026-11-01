@@ -199,6 +199,209 @@ ChronoShowTime(Ty *ty, byte_vector *buf, i64 ns, i64 clk)
         svPn(*buf, "Z)", 2);
 }
 
+static char const *
+UnitName(i64 u)
+{
+        for (int i = 0; i < countof(Units); ++i) {
+                if (Units[i].u == u) {
+                        return Units[i].s;
+                }
+        }
+
+        return "ns";
+}
+
+static i64
+UnitFor(u64 n)
+{
+        for (int i = 0; i < countof(Units); ++i) {
+                if (n >= (u64)Units[i].u) {
+                        return Units[i].u;
+                }
+        }
+
+        return TY_S;
+}
+
+static void
+ShowScaled(Ty *ty, byte_vector *buf, i64 ns, i64 u, int prec, bool point)
+{
+        typedef unsigned __int128 u128;
+        char out[48];
+        u64  n = (ns < 0) ? -(u64)ns : (u64)ns;
+        int  p = (prec < 0) ? 9 : min(prec, 18);
+        u64  k = 1;
+        u128 q;
+        u64  whole;
+        u64  frac;
+
+        for (int i = 0; i < p; ++i) {
+                k *= 10;
+        }
+
+        q     = ((u128)n * k * 2 + (u64)u) / ((u128)u * 2);
+        whole = (u64)(q / k);
+        frac  = (u64)(q % k);
+
+        while (prec < 0 && p > 0 && frac % 10 == 0) {
+                frac /= 10;
+                p    -= 1;
+        }
+
+        if (ns < 0 && q != 0) {
+                svP(*buf, '-');
+        }
+
+        snprintf(out, sizeof out, "%"PRIu64, whole);
+        svPn(*buf, out, strlen(out));
+
+        if (p > 0) {
+                snprintf(out, sizeof out, ".%0*"PRIu64, p, frac);
+                svPn(*buf, out, strlen(out));
+        } else if (point && prec < 0) {
+                svPn(*buf, ".0", 2);
+        }
+
+        for (int i = 18; i < prec; ++i) {
+                svP(*buf, '0');
+        }
+}
+
+void
+ChronoStrftime(Ty *ty, byte_vector *buf, char const *s, usize n, i64 ns, i64 clk)
+{
+        byte_vector f   = {0};
+        struct tm   tm  = {0};
+        time_t      sec = (time_t)(ns / TY_S) - (ns % TY_S < 0);
+        i64         sub = ns - (i64)sec * TY_S;
+        char        digits[16];
+        char       *out = TY_TMP();
+        usize       r;
+
+        if (IsCalendarClock(clk)) {
+                localtime_r(&sec, &tm);
+        } else {
+                gmtime_r(&sec, &tm);
+        }
+
+        snprintf(digits, sizeof digits, "%09"PRIi64, sub);
+
+        for (usize i = 0; i < n; ++i) {
+                usize j = i + 1;
+                int   w = 0;
+
+                if (s[i] != '%') {
+                        svP(f, s[i]);
+                        continue;
+                }
+
+                while (j < n && isdigit((u8)s[j])) {
+                        w  = 10 * min(w, 99) + (s[j] - '0');
+                        j += 1;
+                }
+
+                if (j < n && s[j] == 'N') {
+                        svPn(f, digits, (w == 0 || w > 9) ? 9 : w);
+                        i = j;
+                } else if (j < n) {
+                        svPn(f, s + i, j - i + 1);
+                        i = j;
+                } else {
+                        svPn(f, s + i, j - i);
+                        i = j - 1;
+                }
+        }
+
+        svP(f, '\0');
+
+        r = strftime(out, TY_TMP_N, vv(f), &tm);
+
+        svPn(*buf, out, r);
+}
+
+void
+ChronoShowText(Ty *ty, byte_vector *buf, i64 ns, i64 clk)
+{
+        static char const DateFormat[] = "%a %b %e %I:%M:%S %p %Z %Y";
+
+        if (IsCalendarClock(clk)) {
+                ChronoStrftime(ty, buf, DateFormat, sizeof DateFormat - 1, ns, clk);
+        } else {
+                ShowScaled(ty, buf, ns, TY_S, -1, true);
+        }
+}
+
+static int
+FormatPrecision(char const **s, char const *end)
+{
+        int p = 0;
+
+        if (*s == end || **s != '.') {
+                return -1;
+        }
+
+        *s += 1;
+
+        if (*s == end || !isdigit((u8)**s)) {
+                return -2;
+        }
+
+        while (*s < end && isdigit((u8)**s)) {
+                p   = 10 * min(p, 99) + (**s - '0');
+                *s += 1;
+        }
+
+        return p;
+}
+
+bool
+ChronoFormat(Ty *ty, byte_vector *buf, Value const *v, char const *s, usize n)
+{
+        char const *end  = s + n;
+        u64         abs  = (v->ns < 0) ? -(u64)v->ns : (u64)v->ns;
+        i64         unit = 0;
+        int         prec;
+
+        if (v->type == VALUE_TIME && memchr(s, '%', n) != NULL) {
+                ChronoStrftime(ty, buf, s, n, v->ns, v->clk);
+                return true;
+        }
+
+        prec = FormatPrecision(&s, end);
+
+        if (prec == -2) {
+                return false;
+        }
+
+        if (v->type == VALUE_TIME) {
+                if (s != end) {
+                        return false;
+                }
+                if (prec == -1) {
+                        ChronoShowText(ty, buf, v->ns, v->clk);
+                } else {
+                        ShowScaled(ty, buf, v->ns, TY_S, prec, true);
+                }
+                return true;
+        }
+
+        if (s != end && ChronoUnit(s, end, &unit) != end - s) {
+                return false;
+        }
+
+        if (unit == 0 && prec == -1) {
+                ChronoShowDuration(ty, buf, v->ns);
+                return true;
+        }
+
+        unit = (unit != 0) ? unit : UnitFor(abs);
+
+        ShowScaled(ty, buf, v->ns, unit, prec, false);
+        svPn(*buf, UnitName(unit), strlen(UnitName(unit)));
+
+        return true;
+}
+
 static ChronoStatus
 Fits(double x, i64 *out)
 {
@@ -367,6 +570,29 @@ ChronoDeadline(Ty *ty, char const *ctx, Value const *v, i64 clk)
                 }
         case VALUE_DURATION:
                 return ChronoAdd(ty, ChronoNow(ty, clk), ChronoTimeout(ty, ctx, v));
+
+        default:
+                zP("%s: expected a Duration or a Time but got %s", ctx, VSC(v));
+        }
+}
+
+TyDeadline
+ChronoWait(Ty *ty, char const *ctx, Value const *v)
+{
+        i64 ns;
+
+        switch (v->type) {
+        case VALUE_NONE:
+        case VALUE_NIL:
+                return TY_FOREVER;
+
+        case VALUE_TIME:
+                return (TyDeadline) { v->clk, TyInstantFromNs(v->ns) };
+
+        case VALUE_DURATION:
+                return __builtin_add_overflow(ChronoNow(ty, TY_WAIT_CLOCK), v->ns, &ns)
+                     ? TY_FOREVER
+                     : (TyDeadline) { TY_WAIT_CLOCK, TyInstantFromNs(ns) };
 
         default:
                 zP("%s: expected a Duration or a Time but got %s", ctx, VSC(v));

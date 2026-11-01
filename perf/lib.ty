@@ -177,9 +177,9 @@ fn benchmark-program(name: String, categories: String, f) {
                 let s0 = counters.snapshot()
                 let t0 = time.now()
                 f(iters)
-                let dt = time.since(t0)
+                let dt = time.now() - t0
                 let s1 = counters.snapshot()
-                times.push(dt.secs)
+                times.push(float(dt))
                 for k, x in Counters.delta(s0, s1) {
                     (metrics[k] ?= []).push(x)
                 }
@@ -199,7 +199,7 @@ fn benchmark-program(name: String, categories: String, f) {
             inherit-elevation()
             let t0 = time.now()
             f(iters)
-            let dt = time.since(t0).secs
+            let dt = float(time.now() - t0)
             print("{name}: {iters} iters in {fmt-time(dt)} ({fmt-time(dt / iters)}/iter)")
             os.exit(0)
         },
@@ -283,7 +283,7 @@ pub fn calibrate(f, target: Float = 0.5) {
     while true {
         let t0 = time.now()
         f(iters)
-        let elapsed = time.since(t0).secs
+        let elapsed = float(time.now() - t0)
         if elapsed >= target {
             return iters
         }

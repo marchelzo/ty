@@ -499,14 +499,18 @@ chan_recv(Ty *ty, Channel *chan, Value *v)
 }
 
 bool
-chan_try_recv(Ty *ty, Channel *chan, Value *v, i64 timeout)
+chan_try_recv(Ty *ty, Channel *chan, Value *v, TyDeadline deadline)
 {
         UnlockTy();
         TyMutexLock(&chan->m);
         atomic_fetch_add_explicit(&chan->waiters, 1, memory_order_acq_rel);
 
-        if (chan->open && chan->head == chan->tail) {
-                TyCondVarTimedWaitRelative(&chan->c, &chan->m, timeout);
+        while (
+                (chan->head == chan->tail)
+             && chan->open
+             && TyCondVarTimedWaitClock(&chan->c, &chan->m, deadline.clock, deadline.at)
+        ) {
+                continue;
         }
 
         return dequeue(ty, chan, v);

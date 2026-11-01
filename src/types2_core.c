@@ -8855,11 +8855,11 @@ runtime_facts_x(T2Universe const *universe, T2Type type, unsigned depth)
 
         T2RuntimeFacts exact = { .exact = true };
         switch (literal_base(node->kind)) {
-        case T2_TYPE_NEVER:  exact.kind = T2_RUNTIME_NEVER; return exact;
-        case T2_TYPE_NIL:    exact.kind = T2_RUNTIME_NIL; return exact;
-        case T2_TYPE_BOOL:   exact.kind = T2_RUNTIME_BOOL; return exact;
-        case T2_TYPE_INT:    exact.kind = T2_RUNTIME_INT; return exact;
-        case T2_TYPE_FLOAT:  exact.kind = T2_RUNTIME_FLOAT; return exact;
+        case T2_TYPE_NEVER:  exact.kind = T2_RUNTIME_NEVER;  return exact;
+        case T2_TYPE_NIL:    exact.kind = T2_RUNTIME_NIL;    return exact;
+        case T2_TYPE_BOOL:   exact.kind = T2_RUNTIME_BOOL;   return exact;
+        case T2_TYPE_INT:    exact.kind = T2_RUNTIME_INT;    return exact;
+        case T2_TYPE_FLOAT:  exact.kind = T2_RUNTIME_FLOAT;  return exact;
         case T2_TYPE_STRING: exact.kind = T2_RUNTIME_STRING; return exact;
         case T2_TYPE_FUNCTION:
         case T2_TYPE_OVERLOAD:

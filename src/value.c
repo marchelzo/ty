@@ -791,7 +791,11 @@ show_impl(
                         if (color) {
                                 sxdf(&buf, "%s", TERM(93));
                         }
-                        ChronoShowTime(ty, &buf, v.ns, v.clk);
+                        if (flags & TY_SHOW_REPR) {
+                                ChronoShowTime(ty, &buf, v.ns, v.clk);
+                        } else {
+                                ChronoShowText(ty, &buf, v.ns, v.clk);
+                        }
                         if (color) {
                                 sxdf(&buf, "%s", TERM(0));
                         }

@@ -178,8 +178,77 @@ pub fn clocks() {
     assert(wall.clock == time.CLOCK_REALTIME)
     assert(time.clock(cpu) == time.CLOCK_PROCESS_CPUTIME_ID)
     assert(wall :: Time && mono :: Time && !(mono :: Duration))
-    assert(str(wall).match?(/^Time\(CLOCK_REALTIME, \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z\)$/), str(wall))
-    assert(str(mono).match?(/^Time\(CLOCK_MONOTONIC, /), str(mono))
+    assert(show(wall, color=false).match?(/^Time\(CLOCK_REALTIME, \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z\)$/), show(wall))
+    assert(show(mono, color=false).match?(/^Time\(CLOCK_MONOTONIC, /), show(mono))
+}
+
+let NOON = Time(1_782_993_600_123_456_789, time.CLOCK_REALTIME)
+let UP   = Time(6_758_348_612_345_678, time.CLOCK_MONOTONIC)
+
+pub fn wall-times-read-like-date() {
+    let date = /^\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d [AP]M \S+ 2026$/
+    for text in [str(NOON), "{NOON}", NOON.__str__(), fmt('%s', NOON), "{NOON:}"] {
+        assert(text.match?(date), text)
+        assert(text == time.strftime('%a %b %e %I:%M:%S %p %Z %Y', NOON))
+    }
+}
+
+pub fn times-repr-with-their-clock() {
+    let repr = 'Time(CLOCK_REALTIME, 2026-07-02T12:00:00.123456789Z)'
+    assert(show(NOON, color=false) == repr)
+    assert(fmt('%?', NOON).match?(/2026-07-02T12:00:00\.123456789Z/))
+    assert("{NOON:?}".match?(/2026-07-02T12:00:00\.123456789Z/))
+    assert(NOON.__repr__().match?(/^Time\(CLOCK_REALTIME, /))
+    assert(show([NOON, UP], color=false) == "[{repr}, Time(CLOCK_MONOTONIC, 6758348.612345678s)]")
+    assert(show(UP, color=false) == 'Time(CLOCK_MONOTONIC, 6758348.612345678s)')
+}
+
+pub fn other-clocks-read-as-seconds() {
+    assert(str(UP) == '6758348.612345678')
+    assert("{UP}" == '6758348.612345678')
+    assert(str(Time(5 * int(1s), time.CLOCK_MONOTONIC)) == '5.0')
+    assert(str(Time(-int(1.5s), time.CLOCK_MONOTONIC)) == '-1.5')
+    assert("{UP:.3}" == '6758348.612')
+    assert("{UP:.0}" == '6758349')
+    assert("{UP:>12.1}" == '   6758348.6')
+    assert("{UP:%T.%3N}" == '05:19:08.612')
+    assert("{NOON:.2}" == '1782993600.12')
+}
+
+pub fn times-format-with-strftime() {
+    assert("{NOON:%s.%N}" == '1782993600.123456789')
+    assert("{NOON:%s.%3N %% %%N}" == '1782993600.123 % %N')
+    assert("{NOON:%Y}" == '2026')
+    assert("{NOON:>8%Y}" == '    2026')
+    assert(time.strftime('%s.%6N', NOON) == '1782993600.123456')
+    assert(time.format(NOON, '%s') == '1782993600')
+}
+
+pub fn durations-format-with-units() {
+    let d = 1234567ns
+    let cases = [
+        ("{d}",          '1.234567ms'),
+        ("{d:.2}",       '1.23ms'),
+        ("{d:us}",       '1234.567us'),
+        ("{d:.1s}",      '0.0s'),
+        ("{d:>12}",      '  1.234567ms'),
+        ("{d:<12.3us}",  '1234.567us  '),
+        ("{d:?}",        '1.234567ms'),
+        ("{90s:m}",      '1.5m'),
+        ("{90s:h}",      '0.025h'),
+        ("{100s:m}",     '1.666666667m'),
+        ("{2s:ms}",      '2000ms'),
+        ("{-90s:.1}",    '-1.5m'),
+        ("{0s:.2}",      '0.00s'),
+        ("{5s - 7s:ms}", '-2000ms'),
+        ("{1.5h:->8}",   '----1.5h'),
+        ("{-1ns:.0s}",   '0s'),
+    ]
+    for (got, want) in cases {
+        assert(got == want, "{got:?} != {want:?}")
+    }
+    assert(time.format(250ms, 'us') == '250000us')
+    assert-throws(time.format(1s, 'parsecs'))
 }
 
 pub fn clocks-do-not-mix() {
@@ -220,6 +289,47 @@ pub fn timeouts-and-deadlines() {
     assert(q.try-take(time.now() + 5ms) == None)
     q.put(1)
     assert(q.try-take(1s) == Some(1))
+}
+
+fn waits(f: () -> Bool, at-least: Duration) -> Bool {
+    let t0 = time.now()
+    let ok = f()
+    assert(time.since(t0) >= at-least, "woke after {time.since(t0)}")
+    ok
+}
+
+pub fn blocking-waits-take-any-deadline() {
+    let mtx  = Mutex()
+    let cv   = CondVar()
+    let note = Note()
+    let ch   = Channel()
+    for deadline in [-> 20ms, -> time.now() + 20ms, -> time.time() + 20ms, -> time.now(time.CLOCK_BOOTTIME) + 20ms] {
+        assert(!waits(-> note.wait(deadline()), 15ms))
+        assert(!waits(-> ch.recv(deadline()) != None, 15ms))
+        assert(!waits(-> with mtx { cv.wait(mtx, deadline()) }, 15ms))
+        assert(!waits(-> Thread.wait-any([note], deadline()) != nil, 15ms))
+    }
+    assert(!note.wait(time.time() - 1s))
+    note.notify()
+    assert(note.wait(time.time() + 1h))
+}
+
+fn burn(cpu: Duration) {
+    let stop = time.now(time.CLOCK_PROCESS_CPUTIME_ID) + cpu
+    while time.now(time.CLOCK_PROCESS_CPUTIME_ID) < stop {
+    }
+}
+
+pub fn deadlines-keep-their-clock() {
+    let note     = Note()
+    let deadline = time.now(time.CLOCK_PROCESS_CPUTIME_ID) + 20ms
+    let spinner  = Thread(-> do {
+        os.sleep(60ms)
+        burn(40ms)
+    })
+    assert(!note.wait(deadline))
+    assert(time.now(time.CLOCK_PROCESS_CPUTIME_ID) >= deadline)
+    spinner.join()
 }
 
 pub fn sleep-rejects-signed-deltas() {

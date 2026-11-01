@@ -11,7 +11,7 @@ bool
 chan_recv(Ty *ty, Channel *chan, Value *v);
 
 bool
-chan_try_recv(Ty *ty, Channel *chan, Value *v, i64 timeout);
+chan_try_recv(Ty *ty, Channel *chan, Value *v, TyDeadline deadline);
 
 void
 chan_destroy(Ty *ty, Channel *chan);

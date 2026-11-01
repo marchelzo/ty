@@ -630,7 +630,7 @@ if(BUILD_TESTING)
   endif()
   foreach(_lir_test IN LISTS _lir_tests)
     add_executable(lir-${_lir_test}-test tests/jit/lir/${_lir_test}.c ${_lir_core})
-    target_include_directories(lir-${_lir_test}-test PRIVATE include libco nsync/public ${_autogen_dir}/include)
+    target_include_directories(lir-${_lir_test}-test PRIVATE include libco nsync/include ${_autogen_dir}/include)
     target_compile_definitions(lir-${_lir_test}-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
     target_compile_options(lir-${_lir_test}-test PRIVATE
       $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:
@@ -659,12 +659,12 @@ if(BUILD_TESTING)
     endif()
   endforeach()
   add_executable(jitmem-test tests/jit/mem.c src/jit/mem.c src/panic.c src/stbsp.c)
-  target_include_directories(jitmem-test PRIVATE include libco nsync/public)
+  target_include_directories(jitmem-test PRIVATE include libco nsync/include)
   target_compile_definitions(jitmem-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
   target_link_libraries(jitmem-test PRIVATE nsync PCRE2::8BIT Threads::Threads)
   add_test(NAME jitmem COMMAND jitmem-test)
   add_executable(types2-core-test tests/types2_core.c src/types2_core.c src/panic.c)
-  target_include_directories(types2-core-test PRIVATE include libco nsync/public)
+  target_include_directories(types2-core-test PRIVATE include libco nsync/include)
   target_compile_definitions(types2-core-test PRIVATE PCRE2_CODE_UNIT_WIDTH=8 _GNU_SOURCE)
   target_link_libraries(types2-core-test PRIVATE
     unofficial::libffi::libffi PCRE2::8BIT xxHash::xxhash Threads::Threads

@@ -42,6 +42,15 @@ ChronoShowDuration(Ty *ty, byte_vector *buf, i64 ns);
 void
 ChronoShowTime(Ty *ty, byte_vector *buf, i64 ns, i64 clk);
 
+void
+ChronoShowText(Ty *ty, byte_vector *buf, i64 ns, i64 clk);
+
+void
+ChronoStrftime(Ty *ty, byte_vector *buf, char const *s, usize n, i64 ns, i64 clk);
+
+bool
+ChronoFormat(Ty *ty, byte_vector *buf, Value const *v, char const *s, usize n);
+
 ChronoStatus
 ChronoLiteral(bool real, double x, i64 k, i64 unit, i64 *ns);
 
@@ -71,6 +80,9 @@ ChronoDeadline(Ty *ty, char const *ctx, Value const *v, i64 clk);
 
 i64
 ChronoInstant(Ty *ty, char const *ctx, Value const *v, i64 clk);
+
+TyDeadline
+ChronoWait(Ty *ty, char const *ctx, Value const *v);
 
 i64
 ChronoDuration(Ty *ty, char const *ctx, Value const *v);
@@ -127,5 +139,7 @@ ChronoMsCeil(i64 ns)
 #define TIMEOUT_MS_ARG(i)    ChronoMsCeil(TIMEOUT_NS_ARG(i))
 #define DURATION_NS_ARG(i)   ChronoDuration(ty, _name__, &ARG(i))
 #define INSTANT_ARG(i, clk)  ChronoInstant(ty, _name__, &ARG(i), (clk))
+#define DEADLINE_ARG(i)      ChronoWait(ty, _name__, &ARG(i))
+#define DEADLINE_OPT(i)      ((argc > (i)) ? DEADLINE_ARG(i) : TY_FOREVER)
 
 #endif

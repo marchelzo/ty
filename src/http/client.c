@@ -1932,23 +1932,15 @@ h2_ready(H2C *h, H2S *st, int what)
 // _http.h2-wait(h2: Ptr, sid: Int, what: Int, timeout: ?time::Timeout = nil) -> Bool
 TY_BUILTIN(http_h2_wait)
 {
-        H2C *h    = PtrArg(ty, _name__, "h2", h2);
-        i64  ns   = ChronoTimeout(ty, _name__, &timeout);
-        u64 until = TyThreadGetTime() + (u64)max(ns, 0);
+        H2C       *h  = PtrArg(ty, _name__, "h2", h2);
+        TyDeadline d  = ChronoWait(ty, _name__, &timeout);
+        bool       ok = true;
 
         UnlockTy();
         TyMutexLock(&h->mu);
 
-        bool ok = true;
-
         while (!h2_ready(h, h2s_find(h, sid), what)) {
-                u64 now = TyThreadGetTime();
-                if (ns < 0) {
-                        TyCondVarWait(&h->cv, &h->mu);
-                } else if (
-                        (now >= until)
-                     || !TyCondVarTimedWaitRelative(&h->cv, &h->mu, (until - now) / TY_1e6 + 1)
-                ) {
+                if (!TyCondVarTimedWaitClock(&h->cv, &h->mu, d.clock, d.at)) {
                         ok = h2_ready(h, h2s_find(h, sid), what);
                         break;
                 }
